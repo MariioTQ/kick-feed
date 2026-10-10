@@ -21,7 +21,7 @@ const crypto = require('crypto');
 const CHANNEL = (process.env.KICK_CHANNEL || 'mariotq').toLowerCase();
 const CLIENT_ID = process.env.KICK_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.KICK_CLIENT_SECRET || '';
-const SCOPES = 'user:read channel:read events:subscribe kicks:read';
+const SCOPES = 'user:read channel:read channel:write events:subscribe kicks:read';
 const EVENTS = [
   'channel.subscription.new', 'channel.subscription.renewal', 'channel.subscription.gifts',
   'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated'
@@ -60,7 +60,7 @@ function send(res, code, body, type) {
 }
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 function readRaw(req) {
@@ -250,6 +250,67 @@ async function list(req, res) {
   return send(res, 200, { ok: true, kind: q.kind === 'kicks' ? 'kicks' : 'subs', events: evs, more: evs.length === limit });
 }
 
+/* ---- cambiar título y categoría (solo con la clave de tus celulares) ---- */
+async function checkKey(q) {
+  const k = await redis('GET', 'feedkey');
+  const a = Buffer.from(String(q || '')), b = Buffer.from(String(k || ''));
+  return !!k && a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+async function readJSONBody(req) {
+  // Vercel a veces ya trae el cuerpo leído en req.body
+  try {
+    if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) return req.body;
+    if (typeof req.body === 'string' && req.body) return JSON.parse(req.body);
+    if (Buffer.isBuffer(req.body) && req.body.length) return JSON.parse(req.body.toString('utf8'));
+  } catch (e) { return {}; }
+  const raw = await readRaw(req);
+  try { return JSON.parse(raw || '{}'); } catch (e) { return {}; }
+}
+async function channel(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const body = req.method === 'POST' ? await readJSONBody(req) : {};
+  const key = (req.query && req.query.key) || body.key;
+  if (!(await checkKey(key))) return send(res, 403, { ok: false, error: 'clave' });
+  const t = await validToken();
+  if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
+  if (req.method === 'POST') {
+    const patch = {};
+    if (body.title && String(body.title).trim()) patch.stream_title = String(body.title).trim().slice(0, 140);
+    if (body.category_id) patch.category_id = Number(body.category_id);
+    if (!Object.keys(patch).length) return send(res, 400, { ok: false, error: 'nada que cambiar' });
+    const r = await fetch('https://api.kick.com/public/v1/channels', {
+      method: 'PATCH', headers: { Authorization: 'Bearer ' + t.access_token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      const msg = r.status === 401 || r.status === 403 ? 'Kick no dio permiso: vuelve a conectar tu cuenta con "Actualizar información del canal"' : (j.message || ('Kick respondió ' + r.status));
+      return send(res, 200, { ok: false, error: msg });
+    }
+    await logPush('titles', { at: Date.now(), title: patch.stream_title || null, category_id: patch.category_id || null }, 50);
+  }
+  const j = await kickApi('/channels', t.access_token);
+  const c = (j.data || [])[0] || {};
+  return send(res, 200, { ok: true, title: c.stream_title || '', category: c.category || null, live: c.stream ? !!c.stream.is_live : null });
+}
+async function categories(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const q = req.query || {};
+  if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const t = await validToken();
+  if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
+  const term = String(q.q || '').trim();
+  if (term.length < 2) return send(res, 200, { ok: true, data: [] });
+  let data = [];
+  try { data = (await kickApi('/categories?q=' + encodeURIComponent(term), t.access_token)).data || []; } catch (e) {}
+  if (!data.length && term.length >= 3) {
+    try { data = (await kickApi('/../v2/categories?limit=20&name=' + encodeURIComponent(term), t.access_token)).data || []; } catch (e) {}
+  }
+  return send(res, 200, { ok: true, data: data.slice(0, 20).map(c => ({ id: c.id, name: c.name, thumbnail: c.thumbnail || '' })) });
+}
+
 async function events(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -289,6 +350,8 @@ async function login(req, res) {
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
   const state = b64url(crypto.randomBytes(16));
   await redis('SET', 'pkce:' + state, verifier, 'EX', 900);
+  // /api/login?nueva=1 → al terminar de autorizar se crea una clave 🔑 nueva
+  if ((req.query || {}).nueva === '1') await redis('SET', 'newkey:' + state, '1', 'EX', 900);
   const qs = { client_id: CLIENT_ID, response_type: 'code', redirect_uri: baseUrl(req) + '/api/callback',
                scope: SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256' };
   const url = 'https://id.kick.com/oauth/authorize?' +
@@ -314,9 +377,24 @@ async function callback(req, res) {
     const tok = { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in || 3600) * 1000,
                   user_id: u.user_id, username: u.name, scope: j.scope || SCOPES, at: Date.now() };
     await setJSON('tok', tok);
+    // Clave para que solo tus celulares puedan cambiar cosas en tu canal.
+    let fkey = await redis('GET', 'feedkey');
+    const rotate = await redis('GET', 'newkey:' + q.state);
+    if (rotate) { await redis('DEL', 'newkey:' + q.state); fkey = null; }
+    if (!fkey) { fkey = b64url(crypto.randomBytes(18)); await redis('SET', 'feedkey', fkey); }
+    const feedUrl = 'https://mariiotq.github.io/kick-feed/?key=' + encodeURIComponent(fkey);
     const subs = await subscribeAll(tok);
     const lines = subs.map(s => '<li>' + (s.ok ? '<span class="ok">✔</span> ' : '<span class="bad">✘</span> ') + esc(s.name) + (s.error ? ' <small>(' + esc(s.error) + ')</small>' : '') + '</li>').join('');
-    return html(200, '<h1 class="ok">✅ Listo, ' + esc(u.name) + '</h1><p>Kick ya le avisa a tu servidor de estos eventos:</p><ul>' + lines + '</ul><p><small>Ya puedes cerrar esta página.</small></p><a class="btn" href="/api/status">Ver estado</a>');
+    const sc = String(tok.scope || '');
+    const canWrite = /channel:write/.test(sc);
+    return html(200, '<h1 class="ok">✅ Listo, ' + esc(u.name) + '</h1><p>Kick ya le avisa a tu servidor de estos eventos:</p><ul>' + lines + '</ul>' +
+      '<p>' + (canWrite ? '<span class="ok">✔</span> Permiso para cambiar título y categoría' : '<span class="bad">✘</span> Falta el permiso <b>Actualizar información del canal</b>: márcalo en tu app de Kick y vuelve a conectar') + '</p>' +
+      '<h1 style="margin-top:22px">🔑 Enlace para tus celulares</h1><p>Ábrelo <b>una vez</b> en cada celular (o pégalo en IRL Plus Chat). Así el feed puede cambiar tu título y categoría. <b>No lo compartas.</b></p>' +
+      '<p><code id="fu" style="word-break:break-all">' + esc(feedUrl) + '</code></p>' +
+      '<a class="btn" href="#" onclick="navigator.clipboard.writeText(document.getElementById(\'fu\').textContent);this.textContent=\'✅ Copiado\';return false">Copiar enlace</a> ' +
+      '<a class="btn" style="background:#2a2f3a;color:#e8eaee" href="/api/status">Ver estado</a>' +
+      '<p style="margin-top:18px"><small>' + (rotate ? '✔ Clave nueva creada: la anterior ya no sirve, abre este enlace otra vez en tus celulares.'
+        : '¿Se te filtró el enlace? Abre <code>/api/login?nueva=1</code>, autoriza y te doy una clave nueva (la anterior deja de servir).') + '</small></p>');
   } catch (e) {
     return html(500, '<h1 class="bad">Algo falló</h1><p>' + esc(e.message) + '</p><a class="btn" href="/api/login">Intentar otra vez</a>');
   }
@@ -363,6 +441,8 @@ module.exports = async function handler(req, res) {
     if (route === 'webhook') return await webhook(req, res);
     if (route === 'events') return await events(req, res);
     if (route === 'list') return await list(req, res);
+    if (route === 'channel') return await channel(req, res);
+    if (route === 'categories') return await categories(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
     if (route === 'status') return await status(req, res);
