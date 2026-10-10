@@ -194,11 +194,26 @@ async function webhook(req, res) {
   // Kick puede reintentar el mismo aviso: se guarda una sola vez.
   const fresh = await redis('SET', 'seen:' + msgId, '1', 'NX', 'EX', 7 * 86400);
   if (fresh) {
-    const ts = evTime(type, p, Date.now());
-    const ev = { id: msgId, type, ts, d: normalize(type, p) };
-    await redis('ZADD', 'ev', ts, JSON.stringify(ev));
+    const rt = Date.now();                       // cuándo llegó (para que el feed no se salte nada)
+    const ts = evTime(type, p, rt);              // cuándo pasó (lo que dice Kick)
+    const ev = { id: msgId, type, ts, rt, d: normalize(type, p) };
+    await redis('ZADD', 'ev', rt, JSON.stringify(ev));
     await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
-    if (type === 'livestream.status.updated') await setJSON('live', Object.assign({ at: Date.now() }, ev.d));
+    if (type === 'livestream.status.updated') {
+      await setJSON('live', Object.assign({ at: rt }, ev.d));
+      // "Sesión" = el stream del día. Si el stream se corta y vuelve en
+      // menos de 30 min (pasa mucho en IRL), sigue siendo la misma sesión
+      // y los contadores no se reinician.
+      const se = (await getJSON('session')) || {};
+      if (ev.d.is_live) {
+        const st = Date.parse(ev.d.started_at) || ts;
+        if (!se.start || !se.lastEnd || st - se.lastEnd > 30 * 60000) se.start = st;
+        se.live = true;
+      } else {
+        se.lastEnd = Date.parse(ev.d.ended_at) || ts; se.live = false;
+      }
+      await setJSON('session', se);
+    }
     await redis('SET', 'lastHook', String(Date.now()));
     await logPush('raw', { at: Date.now(), type, body: raw.slice(0, 1500) }, 40);
   }
@@ -209,21 +224,24 @@ async function events(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
   const q = req.query || {};
-  const since = Number(q.since) || 0;                 // lo que el feed todavía no tiene
+  const since = Number(q.since) || 0;                 // cursor: lo que el feed todavía no tiene
   const limit = Math.min(500, Number(q.limit) || 300);
   const list = await redis('ZRANGEBYSCORE', 'ev', '(' + since, '+inf', 'LIMIT', 0, limit);
   const evs = (list || []).map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).filter(Boolean);
+  const cursor = evs.reduce((m, e) => Math.max(m, e.rt || e.ts || 0), since);
   const live = await getJSON('live');
-  // Totales exactos de la transmisión: desde que empezó (lo manda Kick) o
-  // desde la hora que diga el feed (?from=), lo que sea más confiable.
+  const se = await getJSON('session');
+  // Totales exactos de la sesión: desde que empezó el stream del día (lo
+  // manda Kick) o, si el servidor todavía no lo sabe, desde ?from= del feed.
   let from = Number(q.from) || 0;
-  if (live && live.is_live && live.started_at) { const st = Date.parse(live.started_at); if (st) from = st; }
+  if (se && se.start && (se.live || (se.lastEnd && Date.now() - se.lastEnd < 30 * 60000))) from = se.start;
   let totals = null;
   if (from) {
-    const sess = await redis('ZRANGEBYSCORE', 'ev', from - 60000, '+inf');
+    const sess = await redis('ZRANGEBYSCORE', 'ev', from - 3600000, '+inf');
     totals = { from, subs: 0, kicks: 0, newSubs: 0, resubs: 0, gifted: 0 };
     (sess || []).forEach(s => {
       let e; try { e = JSON.parse(s); } catch (x) { return; }
+      if ((e.ts || 0) < from - 60000) return;
       const d = e.d || {};
       if (d.kind === 'sub') { totals.subs++; totals.newSubs++; }
       else if (d.kind === 'resub') { totals.subs++; totals.resubs++; }
@@ -232,7 +250,7 @@ async function events(req, res) {
     });
   }
   const lastHook = Number(await redis('GET', 'lastHook')) || 0;
-  return send(res, 200, { ok: true, now: Date.now(), live, totals, lastHook, events: evs });
+  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs });
 }
 
 async function login(req, res) {
