@@ -1,0 +1,326 @@
+/* ==================================================================
+   KICK FEED · SERVIDOR (Vercel)
+   Un solo archivo con todas las rutas:
+     /api/webhook   Kick avisa aquí cada sub, resub, regalo, Kicks, ban…
+     /api/events    el feed pide la lista de eventos (y los totales)
+     /api/login     conectar tu cuenta de Kick (una sola vez)
+     /api/callback  Kick regresa aquí después de "Autorizar"
+     /api/status    página para revisar que todo esté funcionando
+
+   Variables que se configuran en Vercel (Settings → Environment Variables):
+     KICK_CLIENT_ID, KICK_CLIENT_SECRET   las dos claves de tu app de Kick
+     KICK_CHANNEL                         opcional, por defecto "mariotq"
+   La base de datos (Upstash for Redis) agrega sola sus variables.
+
+   No se guarda ninguna contraseña. Solo el permiso que tú autorizas en
+   la página oficial de Kick, y únicamente si la cuenta es KICK_CHANNEL.
+   ================================================================== */
+'use strict';
+const crypto = require('crypto');
+
+const CHANNEL = (process.env.KICK_CHANNEL || 'mariotq').toLowerCase();
+const CLIENT_ID = process.env.KICK_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.KICK_CLIENT_SECRET || '';
+const SCOPES = 'user:read channel:read events:subscribe kicks:read';
+const EVENTS = [
+  'channel.subscription.new', 'channel.subscription.renewal', 'channel.subscription.gifts',
+  'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated'
+];
+const KEEP = 4000;          // cuántos eventos se guardan como máximo
+
+/* ---------------- Redis (Upstash, por su API web) ---------------- */
+// Funciona con cualquier prefijo que ponga Vercel (KV_, STORAGE_, etc.).
+function envEnding(suffix, alt) {
+  if (process.env[alt]) return process.env[alt];
+  const k = Object.keys(process.env).find(n => n.endsWith(suffix) && !/READ_ONLY/.test(n));
+  return k ? process.env[k] : '';
+}
+const R_URL = envEnding('_REST_API_URL', 'UPSTASH_REDIS_REST_URL');
+const R_TOK = envEnding('_REST_API_TOKEN', 'UPSTASH_REDIS_REST_TOKEN');
+async function redis(...cmd) {
+  if (!R_URL || !R_TOK) throw new Error('Falta la base de datos (Upstash for Redis)');
+  const r = await fetch(R_URL, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + R_TOK, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmd)
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error('Redis: ' + (j.error || r.status));
+  return j.result;
+}
+async function getJSON(key) { const v = await redis('GET', key); try { return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+async function setJSON(key, val, ex) { return ex ? redis('SET', key, JSON.stringify(val), 'EX', ex) : redis('SET', key, JSON.stringify(val)); }
+async function logPush(key, val, max) { await redis('LPUSH', key, JSON.stringify(val)); await redis('LTRIM', key, 0, (max || 30) - 1); }
+
+/* ---------------- utilidades ---------------- */
+function send(res, code, body, type) {
+  res.statusCode = code;
+  res.setHeader('Content-Type', type || 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(typeof body === 'string' ? body : JSON.stringify(body));
+}
+function cors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+function readRaw(req) {
+  return new Promise((ok, bad) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => ok(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', bad);
+  });
+}
+function baseUrl(req) {
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return 'https://' + host;
+}
+function b64url(buf) { return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function page(title, body) {
+  return '<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>' + esc(title) + '</title><style>body{margin:0;background:#0e0f13;color:#e8eaee;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}' +
+    'main{max-width:560px;margin:0 auto;padding:28px 18px}h1{font-size:22px;margin:0 0 14px}.ok{color:#53fc18}.bad{color:#ff5a4f}.warn{color:#ffb020}' +
+    'li{margin:6px 0}code{background:#1b1e25;padding:1px 6px;border-radius:5px}a.btn{display:inline-block;margin-top:14px;background:#53fc18;color:#0e0f13;' +
+    'font-weight:700;padding:10px 16px;border-radius:10px;text-decoration:none}small{color:#9aa1ad}</style></head><body><main>' + body + '</main></body></html>';
+}
+
+/* ---------------- tokens de Kick ---------------- */
+async function tokenRequest(params) {
+  const r = await fetch('https://id.kick.com/oauth/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString()
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) throw new Error('Kick no entregó el permiso (' + r.status + ' ' + (j.error_description || j.error || j.message || '') + ')');
+  return j;
+}
+async function validToken() {
+  const t = await getJSON('tok');
+  if (!t) return null;
+  if (Date.now() < t.expires_at - 120000) return t;
+  const j = await tokenRequest({ grant_type: 'refresh_token', client_id: CLIENT_ID, client_secret: CLIENT_SECRET, refresh_token: t.refresh_token });
+  const nt = Object.assign({}, t, { access_token: j.access_token, refresh_token: j.refresh_token || t.refresh_token,
+    expires_at: Date.now() + (j.expires_in || 3600) * 1000 });
+  await setJSON('tok', nt);
+  return nt;
+}
+async function kickApi(path, token, opts) {
+  const r = await fetch('https://api.kick.com/public/v1' + path, Object.assign({
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json' }
+  }, opts || {}));
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Kick API ' + path + ' → ' + r.status + ' ' + (j.message || ''));
+  return j;
+}
+async function subscribeAll(tok) {
+  // Quita las suscripciones viejas de esta app y crea las nuevas.
+  try {
+    const cur = await kickApi('/events/subscriptions', tok.access_token);
+    const ids = (cur.data || []).map(s => s.id).filter(Boolean);
+    if (ids.length) await kickApi('/events/subscriptions?' + ids.map(i => 'id=' + encodeURIComponent(i)).join('&'), tok.access_token, { method: 'DELETE' });
+  } catch (e) { /* si no había, no pasa nada */ }
+  const body = { broadcaster_user_id: tok.user_id, method: 'webhook', events: EVENTS.map(n => ({ name: n, version: 1 })) };
+  const j = await kickApi('/events/subscriptions', tok.access_token, { method: 'POST', body: JSON.stringify(body) });
+  return (j.data || []).map(x => ({ name: x.name, ok: !!x.subscription_id && !x.error, error: x.error || '' }));
+}
+
+/* ---------------- verificar que el aviso sí viene de Kick ---------------- */
+let PUBKEY = process.env.KICK_PUBLIC_KEY || '';
+async function kickPublicKey() {
+  if (PUBKEY) return PUBKEY;
+  const r = await fetch('https://api.kick.com/public/v1/public-key');
+  const j = await r.json();
+  PUBKEY = (j.data && (j.data.public_key || j.data.publicKey)) || j.public_key || '';
+  return PUBKEY;
+}
+async function verifyKick(req, raw) {
+  const id = req.headers['kick-event-message-id'], ts = req.headers['kick-event-message-timestamp'];
+  const sig = req.headers['kick-event-signature'];
+  if (!id || !ts || !sig) return false;
+  const key = await kickPublicKey();
+  return crypto.verify('sha256', Buffer.from(id + '.' + ts + '.' + raw), { key, padding: crypto.constants.RSA_PKCS1_PADDING },
+    Buffer.from(sig, 'base64'));
+}
+
+/* ---------------- convertir el aviso de Kick en un evento sencillo ---------------- */
+function uname(u) { return u ? (u.username || u.name || u.slug || '') : ''; }
+function normalize(type, p) {
+  switch (type) {
+    case 'channel.subscription.new':
+      return { kind: 'sub', user: uname(p.subscriber), months: Number(p.duration) || 1 };
+    case 'channel.subscription.renewal':
+      return { kind: 'resub', user: uname(p.subscriber), months: Number(p.duration) || 0 };
+    case 'channel.subscription.gifts': {
+      const g = (p.giftees || []).map(uname).filter(Boolean);
+      return { kind: 'gift', user: p.gifter && !p.gifter.is_anonymous ? uname(p.gifter) : '', anon: !!(p.gifter && p.gifter.is_anonymous),
+               giftees: g, count: g.length || 1 };
+    }
+    case 'kicks.gifted': {
+      const gi = p.gift || {};
+      return { kind: 'kicks', user: uname(p.sender), amount: Number(gi.amount) || 0, name: gi.name || '', message: gi.message || '' };
+    }
+    case 'channel.followed':
+      return { kind: 'follow', user: uname(p.follower) };
+    case 'moderation.banned': {
+      const m = p.metadata || {};
+      return { kind: 'ban', user: uname(p.banned_user), mod: uname(p.moderator), reason: m.reason || '', expires_at: m.expires_at || null };
+    }
+    case 'livestream.status.updated':
+      return { kind: 'live', is_live: !!p.is_live, started_at: p.started_at || null, ended_at: p.ended_at || null, title: p.title || '' };
+    default:
+      return { kind: 'other' };
+  }
+}
+function evTime(type, p, fallback) {
+  const t = Date.parse(p.created_at || (p.metadata && p.metadata.created_at) || (type === 'livestream.status.updated' ? (p.is_live ? p.started_at : p.ended_at) : '') || '');
+  return t || fallback;
+}
+
+/* ---------------- rutas ---------------- */
+async function webhook(req, res) {
+  if (req.method !== 'POST') return send(res, 200, { ok: true, info: 'Aquí Kick manda los avisos.' });
+  const raw = await readRaw(req);
+  const type = String(req.headers['kick-event-type'] || '');
+  const msgId = String(req.headers['kick-event-message-id'] || '');
+  let ok = false;
+  try { ok = process.env.KICK_VERIFY === 'off' ? true : await verifyKick(req, raw); } catch (e) { ok = false; }
+  if (!ok) {
+    try { await logPush('rejected', { at: Date.now(), type, id: msgId, body: raw.slice(0, 300) }, 20); } catch (e) {}
+    return send(res, 401, { ok: false });
+  }
+  let p = {};
+  try { p = JSON.parse(raw); } catch (e) {}
+  // Kick puede reintentar el mismo aviso: se guarda una sola vez.
+  const fresh = await redis('SET', 'seen:' + msgId, '1', 'NX', 'EX', 7 * 86400);
+  if (fresh) {
+    const ts = evTime(type, p, Date.now());
+    const ev = { id: msgId, type, ts, d: normalize(type, p) };
+    await redis('ZADD', 'ev', ts, JSON.stringify(ev));
+    await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
+    if (type === 'livestream.status.updated') await setJSON('live', Object.assign({ at: Date.now() }, ev.d));
+    await redis('SET', 'lastHook', String(Date.now()));
+    await logPush('raw', { at: Date.now(), type, body: raw.slice(0, 1500) }, 40);
+  }
+  return send(res, 200, { ok: true });
+}
+
+async function events(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const q = req.query || {};
+  const since = Number(q.since) || 0;                 // lo que el feed todavía no tiene
+  const limit = Math.min(500, Number(q.limit) || 300);
+  const list = await redis('ZRANGEBYSCORE', 'ev', '(' + since, '+inf', 'LIMIT', 0, limit);
+  const evs = (list || []).map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).filter(Boolean);
+  const live = await getJSON('live');
+  // Totales exactos de la transmisión: desde que empezó (lo manda Kick) o
+  // desde la hora que diga el feed (?from=), lo que sea más confiable.
+  let from = Number(q.from) || 0;
+  if (live && live.is_live && live.started_at) { const st = Date.parse(live.started_at); if (st) from = st; }
+  let totals = null;
+  if (from) {
+    const sess = await redis('ZRANGEBYSCORE', 'ev', from - 60000, '+inf');
+    totals = { from, subs: 0, kicks: 0, newSubs: 0, resubs: 0, gifted: 0 };
+    (sess || []).forEach(s => {
+      let e; try { e = JSON.parse(s); } catch (x) { return; }
+      const d = e.d || {};
+      if (d.kind === 'sub') { totals.subs++; totals.newSubs++; }
+      else if (d.kind === 'resub') { totals.subs++; totals.resubs++; }
+      else if (d.kind === 'gift') { totals.subs += d.count || 1; totals.gifted += d.count || 1; }
+      else if (d.kind === 'kicks') totals.kicks += d.amount || 0;
+    });
+  }
+  const lastHook = Number(await redis('GET', 'lastHook')) || 0;
+  return send(res, 200, { ok: true, now: Date.now(), live, totals, lastHook, events: evs });
+}
+
+async function login(req, res) {
+  if (!CLIENT_ID || !CLIENT_SECRET) return send(res, 500, page('Falta configurar', '<h1 class="bad">Faltan las claves de Kick</h1><p>Agrega <code>KICK_CLIENT_ID</code> y <code>KICK_CLIENT_SECRET</code> en Vercel → Settings → Environment Variables y vuelve a publicar.</p>'), 'text/html; charset=utf-8');
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+  const state = b64url(crypto.randomBytes(16));
+  await redis('SET', 'pkce:' + state, verifier, 'EX', 900);
+  const qs = { client_id: CLIENT_ID, response_type: 'code', redirect_uri: baseUrl(req) + '/api/callback',
+               scope: SCOPES, state, code_challenge: challenge, code_challenge_method: 'S256' };
+  const url = 'https://id.kick.com/oauth/authorize?' +
+    Object.keys(qs).map(k => k + '=' + encodeURIComponent(qs[k])).join('&');
+  res.statusCode = 302; res.setHeader('Location', url); res.end();
+}
+
+async function callback(req, res) {
+  const q = req.query || {};
+  const html = (code, b) => send(res, code, page('Kick Feed', b), 'text/html; charset=utf-8');
+  if (q.error) return html(400, '<h1 class="bad">No se autorizó</h1><p>' + esc(q.error_description || q.error) + '</p><a class="btn" href="/api/login">Intentar otra vez</a>');
+  const verifier = q.state ? await redis('GET', 'pkce:' + q.state) : null;
+  if (!q.code || !verifier) return html(400, '<h1 class="bad">El enlace ya caducó</h1><a class="btn" href="/api/login">Empezar otra vez</a>');
+  await redis('DEL', 'pkce:' + q.state);
+  try {
+    const j = await tokenRequest({ grant_type: 'authorization_code', client_id: CLIENT_ID, client_secret: CLIENT_SECRET,
+      redirect_uri: baseUrl(req) + '/api/callback', code_verifier: verifier, code: q.code });
+    const me = await kickApi('/users', j.access_token);
+    const u = (me.data || [])[0] || {};
+    const name = String(u.name || u.username || '').toLowerCase();
+    // Solo se acepta tu cuenta: nadie más puede "secuestrar" el servidor.
+    if (name !== CHANNEL) return html(403, '<h1 class="bad">Esa cuenta no es ' + esc(CHANNEL) + '</h1><p>Entraste como <b>' + esc(u.name) + '</b>. Cierra sesión en Kick, entra con tu cuenta y vuelve a intentarlo.</p><a class="btn" href="/api/login">Intentar otra vez</a>');
+    const tok = { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in || 3600) * 1000,
+                  user_id: u.user_id, username: u.name, scope: j.scope || SCOPES, at: Date.now() };
+    await setJSON('tok', tok);
+    const subs = await subscribeAll(tok);
+    const lines = subs.map(s => '<li>' + (s.ok ? '<span class="ok">✔</span> ' : '<span class="bad">✘</span> ') + esc(s.name) + (s.error ? ' <small>(' + esc(s.error) + ')</small>' : '') + '</li>').join('');
+    return html(200, '<h1 class="ok">✅ Listo, ' + esc(u.name) + '</h1><p>Kick ya le avisa a tu servidor de estos eventos:</p><ul>' + lines + '</ul><p><small>Ya puedes cerrar esta página.</small></p><a class="btn" href="/api/status">Ver estado</a>');
+  } catch (e) {
+    return html(500, '<h1 class="bad">Algo falló</h1><p>' + esc(e.message) + '</p><a class="btn" href="/api/login">Intentar otra vez</a>');
+  }
+}
+
+async function status(req, res) {
+  const row = (ok, txt) => '<li>' + (ok === true ? '<span class="ok">✔</span> ' : ok === false ? '<span class="bad">✘</span> ' : '<span class="warn">•</span> ') + txt + '</li>';
+  let out = '';
+  out += row(!!(CLIENT_ID && CLIENT_SECRET), 'Claves de la app de Kick ' + (CLIENT_ID && CLIENT_SECRET ? 'configuradas' : '<b>faltan</b> (KICK_CLIENT_ID / KICK_CLIENT_SECRET)'));
+  let dbOk = false;
+  try { await redis('PING'); dbOk = true; } catch (e) {}
+  out += row(dbOk, dbOk ? 'Base de datos conectada' : '<b>Falta la base de datos</b> (Upstash for Redis)');
+  if (dbOk) {
+    const tok = await getJSON('tok');
+    out += row(!!tok, tok ? 'Cuenta conectada: <b>' + esc(tok.username) + '</b>' : '<b>Falta conectar tu cuenta</b>: <a href="/api/login">conectar</a>');
+    if (tok && CLIENT_ID) {
+      try {
+        const t = await validToken();
+        const s = await kickApi('/events/subscriptions', t.access_token);
+        const names = (s.data || []).map(x => x.event || x.name);
+        EVENTS.forEach(n => { out += row(names.indexOf(n) !== -1, 'Aviso de Kick: <code>' + n + '</code>'); });
+      } catch (e) { out += row(false, 'No pude revisar las suscripciones: ' + esc(e.message)); }
+    }
+    const lastHook = Number(await redis('GET', 'lastHook')) || 0;
+    const n = await redis('ZCARD', 'ev');
+    out += row(lastHook ? true : null, lastHook ? 'Último aviso recibido: ' + new Date(lastHook).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) + ' · ' + n + ' eventos guardados' : 'Todavía no llega ningún aviso de Kick (es normal hasta que haya una sub, Kicks, follow o empiece el stream)');
+    const rej = await redis('LLEN', 'rejected');
+    if (rej) out += row(false, rej + ' avisos rechazados porque la firma no era de Kick');
+  }
+  return send(res, 200, page('Estado · Kick Feed', '<h1>Estado del servidor</h1><ul>' + out + '</ul><a class="btn" href="/api/login">Volver a conectar mi cuenta</a>'), 'text/html; charset=utf-8');
+}
+
+async function debug(req, res) {
+  // Para revisar con Claude: los últimos avisos crudos (sin datos privados).
+  cors(res);
+  const raw = await redis('LRANGE', 'raw', 0, 39);
+  const rej = await redis('LRANGE', 'rejected', 0, 19);
+  return send(res, 200, { raw: (raw || []).map(x => JSON.parse(x)), rejected: (rej || []).map(x => JSON.parse(x)) });
+}
+
+module.exports = async function handler(req, res) {
+  const route = String((req.query && req.query.route) || '').toLowerCase();
+  try {
+    if (route === 'webhook') return await webhook(req, res);
+    if (route === 'events') return await events(req, res);
+    if (route === 'login') return await login(req, res);
+    if (route === 'callback') return await callback(req, res);
+    if (route === 'status') return await status(req, res);
+    if (route === 'debug') return await debug(req, res);
+    return send(res, 404, { ok: false, error: 'ruta desconocida' });
+  } catch (e) {
+    cors(res);
+    return send(res, 500, { ok: false, error: e.message });
+  }
+};
