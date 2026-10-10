@@ -1,0 +1,2865 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kick Activity Feed</title>
+<style>
+  :root{
+    --bg: #0e0f13;
+    --panel: rgba(255,255,255,.04);
+    --line: rgba(255,255,255,.08);
+    --txt: #e8eaee;
+    --dim: #9aa1ad;
+    --kick: #53fc18;
+    --c-follow: #3ea6ff;   /* azul */
+    --c-sub:    #53fc18;   /* verde Kick */
+    --c-resub:  #ffd93d;   /* amarillo */
+    --c-gift:   #ff4d4d;   /* rojo */
+    --c-kicks:  #a970ff;   /* morado, como los bits de Twitch */
+    --c-tip:    #2ee6c5;   /* turquesa */
+    --c-reward: #ff6bd6;   /* rosa */
+    --c-host:   #ff9f1c;
+    --c-live:   #d7dde6;
+    --c-mod:    #a05a5a;
+    --c-chat:   #8f97a3;
+    --c-poll:   #8c9eff;   /* azul lavanda: encuestas y predicciones */
+    --row: 15px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Inter","Segoe UI",Roboto,system-ui,-apple-system,sans-serif;
+    font-size:var(--row);overflow:hidden;display:flex;flex-direction:column;
+  }
+  body.transparent{background:transparent}
+  body.transparent .item{background:transparent}
+  body.transparent .item .line{text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 8px rgba(0,0,0,.7)}
+
+  /* ---------- barra superior ---------- */
+  #bar{
+    --bs:1;                /* escala automática: ver fitBar() */
+    flex:0 0 auto;display:flex;align-items:center;gap:calc(6px*var(--bs));
+    padding:7px calc(9px*var(--bs));border-bottom:1px solid var(--line);
+    background:rgba(0,0,0,.35);font-size:12px;color:var(--dim);
+  }
+  /* El bitrate queda clavado a la derecha; si algo tiene que
+     recorrerse por falta de espacio, es el grupo del centro. */
+  #stats{flex:1 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none;justify-content:flex-end}
+  #stats::-webkit-scrollbar{display:none}
+  #pBela{flex:0 0 auto;margin-left:5px}
+  body.nobar #bar{display:none}
+  /* el nombre del canal solo se esconde si de verdad no cabe */
+  /* Verde = conectado al chat de Kick. Rojo parpadeando = se cayó. */
+  #dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#ff3b30;
+       animation:blink 1.2s ease-in-out infinite}
+  #dot.on{background:var(--kick);box-shadow:0 0 8px var(--kick);animation:none}
+  #stats{margin-left:auto;display:flex;gap:calc(3px*var(--bs));align-items:center;
+         flex:0 1 auto;min-width:0;justify-content:flex-end}
+  .pill{background:var(--panel);border:1px solid var(--line);border-radius:20px;
+        padding:3px calc(7px*var(--bs));white-space:nowrap;cursor:pointer;user-select:none;
+        color:var(--dim);font-size:calc(11px*var(--bs));font-variant-numeric:tabular-nums;
+        flex:0 0 auto}
+  .pill.on{color:var(--txt)}
+  .pill.live{border-color:rgba(83,252,24,.35)}
+  #pSubs.has{color:var(--c-sub)}
+  #pKicks.has{color:var(--c-kicks)}
+
+  /* ---------- panel de bitrate (se abre al tocar la píldora) ----------
+     Estilo IRL Toolkit: eje a la izquierda, línea amarilla = Low,
+     línea roja = Offline, un punto por cada tramo de 3 segundos. */
+  #graph{display:none;flex:0 0 auto;padding:9px 12px 7px;
+         border-bottom:1px solid var(--line);background:#181b21}
+  #graph.show{display:block}
+  #graph .hd{display:flex;align-items:baseline;gap:8px}
+  #graph .hd .ttl{font-size:14px;font-weight:700;color:var(--txt)}
+  #graph .hd .big{margin-left:auto;font-size:17px;font-weight:800;font-variant-numeric:tabular-nums}
+  #graph .hd .rtt{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #graph .lg{display:flex;align-items:center;gap:12px;margin-top:3px;font-size:10.5px;color:var(--dim)}
+  #graph .lg i{display:inline-block;width:12px;height:2px;border-radius:1px;
+               vertical-align:middle;margin-right:4px}
+  #graph .lg .r{margin-left:auto}
+  #graph svg{display:block;width:100%;height:clamp(140px,32vh,210px);margin-top:6px;overflow:visible}
+  #graph .sc{display:flex;justify-content:space-between;font-size:10px;color:#7d8490;
+             margin-top:1px;padding-left:28px}
+  /* ---------- paneles ★ y ⚡: quién se suscribió / quién mandó Kicks ---------- */
+  #plist{display:none;flex:0 0 auto;border-bottom:1px solid var(--line);background:#181b21}
+  #plist.show{display:flex;flex-direction:column;max-height:52vh}
+  #plist .ph{display:flex;align-items:center;gap:8px;padding:10px 12px 4px;cursor:pointer}
+  #plist .ph .ttl{font-size:15px;font-weight:700}
+  #plist .ph .x{margin-left:auto;font-size:10.5px;color:var(--dim)}
+  #plist .sum{display:flex;gap:6px;flex-wrap:wrap;padding:4px 12px 6px}
+  #plist .sum b{font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:12px;background:rgba(255,255,255,.05)}
+  #plist .pl{overflow-y:auto;padding:0 12px 8px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  #plist .dsep{display:flex;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+               padding:9px 2px 4px;border-top:1px solid rgba(255,255,255,.14);margin-top:2px}
+  #plist .dsep span:last-child{margin-left:auto;letter-spacing:.04em}
+  #plist .prow{display:flex;align-items:center;gap:8px;padding:6px 2px;border-top:1px solid rgba(255,255,255,.05);font-size:13.5px}
+  #plist .dsep + .prow{border-top:0}
+  #plist .prow .t{color:var(--dim);font-size:11.5px;width:38px;flex:0 0 auto;font-variant-numeric:tabular-nums}
+  #plist .prow .n{font-weight:700;min-width:0;overflow-wrap:anywhere}
+  #plist .prow .m{display:block;font-weight:400;font-size:11.5px;color:var(--dim)}
+  #plist .prow .k{margin-left:auto;flex:0 0 auto;font-size:11px;padding:2px 7px;border-radius:10px;white-space:nowrap}
+  #plist .kn{color:var(--c-sub);background:rgba(83,252,24,.12)}
+  #plist .kr{color:var(--c-resub);background:rgba(255,217,61,.12)}
+  #plist .kg{color:var(--c-gift);background:rgba(255,77,77,.12)}
+  #plist .kk{color:var(--c-kicks);background:rgba(169,112,255,.14)}
+  #plist .pmore{text-align:center;color:var(--dim);font-size:11.5px;padding:10px 4px}
+  .pill.open{outline:2px solid currentColor;outline-offset:1px}
+
+  /* El bitrate va hasta la derecha y más grande: es lo que más se
+     consulta de reojo, y del lado izquierdo lo tapa el GPS. */
+  #pBela{font-size:calc(13px*var(--bs));font-weight:700;padding:3px calc(9px*var(--bs))}
+  #pBela.ok  {color:#53fc18;border-color:rgba(83,252,24,.5);background:rgba(83,252,24,.10)}
+  #pBela.warn{color:#ffb020;border-color:rgba(255,176,32,.6);background:rgba(255,176,32,.12)}
+  #pBela.down{color:#ff3b30;border-color:rgba(255,59,48,.7);background:rgba(255,59,48,.14);
+              animation:blink 1.1s ease-in-out infinite}
+  @keyframes blink{50%{opacity:.35}}
+  .btn{cursor:pointer;padding:3px calc(6px*var(--bs));border-radius:8px;user-select:none;
+       flex:0 0 auto;border:1px solid var(--line);background:transparent;color:#5d636d;
+       font-size:calc(13px*var(--bs))}
+  .btn:active{background:var(--panel)}
+  .btn.on{color:var(--txt);border-color:rgba(255,255,255,.28)}
+  #rwBtn.on{color:var(--c-reward);border-color:rgba(255,107,214,.45)}
+
+  /* ---------- ajustes ---------- */
+  #filters{display:none;flex-wrap:wrap;gap:6px;padding:8px 10px;
+           border-bottom:1px solid var(--line);background:rgba(0,0,0,.45)}
+  #filters.open{display:flex}
+  .chip{font-size:12px;padding:4px 10px;border-radius:20px;cursor:pointer;
+        border:1px solid var(--line);background:transparent;color:var(--dim)}
+  .chip.on{background:var(--panel);color:var(--txt);border-color:rgba(255,255,255,.25)}
+  /* filtros: verde = se muestra, gris = apagado */
+  .chip.f{color:#6b717c;border-color:rgba(255,255,255,.08)}
+  .chip.f.on{color:var(--txt);border-color:var(--kick);background:rgba(83,252,24,.08);
+             box-shadow:0 0 0 1px rgba(83,252,24,.25)}
+  .chip.wide{width:100%;text-align:left}
+
+  /* ---------- ✏️ título y categoría ---------- */
+  #tpanel{display:none;flex:0 0 auto;border-bottom:1px solid var(--line);background:#181b21;
+          padding:0 12px 12px;max-height:74vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  #tpanel.show{display:block}
+  #tpanel .ph{display:flex;align-items:center;padding:10px 0 2px;cursor:pointer}
+  #tpanel .ph .ttl{font-size:15px;font-weight:700}
+  #tpanel .ph .x{margin-left:auto;font-size:10.5px;color:var(--dim)}
+  #tpanel .lb{display:flex;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:11px 0 5px}
+  #tpanel .lb span{margin-left:auto;letter-spacing:.04em;text-transform:none}
+  /* 16px en los campos: con menos, el iPhone hace zoom al escribir */
+  #tpanel .in{display:block;width:100%;background:#0e0f13;border:1px solid rgba(255,255,255,.14);border-radius:9px;
+              padding:9px 10px;font:inherit;font-size:16px;color:var(--txt);outline:none;-webkit-appearance:none}
+  #tpanel .in:focus{border-color:rgba(83,252,24,.7)}
+  #tpanel .in:disabled{opacity:.45}
+  #tpanel .cur{display:flex;align-items:center;gap:9px;background:#0e0f13;border:1px solid rgba(255,255,255,.14);
+               border-radius:9px;padding:6px 10px;font-size:15px;min-height:42px}
+  #tpanel .cur img,#tpanel .res img{width:22px;height:29px;border-radius:3px;object-fit:cover;background:#3a3f4a;flex:0 0 auto}
+  #tpanel .cur .tg{margin-left:auto;font-size:11px;color:var(--dim);white-space:nowrap}
+  #tpanel .cur .tg.nw{color:var(--c-resub)}
+  #tpanel .sug{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+  #tpanel .sug:empty{display:none}
+  #tpanel .sug button{font:inherit;font-size:12px;padding:4px 10px;border-radius:14px;cursor:pointer;
+                      border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#c9ced6}
+  #tpanel .res{margin-top:6px;border:1px solid rgba(255,255,255,.08);border-radius:9px;overflow:hidden}
+  #tpanel .res button{display:flex;align-items:center;gap:9px;width:100%;padding:6px 10px;border:0;
+                      border-top:1px solid rgba(255,255,255,.05);background:transparent;color:var(--txt);
+                      font:inherit;font-size:14px;text-align:left;cursor:pointer}
+  #tpanel .res button:first-child{border-top:0}
+  #tpanel .res button:active{background:rgba(255,255,255,.05)}
+  #tpanel .res .m{padding:9px 10px;color:var(--dim);font-size:12px}
+  #tpanel .btns{display:flex;gap:8px;margin-top:14px}
+  #tpanel .btns button{flex:1;padding:11px;border-radius:10px;font:inherit;font-weight:700;font-size:14px;cursor:pointer}
+  #tpanel .b1{background:var(--kick);color:#0e0f13;border:0}
+  #tpanel .b1:disabled{background:#26331f;color:#66745f}
+  #tpanel .b2{background:transparent;border:1px solid rgba(255,255,255,.16);color:var(--txt)}
+  #tpanel .st{margin-top:9px;font-size:12.5px;line-height:1.35;text-align:center;color:var(--dim)}
+  #tpanel .st:empty{display:none}
+  #tpanel .st.ok{color:var(--kick)}
+  #tpanel .st.err{color:#ff7a7a}
+
+  /* ---------- avisos grandes (recompensas spameadas) ---------- */
+  #alerts{position:fixed;left:0;right:0;top:0;z-index:25;display:flex;flex-direction:column}
+  .alert{display:flex;align-items:center;gap:10px;padding:13px 14px;cursor:pointer;
+         border-bottom:2px solid var(--c-reward);box-shadow:0 6px 24px rgba(0,0,0,.55);
+         animation:drop .25s cubic-bezier(.2,.9,.3,1.2), pulse 1s ease-in-out infinite}
+  @keyframes drop{from{transform:translateY(-100%);opacity:0}to{transform:none;opacity:1}}
+  /* parpadea hasta que la toques, para que salte a la vista */
+  @keyframes pulse{
+    0%,100%{background:#241726; border-bottom-color:var(--c-reward);
+            box-shadow:0 6px 24px rgba(0,0,0,.55)}
+    50%    {background:#5a1247; border-bottom-color:#fff;
+            box-shadow:0 6px 30px rgba(255,107,214,.55)}
+  }
+  @media (prefers-reduced-motion:reduce){ .alert{animation:drop .25s ease-out} }
+  .alert .ttl{font-size:1.3em;font-weight:800;color:var(--c-reward);
+              text-transform:uppercase;letter-spacing:.02em;
+              word-wrap:break-word;overflow-wrap:anywhere;min-width:0}
+  .alert .n{margin-left:auto;font-size:1.5em;font-weight:800;color:var(--txt);flex:0 0 auto}
+  .alert .hint{position:absolute;right:14px;bottom:2px;font-size:10px;color:var(--dim)}
+
+  /* ---------- feed ---------- */
+  #feed{flex:1 1 auto;overflow-y:auto;overflow-x:hidden;padding:6px 0 14px;scrollbar-width:thin}
+  #feed::-webkit-scrollbar{width:5px}
+  #feed::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}
+
+  .item{display:flex;gap:9px;align-items:flex-start;padding:8px 11px;
+        border-bottom:1px solid var(--line);animation:in .28s ease-out}
+  @keyframes in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+
+  /* separador de día */
+  .day{padding:7px 11px 5px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+       color:var(--dim);background:rgba(255,255,255,.03);border-bottom:1px solid var(--line);
+       position:sticky;top:0;z-index:2}
+  #more{display:block;width:calc(100% - 22px);margin:10px 11px;padding:9px;
+        background:var(--panel);border:1px solid var(--line);color:var(--dim);
+        border-radius:9px;font-size:13px;cursor:pointer}
+  .item .ic{flex:0 0 auto;width:22px;height:22px;border-radius:6px;
+            display:grid;place-items:center;font-size:12px;font-weight:700;background:rgba(255,255,255,.06)}
+  .item .ic img{width:15px;height:15px;display:block}
+  .item .body{flex:1 1 auto;min-width:0}
+  .item .line{line-height:1.35;word-wrap:break-word;overflow-wrap:anywhere}
+  .item .name{font-weight:700}
+  .item .sub{display:block;color:var(--dim);font-size:.82em;margin-top:2px;
+             word-wrap:break-word;overflow-wrap:anywhere}
+  .item .msg{display:block;margin-top:4px;padding:5px 8px;border-radius:7px;
+             background:rgba(255,255,255,.05);border-left:2px solid currentColor;
+             font-size:.9em;color:var(--txt);word-wrap:break-word;overflow-wrap:anywhere}
+  .item .mult{color:var(--dim);font-weight:400}
+  .item .right{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+  .item .x{border:1px solid var(--line);border-radius:6px;color:var(--dim);
+           font-size:12px;padding:0 7px;line-height:1.6;cursor:pointer}
+  .item .x:active{background:var(--panel);color:var(--txt)}
+  .item .t{color:var(--dim);font-size:.75em;padding-top:3px;font-variant-numeric:tabular-nums}
+  body.notime .item .t{display:none}
+  .item img.em{height:1.25em;vertical-align:-.25em}
+
+  /* un color por tipo de evento; .resub pisa a .sub */
+  .follow{--accent:var(--c-follow)}
+  .sub   {--accent:var(--c-sub)}
+  .sub.resub{--accent:var(--c-resub)}
+  .gift  {--accent:var(--c-gift)}
+  .kicks {--accent:var(--c-kicks)}
+  .tip   {--accent:var(--c-tip)}
+  .reward{--accent:var(--c-reward)}
+  .host  {--accent:var(--c-host)}
+  .live  {--accent:var(--c-live)}
+  .mod   {--accent:var(--c-mod)}
+  .chat  {--accent:#cfd4dc}
+  .signal{--accent:#ff5f2e}
+  .signal.up{--accent:#7cd992}
+  .sys   {--accent:var(--dim)}
+  .poll  {--accent:var(--c-poll)}
+
+  .item .ic{color:var(--accent,var(--dim))}
+  .item .name{color:var(--accent,var(--txt))}
+  .item .msg{border-left-color:var(--accent,var(--line))}
+  .item.tip .line{font-weight:600}
+  .item.sys .line{color:var(--dim);font-size:.9em}
+  /* aviso de corte de conexión */
+  .gap   {--accent:#ffb020}
+  .item.gap .line{color:var(--dim);font-size:.92em}
+  .item.gap .sub b{color:#ffb020;font-weight:600}
+  /* encuestas y predicciones: barras con los votos */
+  .item .px{display:block}
+  .item .px .q{display:block;margin-top:3px;font-weight:600;color:var(--txt);overflow-wrap:anywhere}
+  .item .pb{margin-top:7px;display:flex;flex-direction:column;gap:7px}
+  .item .pr{display:flex;font-size:.88em;color:var(--txt)}
+  .item .pr .lb{min-width:0;overflow-wrap:anywhere}
+  .item .pr .pc{margin-left:auto;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap;padding-left:8px}
+  .item .pb > span{display:block}
+  .item .bar{display:block;height:6px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:3px}
+  .item .bar i{display:block;height:100%;border-radius:4px;background:rgba(140,158,255,.42);transition:width .4s ease}
+  .item .win .bar i{background:var(--c-poll)}
+  .item .win .lb{font-weight:700}
+  .item .win .pc{color:#c5cdff}
+  .item .lv{display:inline-block;font-size:.7em;font-weight:800;letter-spacing:.06em;color:#0e0f13;
+            background:var(--c-poll);border-radius:5px;padding:1px 5px;margin-left:6px;vertical-align:2px}
+  .item .lv.lk{background:#5d6577;color:#e8eaee}
+  /* fijados arriba del feed mientras están abiertos (toca para minimizar) */
+  #pins{flex:0 0 auto}
+  .pin{border-bottom:1px solid var(--line);background:#151826;padding:9px 12px 11px;
+       box-shadow:inset 3px 0 0 var(--c-poll);cursor:pointer;user-select:none}
+  .pin .h{display:flex;align-items:center;gap:7px;font-size:14px;min-width:0}
+  .pin .h b{font-weight:700;white-space:nowrap}
+  .pin .h .m{color:var(--dim);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .pin .h .r{margin-left:auto;font-size:10.5px;color:var(--dim);white-space:nowrap;flex:0 0 auto;padding-left:6px}
+  .pin .s{font-size:12px;color:var(--dim);margin-top:2px;font-variant-numeric:tabular-nums}
+  .pin .q{font-weight:600;margin-top:6px;font-size:14.5px;overflow-wrap:anywhere}
+  .pin .pb{margin-top:7px;display:flex;flex-direction:column;gap:7px}
+  .pin .pb > span{display:block}
+  .pin .pr{display:flex;font-size:13px}
+  .pin .pr .lb{min-width:0;overflow-wrap:anywhere}
+  .pin .pr .pc{margin-left:auto;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap;padding-left:8px}
+  .pin .bar{display:block;height:6px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:3px}
+  .pin .bar i{display:block;height:100%;border-radius:4px;background:rgba(140,158,255,.42)}
+  .pin .win .bar i{background:var(--c-poll)}
+  .pin .lv{font-size:10px;font-weight:800;letter-spacing:.06em;color:#0e0f13;background:var(--c-poll);
+           border-radius:5px;padding:1px 5px;flex:0 0 auto}
+  .pin .lv.lk{background:#5d6577;color:#e8eaee}
+  .pin.min{padding:7px 12px}
+  .pin.min .h{font-size:13px}
+  .item .tw{display:block;margin-top:8px;font-size:.84em;color:var(--dim);overflow-wrap:anywhere}
+  .item .tw b{color:var(--txt);font-weight:600}
+  /* moderación: lo que escribió la persona se ve al tocar */
+  .item.fold{cursor:pointer}
+  .item.fold .msg{display:none}
+  .item.fold.open .msg{display:block}
+  .item .more{display:inline-block;margin-top:4px;font-size:.8em;color:#c9ced6;
+              padding:2px 8px;border-radius:6px;background:rgba(255,255,255,.06)}
+  .item.chat .ic{color:var(--c-chat)}
+
+  /* ---------- panel de Botrix ---------- */
+  #bx{flex:0 0 auto;display:none;flex-direction:column;border-top:2px solid var(--line);background:#0a0b0e}
+  #bx.show{display:flex}
+  #bxHead{display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:11px;
+          letter-spacing:.1em;text-transform:uppercase;color:var(--dim);background:rgba(255,255,255,.03)}
+  #bxHead .x{margin-left:auto;cursor:pointer;padding:0 6px;font-size:15px}
+  #bx iframe{width:100%;border:0;flex:1 1 auto;background:transparent}
+
+  #empty{padding:26px 16px;text-align:center;color:var(--dim);font-size:13px;line-height:1.6}
+  #empty b{color:var(--txt)}
+  #test{position:fixed;right:10px;bottom:10px;z-index:30;display:none;
+        background:var(--panel);border:1px solid var(--line);color:var(--txt);
+        border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer}
+  body.testmode #test{display:block}
+</style>
+</head>
+<body>
+
+<div id="alerts"></div>
+
+<div id="bar">
+  <span id="dot" title="Sin conexión con el chat"></span>
+  <span id="stats">
+    <span class="pill" id="pViewers" title="Viewers">👁</span>
+    <span class="pill" id="pUptime" title="Tiempo en vivo">⏱ —</span>
+    <span class="pill" id="pSubs" title="Subs de esta transmisión">★ 0</span>
+    <span class="pill" id="pKicks" title="Kicks de esta transmisión">⚡ 0</span>
+    <button class="btn" id="rwBtn" title="Recompensas">◆</button>
+    <button class="btn" id="bxBtn" title="Panel de Botrix" style="display:none">💠</button>
+    <button class="btn" id="gear" title="Ajustes">⚙</button>
+  </span>
+  <span class="pill" id="pBela" title="Bitrate Belabox" style="display:none">📶 —</span>
+</div>
+
+<div id="graph">
+  <div class="hd"><span class="ttl">Bitrate</span><span class="big" id="gBig">—</span><span class="rtt" id="gRtt"></span></div>
+  <div class="lg">
+    <span><i style="background:#ffc107"></i><span id="gLow">Low</span></span>
+    <span><i style="background:#ff453a"></i><span id="gOff">Offline</span></span>
+    <span class="r" id="gWin">últimos 60 s</span>
+  </div>
+  <svg id="gSvg"></svg>
+  <div class="sc"><span id="gL">hace 60 s</span><span>ahora</span></div>
+</div>
+
+<div id="plist">
+  <div class="ph"><span class="ttl" id="plTtl"></span><span class="x">toca para cerrar</span></div>
+  <div class="sum" id="plSum"></div>
+  <div class="pl" id="plList"></div>
+</div>
+
+<div id="tpanel">
+  <div class="ph" id="tpHead"><span class="ttl">✏️ Título y categoría</span><span class="x">toca para cerrar</span></div>
+  <div class="lb">Título <span id="tpCnt"></span></div>
+  <input class="in" id="tpTitle" maxlength="140" enterkeyhint="done" autocomplete="off" autocapitalize="sentences">
+  <div class="lb">Categoría</div>
+  <div class="cur" id="tpCur">—</div>
+  <div class="sug" id="tpSug"></div>
+  <input class="in" id="tpQ" style="margin-top:7px" placeholder="🔍 Buscar otra categoría" autocomplete="off" enterkeyhint="search">
+  <div class="res" id="tpRes" style="display:none"></div>
+  <div class="btns"><button class="b2" id="tpCancel">Cancelar</button><button class="b1" id="tpGo" disabled>Cambiar en Kick</button></div>
+  <div class="st" id="tpSt"></div>
+</div>
+
+<div id="filters"></div>
+
+<div id="pins"></div>
+
+<div id="feed">
+  <div id="empty">
+    Escuchando el canal de <b id="emptySlug">Kick</b>…<br><br>
+    <span style="opacity:.7">El punto verde significa que ya está conectado.<br>
+    Solo registra lo que pasa mientras esta página está abierta.</span>
+  </div>
+</div>
+
+<div id="bx">
+  <div id="bxHead"><span>Botrix — tips</span><span class="x" id="bxClose">×</span></div>
+</div>
+
+<button id="test">Evento de prueba</button>
+
+<script>
+(function(){
+  "use strict";
+
+  var VERSION = '39 · 10 oct 2026';   // se muestra abajo en el engrane ⚙
+
+  /* ============================================================
+     CONFIGURACIÓN  (todo se cambia por la URL)
+       ?channel=mariotq
+       ?chatroom=6635680&channelid=6692133
+       ?bg=transparent  ?bar=0  ?time=0  ?font=18  ?max=300
+       ?page=150        cuántos eventos pinta por tanda
+       ?viewers=1       arranca mostrando el número de viewers
+       ?vpoll=20        cada cuántos segundos consulta los viewers
+       ?keep=0          no guardar el historial entre reinicios
+       ?tipbot=a,b      nombres de bot que anuncian tips en el chat
+       ?botrix=URL      panel con tu activity feed de Botrix abajo
+       ?botrixh=45      altura de ese panel en % de pantalla
+       ?blow=500        Low de NOALBS (línea amarilla, píldora amarilla)
+       ?boff=300        Offline de NOALBS (línea roja, píldora roja)
+       ?rlow=1200&roff=2000   RTT de NOALBS (colorea el RTT de la gráfica)
+       ?bwin=60&bstep=3 la gráfica muestra 60 s, un punto cada 3 s
+       ?debug=1         muestra los eventos crudos en el feed
+       ?test=1          botón para inyectar eventos falsos
+     ============================================================ */
+  var Q = new URLSearchParams(location.search);
+  var CFG = {
+    slug:       (Q.get('channel') || Q.get('slug') || 'mariotq').toLowerCase().trim(),
+    chatroomId:  Q.get('chatroom')  || '6635680',
+    channelId:   Q.get('channelid') || '6692133',
+    max:    parseInt(Q.get('max')   || '1000', 10),
+    page:   parseInt(Q.get('page')  || '150', 10),
+    vpoll:  parseInt(Q.get('vpoll') || '20', 10) * 1000,
+    bg:         (Q.get('bg') || 'dark').toLowerCase(),
+    bar:         Q.get('bar')  !== '0',
+    time:        Q.get('time') !== '0',
+    keep:        Q.get('keep') !== '0',
+    viewersOn:   Q.get('viewers') === '1',
+    tipBots:    (Q.get('tipbot') || 'botrix,botrixbot,botrix_bot,tq_bot_irl')
+                  .toLowerCase().split(',').map(function(s){return s.trim();}).filter(Boolean),
+    tipAll:      Q.get('tipall') === '1',
+    // Token o URL completa de las stats de Belabox (solo lectura).
+    // Una vez que lo pasas por la URL queda guardado, así que si luego
+    // editas la liga y se te olvida, sigue funcionando.
+    bela: (function(){
+      var v = (Q.get('bela') || '').trim(), url='';
+      if (/^https?:\/\//i.test(v)) url = v;
+      else if (/^[A-Za-z0-9_\-]{10,90}$/.test(v)) url = 'https://stats.srt.belabox.net/' + v;
+      try{
+        if (url) localStorage.setItem('kickfeed.bela', url);
+        else if (Q.get('bela') === '') localStorage.removeItem('kickfeed.bela');  // ?bela= vacío lo borra
+        else url = localStorage.getItem('kickfeed.bela') || '';
+      }catch(e){}
+      return url;
+    })(),
+    bpoll:  parseInt(Q.get('bpoll') || '1000', 10),   // cada cuánto pregunta, en ms
+    // Mismos umbrales que NOALBS: abajo de "low" = amarillo, abajo de "offline" = rojo.
+    blow:   parseInt(Q.get('blow')  || '500', 10),
+    boff:   parseInt(Q.get('boff')  || '300', 10),
+    rlow:   parseInt(Q.get('rlow')  || '1200', 10),
+    roff:   parseInt(Q.get('roff')  || '2000', 10),
+    bwin:   Math.max(10, parseInt(Q.get('bwin')  || '60', 10)) * 1000,   // ventana de la gráfica
+    bstep:  Math.max(1,  parseFloat(Q.get('bstep') || '3'))     * 1000,   // un punto cada…
+    bunit:      (Q.get('bunit') || 'kbps').toLowerCase(),
+    rwalert: parseInt(Q.get('rwalert') || '5', 10),        // canjeos para el aviso grande
+    rwwin: parseInt(Q.get('rwwin') || '900', 10) * 1000,   // ventana para agrupar, en segundos
+    signal:      Q.get('signal') === '1',   // avisos de corte de señal dentro del feed
+    botrix: (function(){
+      var raw = location.search.match(/[?&]botrix=(.*)$/);
+      if (raw && /^https?(:|%3A)/i.test(raw[1])){
+        // que no se trague los parámetros que vayan después
+        var v = raw[1].split(/&(?=bela=|bpoll=|blow=|boff=|rlow=|roff=|bwin=|bstep=|api=|key=|max=|page=|font=|bg=|bar=|time=|viewers=|vpoll=|test=|debug=)/)[0];
+        try { if (/%3A|%2F/i.test(v)) v = decodeURIComponent(v); } catch(e){}
+        return v;
+      }
+      return Q.get('botrix') || '';
+    })(),
+    botrixH: parseInt(Q.get('botrixh') || '45', 10),
+    // Tu servidor en Vercel: recibe de Kick (vía oficial) cada sub, resub,
+    // regalo y Kicks, aunque tu celular no tenga señal. ?api=0 lo apaga.
+    api: (Q.get('api')==='0') ? '' : (Q.get('api') || 'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,''),
+    // Clave para cambiar título y categoría. Sale en la página de
+    // autorización ("Enlace para tus celulares"); la primera vez que
+    // abres ese enlace queda guardada en el celular.
+    key: (function(){
+      var v=(Q.get('key')||'').trim();
+      try{ if (v) localStorage.setItem('kickfeed.key', v); else v=localStorage.getItem('kickfeed.key')||''; }catch(e){}
+      return v;
+    })(),
+    debug:       Q.get('debug') === '1',
+    test:        Q.get('test')  === '1',
+    font:        Q.get('font')  || ''
+  };
+  if (CFG.slug !== 'mariotq' && !Q.get('chatroom')) { CFG.chatroomId=''; CFG.channelId=''; }
+
+  if (CFG.bg === 'transparent' || CFG.bg === 'none') document.body.classList.add('transparent');
+  if (!CFG.bar)  document.body.classList.add('nobar');
+  if (!CFG.time) document.body.classList.add('notime');
+  if (CFG.test)  document.body.classList.add('testmode');
+  if (CFG.font)  document.documentElement.style.setProperty('--row', parseInt(CFG.font,10)+'px');
+
+  var $feed=document.getElementById('feed'), $empty=document.getElementById('empty'),
+      $dot=document.getElementById('dot'), $vw=document.getElementById('pViewers'),
+      $filt=document.getElementById('filters');
+  document.getElementById('emptySlug').textContent = CFG.slug;
+
+  function LSget(k,d){ try{ var v=localStorage.getItem(k); return v===null?d:v; }catch(e){ return d; } }
+  function LSset(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+
+  /* ============================================================
+     VIEWERS EN VIVO
+     Se consulta el endpoint público de Kick, que sí permite
+     leerse desde otro dominio. Toca la píldora para mostrar
+     u ocultar el número.
+     ============================================================ */
+  var $up=document.getElementById('pUptime'), $sb=document.getElementById('pSubs'),
+      $kc=document.getElementById('pKicks');
+  var viewersShown = LSget('kickfeed.viewers', CFG.viewersOn ? '1' : '0') === '1';
+  var viewers = null;      // null = todavía no se sabe, 0 = offline
+  var startMs = null;      // cuándo arrancó la transmisión
+  var fakeStart = null;    // solo para el modo prueba
+
+  // Contador de subs de la transmisión actual; se reinicia solo
+  // cuando Kick reporta un ID de transmisión distinto.
+  var sess = {id:null, subs:0, kicks:0, seen:null};
+  try{ sess = JSON.parse(LSget('kickfeed.session','null')) || sess; }catch(e){}
+  function saveSess(){ LSset('kickfeed.session', JSON.stringify(sess)); }
+
+  function paintViewers(){
+    $vw.classList.toggle('on', viewersShown);
+    $vw.classList.toggle('live', viewers > 0);
+    if (!viewersShown){ $vw.textContent = '👁'; return; }
+    if (viewers === null) $vw.textContent = '👁 …';
+    else if (viewers === 0) $vw.textContent = '👁 offline';
+    else $vw.textContent = '👁 ' + viewers.toLocaleString('es-MX');
+  }
+  $vw.onclick = function(){
+    viewersShown = !viewersShown;
+    LSset('kickfeed.viewers', viewersShown ? '1' : '0');
+    paintViewers();
+    if (viewersShown) pollViewers();
+  };
+
+  /* El reloj tiene tres modos; se cambia tocándolo:
+     0 = completo con segundos, 1 = corto, 2 = solo el icono. */
+  var upMode = parseInt(LSget('kickfeed.upmode','0'),10) || 0;
+  $up.onclick = function(){
+    upMode = (upMode+1) % 3;
+    LSset('kickfeed.upmode', String(upMode));
+    paintUptime();
+  };
+
+  function fmtUptime(ms, mode){
+    var t=Math.floor(ms/1000);
+    var h=Math.floor(t/3600), m=Math.floor((t%3600)/60), s=t%60;
+    if (mode===1) return h ? h+':'+String(m).padStart(2,'0') : m+'m';
+    return (h ? h+':'+String(m).padStart(2,'0') : String(m).padStart(2,'0'))
+           +':'+String(s).padStart(2,'0');
+  }
+  function paintUptime(){
+    if (upMode===2){ $up.textContent='⏱'; }
+    else $up.textContent = startMs ? '⏱ '+fmtUptime(Math.max(0, Date.now()-startMs), upMode) : '⏱ —';
+    $up.classList.toggle('on', !!startMs && upMode!==2);
+    fitBar();
+  }
+  function paintSubs(){
+    $sb.textContent = '★ '+sess.subs;
+    $sb.classList.toggle('has', sess.subs>0);
+    fitBar();
+  }
+  function paintKicks(){
+    var n = sess.kicks||0;
+    $kc.textContent = '⚡ '+(n>=100000 ? Math.round(n/1000)+'k' : n);
+    $kc.classList.toggle('has', n>0);
+    fitBar();
+  }
+
+  /* Si la barra no alcanza, se esconde el nombre del canal.
+     Si vuelve a caber, reaparece. */
+  /* Si la barra no alcanza, encoge todo un poco hasta que quepa.
+     Así nunca se corta una píldora en pantallas angostas. */
+  var $bar=document.getElementById('bar'), $stats=document.getElementById('stats');
+  var SCALES=[1,.94,.88,.82,.76,.70];
+  // Mide los bordes reales: el desbordamiento hacia la izquierda no
+  // se ve en scrollWidth, y ahí era justo donde se cortaban los viewers.
+  function barFits(){
+    var kids=$stats.children;
+    if (!kids.length) return true;
+    var b=$bar.getBoundingClientRect();
+    var dot=document.getElementById('dot').getBoundingClientRect();
+    var first=kids[0].getBoundingClientRect();
+    var lastEl=($bela && $bela.style.display!=='none') ? $bela : kids[kids.length-1];
+    var last=lastEl.getBoundingClientRect();
+    // el punto de conexión también ocupa lugar: no debe encimarse
+    return first.left >= dot.right + 1 && last.right <= b.right + 0.5;
+  }
+  function fitBar(){
+    for (var i=0;i<SCALES.length;i++){
+      $bar.style.setProperty('--bs', SCALES[i]);
+      if (barFits()) return;
+    }
+  }
+  window.addEventListener('resize', fitBar);
+
+  // Kick manda las fechas sin zona horaria. Probamos leerlas como UTC
+  // y como hora local, y nos quedamos con la que da un tiempo creíble.
+  function parseKickDate(s){
+    if (!s) return null;
+    var iso = String(s).trim().replace(' ','T');
+    var hasTz = /[Zz]|[+\-]\d\d:?\d\d$/.test(iso);
+    var asUtc = Date.parse(iso + (hasTz ? '' : 'Z'));
+    var asLocal = Date.parse(iso);
+    // Se permite un pequeño desfase por si el reloj del celular va
+    // unos segundos adelantado justo al arrancar la transmisión.
+    var now=Date.now(), MAX=72*3600e3, MIN=-5*60e3;
+    if (asUtc   && now-asUtc   >= MIN && now-asUtc   < MAX) return asUtc;
+    if (asLocal && now-asLocal >= MIN && now-asLocal < MAX) return asLocal;
+    return null;
+  }
+
+  function pollViewers(){
+    if (!CFG.slug) return;
+    fetch('https://kick.com/api/v2/channels/' + encodeURIComponent(CFG.slug) + '/livestream',
+          {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var d = j && j.data;
+        viewers = d ? (d.viewers || d.viewer_count || 0) : 0;
+        if (d){
+          if (String(d.id) !== String(sess.id)){   // transmisión nueva
+            sess = {id:String(d.id), subs:0, kicks:0, seen:Date.now()};
+            saveSess(); paintSubs();
+          }
+          if (!sess.seen){ sess.seen=Date.now(); saveSess(); }
+          // 1) la hora que reporta Kick  2) si no sirve, desde que la vimos en vivo
+          startMs = parseKickDate(d.created_at) || parseKickDate(d.start_time) || sess.seen;
+        } else if (CFG.test){
+          // En modo prueba, si no estás al aire igual echamos a andar el
+          // reloj para poder comprobar que avanza segundo a segundo.
+          if (!fakeStart) fakeStart = Date.now();
+          startMs = fakeStart; viewers = 0;
+        } else {
+          startMs = null;   // fuera de línea: el contador de subs se conserva
+        }
+        paintViewers(); paintUptime();
+      })
+      .catch(function(){ /* sin red: se queda con el último valor */ });
+  }
+  paintViewers(); paintUptime(); paintSubs(); paintKicks();
+  pollViewers();
+  setInterval(pollViewers, Math.max(10000, CFG.vpoll));
+  setInterval(paintUptime, 1000);
+
+  /* ============================================================
+     BITRATE DE BELABOX
+     Lee el endpoint público de stats del relay (stats.srt.belabox.net).
+     Es de SOLO LECTURA: con ese token nadie puede controlar tu equipo.
+     Además de mostrar el número, avisa en el feed el momento exacto
+     en que la señal se corta y cuándo vuelve.
+     ============================================================ */
+  var $bela=document.getElementById('pBela');
+  var belaConn=null, belaFails=0;
+
+  /* ---- gráfica: historial del bitrate ----
+     Se lee cada segundo, pero se dibuja un punto por cada tramo de
+     3 segundos (igual que IRL Toolkit) para que no se vea amontonado.
+     Cada punto guarda la lectura MÁS EXTREMA de su tramo: si en esos
+     3 segundos el bitrate se fue para arriba o se cayó, eso es lo que
+     queda marcado (antes solo se guardaba la más baja y los picos
+     hacia arriba se borraban). El último punto se va moviendo con
+     cada lectura y ya no brinca cuando su tramo se cierra. */
+  var SLOTS=Math.max(5, Math.round(CFG.bwin/CFG.bstep));
+  var pts=[];          // {i: número de tramo, mn, mx, first: lecturas del tramo}
+  var lastRead=null;   // {v, c, rtt} la lectura más reciente
+
+  var $graph=document.getElementById('graph'), $gSvg=document.getElementById('gSvg'),
+      $gBig=document.getElementById('gBig'), $gRtt=document.getElementById('gRtt'),
+      $gSc=document.querySelector('#graph .sc');
+  document.getElementById('gLow').textContent='Low '+CFG.blow;
+  document.getElementById('gOff').textContent='Offline '+CFG.boff;
+  document.getElementById('gWin').textContent='últimos '+Math.round(CFG.bwin/1000)+' s';
+  document.getElementById('gL').textContent='hace '+Math.round(CFG.bwin/1000)+' s';
+  var graphOpen=false;
+
+  $bela.onclick=function(){ graphOpen ? closeGraph() : openGraph(); };
+  // Tocar el encabezado cierra la gráfica; tocar la gráfica muestra el
+  // valor exacto del punto que tocaste (como pasar el mouse en IRL Toolkit).
+  $graph.querySelector('.hd').onclick=closeGraph;
+  $graph.querySelector('.lg').onclick=closeGraph;
+  var inspect=null, inspectT=null;   // {s: posición del punto tocado}
+  function inspectAt(ev){
+    var r=$gSvg.getBoundingClientRect(), x=ev.clientX-r.left;
+    var L=gGeom.L, W=gGeom.W, R=gGeom.R;
+    if (!W) return;
+    var s=Math.round((x-L)/((W-L-R)/(SLOTS-1)));
+    s=Math.max(0, Math.min(SLOTS-1, s));
+    // el punto con dato más cercano
+    var best=null;
+    gP.forEach(function(q){ if (q.v!=null && (!best || Math.abs(q.s-s)<Math.abs(best.s-s))) best=q; });
+    if (!best) return;
+    inspect={s:best.s, i:best.i};
+    clearTimeout(inspectT);
+    inspectT=setTimeout(function(){ inspect=null; renderGraph(); }, 4000);
+    renderGraph();
+  }
+  $gSvg.addEventListener('pointerdown', function(ev){ ev.stopPropagation(); inspectAt(ev);
+    try{ $gSvg.setPointerCapture(ev.pointerId); }catch(e){} });
+  $gSvg.addEventListener('pointermove', function(ev){ if (ev.buttons || ev.pointerType==='touch') inspectAt(ev); });
+  $gSvg.style.touchAction='none';
+  // Se queda abierta hasta que la vuelvas a tocar.
+  function openGraph(){ if (typeof closeList==='function') closeList(); if (typeof closeTitle==='function') closeTitle();
+                       graphOpen=true; shownTop=null; zoomTo=null; $graph.classList.add('show'); drawGraph(); }
+  function closeGraph(){ graphOpen=false; $graph.classList.remove('show'); }
+  window.addEventListener('resize', function(){ if (graphOpen) drawGraph(); });
+
+  var C_BLUE='#3ea6ff', C_LOW='#ffc107', C_OFF='#ff453a', C_SURF='#181b21';
+
+  // Estado según NOALBS: 'ok', 'warn' (abajo de Low) o 'down' (abajo de Offline o sin señal).
+  function belaState(kbps, conn){
+    if (!conn || kbps < CFG.boff) return 'down';
+    return kbps < CFG.blow ? 'warn' : 'ok';
+  }
+  var STATE_TXT={ok:'#53fc18', warn:'#ffb020', down:'#ff3b30'};
+  function dotColor(v){ return v < CFG.boff ? C_OFF : (v < CFG.blow ? C_LOW : C_BLUE); }
+
+  // v = kbps (0 si no hay señal) o null si el celular no pudo leer las stats.
+  function addSample(v){
+    var idx=Math.floor(Date.now()/CFG.bstep);
+    var last=pts[pts.length-1];
+    if (last && last.i===idx){
+      if (v!=null){
+        if (last.first==null){ last.first=v; last.mn=v; last.mx=v; }
+        else { last.mn=Math.min(last.mn,v); last.mx=Math.max(last.mx,v); }
+      }
+    } else {
+      // Tramos sin ninguna lectura (celular sin internet o pantalla
+      // apagada) quedan vacíos: la línea se corta en lugar de caer a 0.
+      var from = last ? last.i+1 : idx;
+      if (idx-from > SLOTS) from = idx-SLOTS;
+      for (var k=from;k<idx;k++) pts.push({i:k, first:null, mn:null, mx:null});
+      pts.push({i:idx, first:v, mn:v, mx:v});
+    }
+    while (pts.length && pts[0].i <= idx-SLOTS) pts.shift();
+  }
+
+  function niceStep(top){
+    // Pasos redondos como IRL Toolkit: de 200 en 200 cuando está de
+    // cerca (0 a 1,000), de 1,000 en 1,000 cuando anda en 6,000…
+    // Siempre de 1,000 en 1,000 cuando el bitrate anda alto, así la
+    // cuadrícula casi no cambia de tamaño.
+    if (top <= 1200)  return 200;
+    if (top <= 3000)  return 500;
+    if (top <= 12000) return 1000;
+    return 2000;
+  }
+  // Números completos en el eje: 2,000 / 4,000 / 10,000 (sin abreviar).
+  function axisLabel(v){ return Number(v).toLocaleString('es-MX'); }
+
+  function drawGraph(){
+    if (!graphOpen) return;
+
+    // ---- encabezado: número grande y RTT ----
+    if (lastRead){
+      var st=belaState(lastRead.v, lastRead.c);
+      $gBig.textContent = lastRead.c ? fmtRate(lastRead.v) : 'sin señal';
+      $gBig.style.color = STATE_TXT[st];
+      if (lastRead.c && lastRead.rtt){
+        $gRtt.textContent=lastRead.rtt+' ms';
+        $gRtt.style.color = lastRead.rtt>=CFG.roff ? '#ff3b30' : (lastRead.rtt>=CFG.rlow ? '#ffb020' : '');
+      } else $gRtt.textContent='';
+    } else { $gBig.textContent='—'; $gBig.style.color=''; $gRtt.textContent=''; }
+
+    // ---- puntos visibles ----
+    var cur=Math.floor(Date.now()/CFG.bstep);
+    gP=[];   // {s: posición 0..SLOTS-1, v, live}
+    var prev=null;
+    for (var j=0;j<pts.length;j++){
+      var p=pts[j], s=SLOTS-1-(cur-p.i), v=null;
+      if (p.first!=null){
+        // de las lecturas del tramo, la que más se aleja del punto anterior
+        var ref = (prev!=null) ? prev : p.first;
+        v = Math.abs(p.mx-ref) > Math.abs(p.mn-ref) ? p.mx : p.mn;
+      }
+      prev = (v!=null) ? v : prev;
+      if (s<0 || s>SLOTS-1) continue;
+      gP.push({s:s, v:v, live:(p.i===cur), i:p.i});
+    }
+
+    // ---- ZOOM AUTOMÁTICO (como IRL Toolkit) ----
+    // La escala se ajusta a todo lo que se ve en los 60 s: nada se corta.
+    // Si el bitrate anda bajo, la gráfica se va acercando conforme los
+    // valores altos salen por la izquierda; si sube, se aleja.
+    var mx=0;
+    gP.forEach(function(q){ if (q.v!=null && q.v>mx) mx=q.v; });
+    var want=Math.max(mx*1.05, CFG.blow*2, 1000);
+    var step=niceStep(want), target=Math.ceil(want/step)*step;
+
+    if (shownTop==null){ shownTop=target; }
+    if (target!==zoomTo){
+      // transición suave de ~0.6 s en lugar de un brinco
+      zoomFrom=shownTop; zoomTo=target; zoomT0=Date.now();
+      if (!zoomRaf) zoomRaf=requestAnimationFrame(zoomTick);
+    }
+    renderGraph();
+  }
+
+  var gGeom={}, gP=[], shownTop=null, zoomFrom=null, zoomTo=null, zoomT0=0, zoomRaf=0, ZOOM_MS=600;
+  function zoomTick(){
+    zoomRaf=0;
+    if (!graphOpen){ shownTop=zoomTo; return; }
+    var t=Math.min(1, (Date.now()-zoomT0)/ZOOM_MS);
+    var e=1-Math.pow(1-t,3);                      // empieza rápido y frena suave
+    shownTop = zoomFrom + (zoomTo-zoomFrom)*e;
+    renderGraph();
+    if (t<1) zoomRaf=requestAnimationFrame(zoomTick);
+  }
+
+  function renderGraph(){
+    var P=gP, top=shownTop||1000;
+    var step=niceStep(top);
+
+    // ---- medidas reales del SVG (se adapta al ancho del celular) ----
+    var W=$gSvg.clientWidth||360, H=$gSvg.clientHeight||150;
+    var R=8, T=8, B=6;
+    var maxTick=Math.floor(top/step)*step;
+    // Si hay muchas rayas, se escribe el número solo en una sí y una no
+    // (0, 2,000, 4,000…) para que no se amontonen. Las rayas se quedan.
+    var every = (top/step > 6) ? 2 : 1;
+    var L = 12 + axisLabel(maxTick).length*6.6;  // margen según el número más largo
+    $gSc.style.paddingLeft = L+'px';
+    $gSvg.setAttribute('viewBox','0 0 '+W+' '+H);
+
+    gGeom={L:L, W:W, R:R};
+    var X=function(s){ return L + s*(W-L-R)/(SLOTS-1); };
+    var Y=function(v){ return T + (1-Math.max(0,v)/top)*(H-T-B); };
+    var f=function(n){ return n.toFixed(1); };
+
+    // Recorte de seguridad para que nada se salga del recuadro.
+    var out='<defs><clipPath id="gClip"><rect x="'+(L-6)+'" y="0" width="'+(W-L+6)+'" height="'+(H-B+8)+'"/></clipPath></defs>';
+    // cuadrícula horizontal y números del eje
+    for (var v=0, n=0; v<=top+0.5; v+=step, n++){
+      if (n % every) continue;
+      var y=f(Y(v));
+      out+='<text x="'+(L-6)+'" y="'+(+y+4)+'" text-anchor="end" font-size="11" font-weight="600" fill="#b4bac5">'+axisLabel(v)+'</text>';
+    }
+    out+='<g clip-path="url(#gClip)">';
+
+    // tramos continuos (se cortan donde no hubo lectura)
+    var segs=[], seg=[];
+    P.forEach(function(q){
+      if (q.v==null){ if (seg.length) segs.push(seg); seg=[]; }
+      else {
+        if (seg.length && q.s !== seg[seg.length-1].s+1){ segs.push(seg); seg=[]; }
+        seg.push(q);
+      }
+    });
+    if (seg.length) segs.push(seg);
+
+    // Línea curva suave (como IRL Toolkit) sin pasarse de los puntos reales.
+    function smooth(xy){
+      var n=xy.length; if (n<3){ var d0=''; xy.forEach(function(p,k){ d0+=(k?'L':'M')+f(p[0])+' '+f(p[1])+' '; }); return d0; }
+      var dx=[],m=[],t=[];
+      for (var i=0;i<n-1;i++){ dx[i]=xy[i+1][0]-xy[i][0]; m[i]=(xy[i+1][1]-xy[i][1])/dx[i]; }
+      t[0]=m[0]; t[n-1]=m[n-2];
+      for (i=1;i<n-1;i++) t[i]=(m[i-1]*m[i]<=0)?0:(m[i-1]+m[i])/2;
+      for (i=0;i<n-1;i++){
+        if (m[i]===0){ t[i]=0; t[i+1]=0; continue; }
+        var a=t[i]/m[i], b=t[i+1]/m[i], h=a*a+b*b;
+        if (h>9){ var k3=3/Math.sqrt(h); t[i]=k3*a*m[i]; t[i+1]=k3*b*m[i]; }
+      }
+      var d='M'+f(xy[0][0])+' '+f(xy[0][1]);
+      for (i=0;i<n-1;i++){
+        var h3=dx[i]/3;
+        d+=' C'+f(xy[i][0]+h3)+' '+f(xy[i][1]+t[i]*h3)+' '+f(xy[i+1][0]-h3)+' '+f(xy[i+1][1]-t[i+1]*h3)+' '+f(xy[i+1][0])+' '+f(xy[i+1][1]);
+      }
+      return d+' ';
+    }
+    var paths=segs.map(function(sg){
+      var d=smooth(sg.map(function(q){ return [X(q.s), Y(q.v)]; }));
+      return {d:d, x0:f(X(sg[0].s)), x1:f(X(sg[sg.length-1].s))};
+    });
+    var y0=f(Y(0));
+    // la "montaña": relleno suave debajo de la línea
+    paths.forEach(function(pa){
+      out+='<path d="'+pa.d+'L'+pa.x1+' '+y0+' L'+pa.x0+' '+y0+' Z" fill="rgba(52,120,210,.72)"/>';
+    });
+    // cuadrícula tipo cuaderno: una raya vertical por cada punto y una
+    // horizontal por cada número del eje (se ve encima de la montaña)
+    for (var gs=0; gs<SLOTS; gs++){
+      var gx=f(X(gs));
+      out+='<line x1="'+gx+'" x2="'+gx+'" y1="'+T+'" y2="'+y0+'" stroke="rgba(255,255,255,.07)" stroke-width="1"/>';
+    }
+    for (var gv=0; gv<=top+0.5; gv+=step){
+      var gy=f(Y(gv));
+      out+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+gy+'" y2="'+gy+'" stroke="rgba(255,255,255,'+(gv?'.10':'.22')+')" stroke-width="1"/>';
+    }
+    // líneas de NOALBS
+    out+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+f(Y(CFG.blow))+'" y2="'+f(Y(CFG.blow))+'" stroke="'+C_LOW+'" stroke-width="1.5"/>';
+    out+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+f(Y(CFG.boff))+'" y2="'+f(Y(CFG.boff))+'" stroke="'+C_OFF+'" stroke-width="1.5"/>';
+    // la línea del bitrate
+    paths.forEach(function(pa){
+      out+='<path d="'+pa.d+'" fill="none" stroke="#eef4ff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+    });
+    // Puntos solo donde dicen algo: amarillos abajo de Low, rojos abajo de
+    // Offline, el más alto, el más bajo y el del momento. Los demás no se
+    // dibujan para que la gráfica se vea limpia.
+    var hiQ=null, loQ=null;
+    P.forEach(function(q){ if (q.v==null||q.live) return; if(!hiQ||q.v>hiQ.v)hiQ=q; if(!loQ||q.v<loQ.v)loQ=q; });
+    P.forEach(function(q){
+      if (q.v==null) return;
+      var cx=f(X(q.s)), cy=f(Y(q.v)), col=dotColor(q.v);
+      if (col===C_BLUE && !q.live && q!==hiQ && q!==loQ) return;
+      if (q.live){
+        out+='<circle cx="'+cx+'" cy="'+cy+'" r="7.5" fill="none" stroke="'+col+'" stroke-width="2"/>'+
+             '<circle cx="'+cx+'" cy="'+cy+'" r="5" fill="#fff" stroke="'+C_SURF+'" stroke-width="2"/>';
+      } else {
+        out+='<circle cx="'+cx+'" cy="'+cy+'" r="3.3" fill="'+(col===C_BLUE?'#2a62b0':col)+'" stroke="#fff" stroke-width="1.4"/>';
+      }
+    });
+    // Valor escrito junto al punto más alto y el más bajo de la gráfica,
+    // para saber exacto hasta dónde subió y hasta dónde se cayó.
+    var hi=null, lo=null;
+    P.forEach(function(q){
+      if (q.v==null || q.live) return;
+      if (!hi || q.v>hi.v) hi=q;
+      if (!lo || q.v<lo.v) lo=q;
+    });
+    function tag(q, above){
+      var cx=X(q.s), cy=Y(q.v), ty = above ? cy-9 : cy+17;
+      if (ty < T+9) ty = cy+17;            // no se sale por arriba
+      if (ty > H-B-2) ty = cy-9;           // ni por abajo
+      cx=Math.max(L+16, Math.min(W-R-16, cx));
+      var col = q.v < CFG.blow ? STATE_TXT[belaState(q.v,true)] : '#fff';
+      return '<text x="'+f(cx)+'" y="'+f(ty)+'" text-anchor="middle" font-size="11" font-weight="700" '+
+             'fill="'+col+'" stroke="'+C_SURF+'" stroke-width="3" paint-order="stroke">'+axisLabel(Math.round(q.v))+'</text>';
+    }
+    if (hi && lo && hi!==lo && hi.v-lo.v > top*0.12){ out+=tag(hi,true)+tag(lo,false); }
+
+    // Punto tocado: raya vertical y burbuja con el valor exacto.
+    if (inspect){
+      var iq=null; P.forEach(function(q){ if (q.i===inspect.i && q.v!=null) iq=q; });
+      if (iq){
+        var ix=X(iq.s), iy=Y(iq.v);
+        var ago=Math.round((SLOTS-1-iq.s)*CFG.bstep/1000);
+        var txt=fmtRate(iq.v), sub= iq.live ? 'ahora' : 'hace '+ago+' s';
+        var bw=Math.max(txt.length, sub.length)*7+16, bx=Math.max(L, Math.min(W-R-bw, ix-bw/2));
+        var by = iy-52 < T ? iy+14 : iy-52;
+        out+='<line x1="'+f(ix)+'" x2="'+f(ix)+'" y1="'+T+'" y2="'+f(Y(0))+'" stroke="#fff" stroke-opacity=".55" stroke-width="1"/>'+
+             '<circle cx="'+f(ix)+'" cy="'+f(iy)+'" r="6" fill="none" stroke="#fff" stroke-width="2"/>'+
+             '<rect x="'+f(bx)+'" y="'+f(by)+'" width="'+bw+'" height="38" rx="7" fill="#0e0f13" fill-opacity=".92" stroke="rgba(255,255,255,.25)"/>'+
+             '<text x="'+f(bx+bw/2)+'" y="'+f(by+16)+'" text-anchor="middle" font-size="12.5" font-weight="800" fill="'+STATE_TXT[belaState(iq.v,true)]+'">'+txt+'</text>'+
+             '<text x="'+f(bx+bw/2)+'" y="'+f(by+30)+'" text-anchor="middle" font-size="10" fill="#9aa1ad">'+sub+'</text>';
+      }
+    }
+    out+='</g>';
+    $gSvg.innerHTML=out;
+  }
+
+  // Por defecto el número exacto en Kbps (5212 Kbps).
+  // Con ?bunit=mbps lo muestra redondeado (5.2 Mbps).
+  function fmtRate(kbps){
+    var n=Math.round(Number(kbps)||0);
+    if (CFG.bunit==='mbps')
+      return n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+' Mbps' : n+' Kbps';
+    return n+' Kbps';
+  }
+
+  function pollBela(){
+    if (!CFG.bela) return;
+    fetch(CFG.bela, {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        belaFails=0;
+        var pub = j && j.publishers ? (j.publishers.live || j.publishers[Object.keys(j.publishers)[0]]) : null;
+        if (!pub){
+          $bela.textContent='📶 —'; $bela.className='pill';
+          addSample(null); drawGraph(); return;
+        }
+
+        var conn = !!pub.connected;
+        var kbps = conn ? Number(pub.bitrate||0) : 0;
+        var rtt  = Math.round(Number(pub.rtt||0));
+
+        lastRead={v:kbps, c:conn, rtt:rtt};
+        addSample(kbps);
+
+        var st=belaState(kbps, conn);
+        $bela.textContent = conn ? '📶 '+fmtRate(kbps) : '📶 sin señal';
+        $bela.className = 'pill '+st;
+        drawGraph();
+
+        // Solo avisamos los cambios, no el estado inicial.
+        if (CFG.signal && belaConn !== null && conn !== belaConn){
+          if (conn) push('signal','<span class="name">Señal restablecida</span>',
+                         fmtRate(kbps), 'sig:up:'+Date.now(), null, 'up');
+          else      push('signal','<span class="name">Se cortó la señal</span>',
+                         'El relay dejó de recibir video', 'sig:down:'+Date.now());
+        }
+        belaConn = conn;
+        fitBar();
+      })
+      .catch(function(){
+        // El celular no pudo leer las stats: hueco en la gráfica.
+        // A los 5 intentos fallidos la píldora (y el número grande)
+        // se marcan como desconocidos para no enseñar un dato viejo.
+        if (++belaFails>=5){ $bela.textContent='📶 ?'; $bela.className='pill'; lastRead=null; }
+        addSample(null); drawGraph();
+      });
+  }
+  if (CFG.bela){
+    $bela.style.display='';
+    pollBela();
+    setInterval(pollBela, Math.max(500, CFG.bpoll));
+  }
+
+  /* ============================================================
+     FILTROS
+     ============================================================ */
+  var TYPES = [
+    ['follow','Seguidores',false],['sub','Subs',true],['gift','Gifted',true],
+    ['kicks','Kicks',true],['tip','Tips',true],['reward','Recompensas',true],
+    ['host','Hosts',true],['live','En vivo',false],['mod','Moderación',false],
+    ['gap','Cortes de conexión',false],['poll','Encuestas y predicciones',true]
+  ];
+  // Los avisos de señal ya no van al feed; con ?signal=1 vuelven.
+  if (CFG.signal) TYPES.splice(7,0,['signal','Señal',true]);
+  var enabled = {}, chips = {};
+  TYPES.forEach(function(t){ enabled[t[0]] = t[2]; });
+  try{
+    var saved = JSON.parse(LSget('kickfeed.filters','null'));
+    if (saved) Object.keys(enabled).forEach(function(k){ if (k in saved) enabled[k] = !!saved[k]; });
+  }catch(e){}
+  // Una sola vez: apagar seguidores, "en vivo/terminado" y los avisos de
+  // corte, que llenaban el feed. Después tú decides con los botones.
+  if (LSget('kickfeed.fv','')!=='36'){
+    enabled.follow=false; enabled.live=false; enabled.gap=false;
+    LSset('kickfeed.filters', JSON.stringify(enabled)); LSset('kickfeed.fv','36');
+  }
+  TYPES.forEach(function(t){ var v=Q.get(t[0]); if(v==='0')enabled[t[0]]=false; if(v==='1')enabled[t[0]]=true; });
+
+  var $rw = document.getElementById('rwBtn');
+
+  function setFilter(type, value){
+    enabled[type] = value;
+    if (chips[type]) chips[type].classList.toggle('on', value);
+    if (type === 'reward') $rw.classList.toggle('on', value);
+    LSset('kickfeed.filters', JSON.stringify(enabled));
+    Array.prototype.forEach.call($feed.querySelectorAll('.item.'+type), function(el){
+      el.style.display = value ? '' : 'none';
+    });
+    if (type === 'poll' && typeof renderPins === 'function') renderPins();
+  }
+
+  TYPES.forEach(function(t){
+    var b=document.createElement('button');
+    b.className='chip f'+(enabled[t[0]]?' on':''); b.textContent=t[1];
+    b.onclick=function(){ setFilter(t[0], !enabled[t[0]]); };
+    chips[t[0]]=b; $filt.appendChild(b);
+  });
+
+  $rw.classList.toggle('on', enabled.reward);
+  $rw.onclick = function(){ setFilter('reward', !enabled.reward); };
+
+  /* copiar historial */
+  var cp=document.createElement('button');
+  cp.className='chip wide'; cp.textContent='📋  Copiar historial';
+  cp.onclick=function(){
+    var txt=LOG.map(function(e){
+      var d=document.createElement('div');
+      d.innerHTML=e.html+(e.sub?' — '+e.sub:'')+(e.msg?' — "'+e.msg+'"':'')+(e.ptxt?' — '+esc(e.ptxt):'');
+      return hhmm(e.ts)+'  '+d.textContent.replace(/\s+/g,' ').trim();
+    }).join('\n');
+    copy(txt, cp, '📋  Copiar historial', LOG.length);
+  };
+  $filt.appendChild(cp);
+
+  /* copiar diagnóstico: los eventos crudos que mandó Kick */
+  var dg=document.createElement('button');
+  dg.className='chip wide'; dg.textContent='🧪  Copiar diagnóstico';
+  dg.onclick=function(){ copy(RAW.join('\n\n'), dg, '🧪  Copiar diagnóstico', RAW.length); };
+  $filt.appendChild(dg);
+
+  var ver=document.createElement('div');
+  ver.className='chip wide'; ver.style.cssText='cursor:default;opacity:.55;border-style:dashed';
+  ver.textContent='Versión '+VERSION;
+  $filt.appendChild(ver);
+
+  var clr=document.createElement('button');
+  clr.className='chip wide'; clr.textContent='🗑  Vaciar historial';
+  clr.onclick=function(){
+    if (!confirm('¿Borrar todos los eventos guardados?')) return;
+    LOG=[]; RAW=[]; saveLog(true); LSset('kickfeed.raw','[]'); repaint();
+  };
+  $filt.appendChild(clr);
+
+  function copy(txt, btn, original, n){
+    var ok=function(){ btn.textContent='✅  Copiado ('+n+')';
+                       setTimeout(function(){ btn.textContent=original; },1800); };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(ok, function(){ fb(txt, ok); });
+    } else fb(txt, ok);
+  }
+  function fb(txt, ok){
+    var ta=document.createElement('textarea');
+    ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); ok(); }catch(e){}
+    document.body.removeChild(ta);
+  }
+
+  document.getElementById('gear').onclick=function(){
+    if ($filt.classList.toggle('open') && typeof closeTitle==='function') closeTitle();
+  };
+
+  /* ============================================================
+     PANEL DE BOTRIX (opcional)
+     ============================================================ */
+  var $bx=document.getElementById('bx'), $bxBtn=document.getElementById('bxBtn');
+  if (/^https:\/\/(www\.)?botrix\.live\//i.test(CFG.botrix)){
+    var fr=document.createElement('iframe');
+    fr.src=CFG.botrix;
+    $bx.appendChild(fr);
+    $bx.style.height=Math.min(80,Math.max(15,CFG.botrixH))+'vh';
+    $bxBtn.style.display='';
+    var bxOpen = LSget('kickfeed.botrix','1')==='1';
+    var bxSet = function(v){
+      bxOpen=v; $bx.classList.toggle('show',v);
+      $bxBtn.classList.toggle('on',v); LSset('kickfeed.botrix', v?'1':'0');
+    };
+    bxSet(bxOpen);
+    $bxBtn.onclick=function(){ bxSet(!bxOpen); };
+    document.getElementById('bxClose').onclick=function(){ bxSet(false); };
+  }
+
+  /* ============================================================
+     RENDER
+     ============================================================ */
+  var KICKS_ICON='<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC4AAAAwCAYAAABuZUjcAAADu0lEQVR42u2Y229UVRjFf9+Z4wy0Ci0CllJFQCnGeo3X1As++ORf65NvJJhwi1FRE7F1jFjoZUy5CJQWZs4sX9ZJTiaFmbFnig/nSybtzJzZe31rr72+b2+ooooqqqiiiqcQUfaAkoYaMyJUMb4DtmvAIeAgMAbUAG0zXxfYAm4CrYhoDztXWpY8vOQHga+Az4AXgYbBdgrzCWgDq8Al4BtJvw8rmbTkFTwCfGDwz/d59q7nbwJrku4DGjSBtESZHABOANPAs2ZWT5DjXid6GrgFXAduAxu7CXw/8BbwPnDM40afPVQDXga+BCaA74CfJW1GRHekwG19Y8CrwKfA58DJwqbsFJIosv8QSICj3hfHgXHggVn/Z2TAJe0BJs3avF8nDW4JuGHnmDKwvX7/q2Ux4VWaAE4Z8ApwR9JiRNwdFeOTnngeOGOt1g3qvB2jDbxhl5kBFoGvgavAS07kjN1nFvjQrGeSFiLiQanA7df7PNkXwHue/J5t7gpwDsgMLvH3PwBnzexrltg7wGGP97a9fQVYdhKlMh5e+ilP3vDndet6w07R9gpsAdeAZkTck/SMn029H3By016ZA4UxS5dKzmKjJ6H8lQL3zdwScD0iJCmxbb7rpMcLv697s9cLCY3MDtXzf2bgtYjYlLSUFxa70CQwB3zsPbKn4DjaZszSged2191GRilQdyuQ9RSdGeAV4E0XoKJN5u1Atx/45Ck0djUnlj6mQMWgOmWHOo9tViIDHuWatq4BNu061+zn6z0SCY+ZjFIqj3ObxEudSaq7zU0krUZER9LftsvDdo/5wgYfuENMS9qYvZsr1+i4e5cXgBVXxNuSmi71p+zdjcLvskE0vhPgHbemN+0UeQINl/FDfp8XmQS4Iuk80PImbBtoHrn/bxR6+FKBZ66SfwAXDXbKrE/ZMbb83BzwkaUx66SaLvmzrpg4id/cDiz3a2//E3BvunVr9ZFZ+sRN1ox7k2P+7og/H/PhYp8bsMkemTSBb03EookZiVQ2zPgdV8iOpXHaHeNRM16sguPua+YsnTEzvWzQl4FffA4djcY98ENJawacFP6+/oReI/UJqQusAQtuvi5ZJuuDHN92bIcR0ZXUAr432Bn3IvU+R7euG7CzwAXgT4Pu7NrRzUetlqSrwF92mok+VXDTzddPwI+WXHe3fLz3emLNIPY7gecsnXbeeBWObqtmegG4Nez1RNkXQomLzbTdo+45sp7Dc2bGW8CNiNj6X12TSYph7xKrqKKKKqqooopRxL8sB1fXdhc6MgAAAABJRU5ErkJggg==" alt="Kicks">';
+  var ICONS={follow:'♥',sub:'★',gift:'🎁',kicks:KICKS_ICON,tip:'💰',reward:'◆',
+             host:'▶',live:'●',signal:'📶',mod:'⛔',sys:'·',gap:'⚠',poll:'📊'};
+  var FOLD_TXT='💬 Toca para ver lo que escribió';
+
+  function esc(s){
+    return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function emotes(s){
+    return esc(s).replace(/\[emote:(\d+):([^\]]*)\]/g,function(_,id,name){
+      return '<img class="em" src="https://files.kick.com/emotes/'+id+'/fullsize" alt="'+esc(name)+
+             '" onerror="this.replaceWith(document.createTextNode(this.alt))">';
+    });
+  }
+  function hhmm(ts){
+    var d=new Date(ts);
+    return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  }
+
+  var LOG=[], RAW=[];
+  if (CFG.keep){
+    try{ LOG = JSON.parse(LSget('kickfeed.log','[]')) || []; }catch(e){ LOG=[]; }
+    try{ RAW = JSON.parse(LSget('kickfeed.raw','[]')) || []; }catch(e){ RAW=[]; }
+  }
+  var saveT=null;
+  function flushLog(){ clearTimeout(saveT); LSset('kickfeed.log', JSON.stringify(LOG.slice(0,CFG.max))); }
+  function saveLog(now){
+    if (!CFG.keep) return;
+    if (now) return flushLog();
+    clearTimeout(saveT); saveT=setTimeout(flushLog,400);
+  }
+  window.addEventListener('pagehide', function(){ if(CFG.keep) flushLog(); });
+  document.addEventListener('visibilitychange', function(){ if(document.hidden && CFG.keep) flushLog(); });
+
+  var seen={};
+  function dedupe(key){
+    if(!key) return false;
+    var now=Date.now();
+    if(seen[key] && now-seen[key]<8000) return true;
+    seen[key]=now;
+    if(Object.keys(seen).length>400) seen={};
+    return false;
+  }
+
+  /* --- separadores de día --- */
+  function dayKey(ts){ var d=new Date(ts); return d.getFullYear()+'-'+d.getMonth()+'-'+d.getDate(); }
+  var DIAS=['dom','lun','mar','mié','jue','vie','sáb'];
+  var MESES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  function dayLabel(ts){
+    var d=new Date(ts);
+    return DIAS[d.getDay()]+' '+d.getDate()+' '+MESES[d.getMonth()];
+  }
+  function daySep(ts){
+    var s=document.createElement('div');
+    s.className='day'; s.dataset.day=dayKey(ts); s.textContent=dayLabel(ts);
+    return s;
+  }
+
+  function itemEl(ev){
+    var el=document.createElement('div');
+    var fold = !!(ev.fold && ev.msg);
+    el.className='item '+ev.type+(ev.cls?' '+ev.cls:'')+(fold?' fold':'');
+    el.dataset.id=ev.id;
+    if(!enabled[ev.type] && ev.type!=='sys') el.style.display='none';
+    el.innerHTML=
+      '<div class="ic">'+(ev.ic||ICONS[ev.type]||'·')+'</div>'+
+      '<div class="body"><div class="line">'+ev.html+
+          ((ev.n>1)?'<span class="mult"> ×'+ev.n+'</span>':'')+'</div>'+
+        (ev.sub?'<span class="sub">'+ev.sub+'</span>':'')+
+        (fold?'<span class="more">'+FOLD_TXT+'</span>':'')+
+        (ev.msg?'<span class="msg">'+ev.msg+'</span>':'')+
+        (ev.px?'<span class="px">'+ev.px+'</span>':'')+
+      '</div>'+
+      '<div class="right"><div class="t">'+hhmm(ev.ts)+'</div>'+
+        (ev.type==='signal' ? '<div class="x">✕</div>' : '')+
+      '</div>';
+
+    // Moderación: al tocar se abre lo que escribió la persona.
+    if (fold){
+      el.onclick=function(){
+        var open=el.classList.toggle('open');
+        el.querySelector('.more').textContent = open ? '▾ Ocultar' : FOLD_TXT;
+      };
+    }
+    // Los avisos de señal se pueden borrar para que no ensucien la actividad.
+    if (ev.type==='signal'){
+      el.querySelector('.x').onclick=function(e){
+        e.stopPropagation();
+        for (var i=0;i<LOG.length;i++){
+          if (LOG[i].id===ev.id){ LOG.splice(i,1); saveLog(true); break; }
+        }
+        el.remove();
+        if (shown>0) shown--;
+        paintMore();
+      };
+    }
+    return el;
+  }
+
+  /* Pintado por tandas: primero las más recientes, el resto con "Ver más". */
+  var shown=0, topDay=null, bottomDay=null, $more=null;
+
+  function appendMore(){
+    var end=Math.min(LOG.length, shown+CFG.page);
+    for (var i=shown;i<end;i++){
+      var ev=LOG[i], k=dayKey(ev.ts);
+      if (k!==bottomDay){ $feed.appendChild(daySep(ev.ts)); bottomDay=k; if(topDay===null) topDay=k; }
+      $feed.appendChild(itemEl(ev));
+    }
+    shown=end;
+    paintMore();
+  }
+  function paintMore(){
+    if ($more){ $more.remove(); $more=null; }
+    if (shown < LOG.length){
+      $more=document.createElement('button');
+      $more.id='more';
+      $more.textContent='Ver '+Math.min(CFG.page, LOG.length-shown)+' eventos más antiguos ('+
+                        (LOG.length-shown)+' guardados)';
+      $more.onclick=appendMore;
+      $feed.appendChild($more);
+    }
+  }
+  function repaint(){
+    clearTimeout(repaintT); repaintT=null;
+    $feed.innerHTML=''; shown=0; topDay=null; bottomDay=null; $more=null;
+    if ($empty){ $empty=null; }
+    appendMore();
+  }
+
+  /* ============================================================
+     UNA SOLA LÍNEA POR EVENTO
+     Un mismo evento puede llegar por varias vías: el evento directo
+     de Kick, el anuncio de Botrix en el chat y, después de un corte,
+     el historial del chat. "ck" identifica al evento (tipo + nick);
+     si ya hay una línea igual de hace menos de 3 minutos que vino por
+     OTRA vía, no se repite: se juntan. Lo de Kick es lo más completo
+     (trae meses, cuántas subs regaló, etc.), así que si llega después
+     de Botrix, reemplaza el texto.
+     Los contadores (★ subs y ⚡ Kicks) se ajustan aquí mismo, así que
+     un evento repetido nunca suma doble.
+     ============================================================ */
+  var CK_WIN=180000;
+  // Qué fuente manda cuando el mismo evento llega por varias vías.
+  var PRI={botrix:1, kick:2, api:3};
+  function lc(u){ return String(u||'').toLowerCase().trim(); }
+  function num(x){ return parseInt(String(x==null?'':x).replace(/[^\d]/g,''),10)||0; }
+  function findCk(ck, ts){
+    for (var i=0;i<Math.min(LOG.length,500);i++){
+      var e=LOG[i];
+      if (e.ck===ck && Math.abs(e.ts-ts) < CK_WIN) return e;
+    }
+    return null;
+  }
+  function applyCounts(dSubs, dKicks, ts){
+    // Lo recuperado de antes de que empezara el stream no suma a la sesión.
+    if (startMs && ts < startMs-60000) return;
+    if (!dSubs && !dKicks) return;
+    sess.subs  = Math.max(0,(sess.subs||0)+(dSubs||0));
+    sess.kicks = Math.max(0,(sess.kicks||0)+(dKicks||0));
+    saveSess(); paintSubs(); paintKicks();
+  }
+  function refreshEl(ev){
+    var el=$feed.querySelector('.item[data-id="'+ev.id+'"]');
+    if (el) el.replaceWith(itemEl(ev));
+  }
+  var repaintT=null;
+  function scheduleRepaint(){ clearTimeout(repaintT); repaintT=setTimeout(repaint,60); }
+
+  // o: {type, html, sub, msg, cls, key, ck, src, ts, ic, fold, subs, kicks}
+  // Sin "ts" es un evento en vivo; con "ts" es recuperado y va en su hora.
+  function addEvent(o){
+    var live=!o.ts, ts=o.ts||Date.now();
+    if (o.key && live && dedupe(o.key)){            // repetido por otro canal de Kick
+      if (o.msg) enrich(o.key, o.msg);
+      return null;
+    }
+    if (o.ck){
+      var prev=findCk(o.ck, ts);
+      if (prev && prev.src!==o.src){
+        if ((PRI[o.src]||0) > (PRI[prev.src]||0)){
+          applyCounts((o.subs||0)-(prev.subs||0), (o.kicks||0)-(prev.kicks||0), prev.ts);
+          prev.html=o.html; prev.sub=o.sub||''; prev.cls=o.cls||''; prev.src=o.src;
+          prev.subs=o.subs||0; prev.kicks=o.kicks||0; prev.n=1;
+          if (o.key) prev.key=o.key;
+        }
+        if (o.msg && !prev.msg) prev.msg=o.msg;
+        saveLog(true); refreshEl(prev);
+        return null;
+      }
+      if (prev && prev.src==='botrix' && o.src==='botrix'){
+        // Botrix agradece cada sub regalada por separado: se suman en la misma línea.
+        if (o.type==='gift'){
+          prev.n=(prev.n||1)+1; prev.subs=(prev.subs||1)+1;
+          applyCounts(1,0,prev.ts); saveLog(true); refreshEl(prev);
+        }
+        return null;
+      }
+    }
+    var ev={id:'e'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+            type:o.type, html:o.html, sub:o.sub||'', msg:o.msg||'', cls:o.cls||'',
+            key:o.key||'', ck:o.ck||'', src:o.src||'', ts:ts,
+            subs:o.subs||0, kicks:o.kicks||0};
+    if (o.ic) ev.ic=o.ic;
+    if (o.fold) ev.fold=1;
+    if (o.extra) for (var k in o.extra) ev[k]=o.extra[k];
+    applyCounts(ev.subs, ev.kicks, ts);
+    placeEvent(ev, live);
+    return ev;
+  }
+
+  // Lo mete en la lista en su lugar según la hora (lo más nuevo arriba).
+  function placeEvent(ev, live){
+    if ($empty){ $empty.remove(); $empty=null; }
+    if (ev.type==='sys'){                     // avisos del sistema: no se guardan
+      $feed.insertBefore(itemEl(ev), $feed.children[1] || null);
+      return;
+    }
+    var i=0; while (i<LOG.length && LOG[i].ts > ev.ts) i++;
+    LOG.splice(i,0,ev);
+    if (LOG.length>CFG.max) LOG.length=CFG.max;
+    saveLog();
+    if (live && i===0 && !repaintT){
+      var k=dayKey(ev.ts);
+      if (k!==topDay){ $feed.insertBefore(daySep(ev.ts), $feed.firstChild); topDay=k;
+                       if (bottomDay===null) bottomDay=k; }
+      $feed.insertBefore(itemEl(ev), $feed.children[1] || null);
+      shown++;
+      $feed.scrollTop=0;
+    } else scheduleRepaint();
+  }
+
+  // Atajo para los eventos sencillos (follows, recompensas, moderación…).
+  function push(type, html, subHtml, dedupeKey, msgHtml, cls){
+    return addEvent({type:type, html:html, sub:subHtml, key:dedupeKey, msg:msgHtml, cls:cls, src:'kick'});
+  }
+
+  /* Si el mismo evento se repite (recompensas spameadas), en vez de
+     agregar otra línea le sube el contador a la que ya está. */
+  function bump(key, maxAge, cb){
+    for (var i=0;i<Math.min(LOG.length,8);i++){
+      var e=LOG[i];
+      if (e.key===key && Date.now()-e.ts < maxAge){
+        e.n=(e.n||1)+1; e.ts=Date.now();
+        if (cb) cb(e);
+        saveLog(true);
+        var el=$feed.querySelector('.item[data-id="'+e.id+'"]');
+        if (el) el.replaceWith(itemEl(e));
+        return e;
+      }
+    }
+    return null;
+  }
+
+  /* ============================================================
+     AVISO GRANDE CUANDO SPAMEAN UNA RECOMPENSA
+     A partir de cierta cantidad de canjeos seguidos baja una franja
+     con el nombre de la recompensa. Se quita tocándola, y si le
+     siguen dando vuelve a salir.
+     ============================================================ */
+  var $alerts=document.getElementById('alerts');
+  var alertState={};
+
+  function rewardAlert(key, title, n){
+    var st = alertState[key] || (alertState[key] = {el:null, n:0, dismissed:0});
+    st.n = n;
+    if (n < CFG.rwalert) return;
+    if (n < st.dismissed + CFG.rwalert) return;   // ya lo quitaste: espera otra tanda
+    if (st.el){ st.el.querySelector('.n').textContent='×'+n; return; }
+
+    var el=document.createElement('div');
+    el.className='alert';
+    el.innerHTML='<span class="ttl">'+esc(title)+'</span>'+
+                 '<span class="n">×'+n+'</span>'+
+                 '<span class="hint">toca para quitar</span>';
+    el.onclick=function(){ el.remove(); st.el=null; st.dismissed=st.n; };
+    $alerts.appendChild(el);
+    st.el=el;
+  }
+
+  /* Cuando alguien comparte su resub con un mensaje, Kick lo manda
+     aparte del evento de suscripción. Esto le pega el mensaje a la
+     línea de esa persona si acaba de aparecer. */
+  function enrichSub(username, msgHtml){
+    var pref = 's:'+String(username||'');
+    for (var i=0;i<Math.min(LOG.length,15);i++){
+      var e=LOG[i];
+      if (e.type==='sub' && !e.msg && Date.now()-e.ts < 120000 &&
+          String(e.key||'').toLowerCase().indexOf(pref.toLowerCase()) === 0){
+        e.msg = msgHtml; saveLog(true);
+        var el=$feed.querySelector('.item[data-id="'+e.id+'"]');
+        if (el) el.replaceWith(itemEl(e));
+        return;
+      }
+    }
+  }
+
+  // Rellena el mensaje de un evento que ya estaba en la lista.
+  function enrich(key, msgHtml){
+    for (var i=0;i<Math.min(LOG.length,25);i++){
+      if (LOG[i].key===key && !LOG[i].msg){
+        LOG[i].msg=msgHtml; saveLog(true);
+        var el=$feed.querySelector('.item[data-id="'+LOG[i].id+'"]');
+        if (el){
+          var s=document.createElement('span');
+          s.className='msg'; s.innerHTML=msgHtml;
+          el.querySelector('.body').appendChild(s);
+        }
+        return;
+      }
+    }
+  }
+
+  if (LOG.length){ $empty.remove(); $empty=null; appendMore(); }
+
+  function nm(u){ return '<span class="name">'+esc(u||'Alguien')+'</span>'; }
+  function plural(n,one,many){ return n+' '+(Number(n)===1?one:many); }
+
+  /* Busca un texto escrito por la persona en cualquier parte del payload.
+     Kick mete el mensaje de los Kicks en un lugar distinto según el regalo. */
+  var MSG_KEYS=['message','content','text','comment','user_message','msg','body','caption','note'];
+  function deepMessage(obj, depth){
+    depth = depth || 0;
+    if (!obj || typeof obj!=='object' || depth>4) return null;
+    for (var i=0;i<MSG_KEYS.length;i++){
+      var v = obj[MSG_KEYS[i]];
+      if (typeof v==='string' && v.trim() && v.length<500) return v.trim();
+      if (v && typeof v==='object'){
+        var inner = deepMessage(v, depth+1);
+        if (inner) return inner;
+      }
+    }
+    for (var k in obj){
+      if (!Object.prototype.hasOwnProperty.call(obj,k)) continue;
+      if (MSG_KEYS.indexOf(k)!==-1) continue;
+      if (obj[k] && typeof obj[k]==='object'){
+        var d = deepMessage(obj[k], depth+1);
+        if (d) return d;
+      }
+    }
+    return null;
+  }
+
+  /* ============================================================
+     TIPS / DONACIONES  (llegan por el anuncio de Botrix en el chat)
+     ============================================================ */
+  var W = '[\\w\\u00C0-\\u024F.\\-]{2,30}';
+  var AT_RX = new RegExp('@('+W+')');
+  var AMT_CODE_RX = /([\d][\d.,]*)\s*(MXN|USD|EUR|GBP|ARS|COP|CLP|PEN|BRL)\b/i;  // 150 MXN
+  var AMT_NUMSYM_RX = /([\d][\d.,]*)\s*(\$|€|£)/;                                 // 1 $
+  var AMT_SYM_RX  = /(\$|€|£)\s*([\d][\d.,]*)/;                                   // $150
+
+  /* Botrix escribe tal cual las variables que no reconoce, por ejemplo
+     "$(message)". Eso no es texto de nadie, así que se quita. */
+  /* El nick puede traer espacios ("Lil Milk"). En las plantillas de
+     Botrix siempre va entre la @ y la palabra que sigue ("gracias",
+     "se rifó"), así que se captura todo ese pedazo. */
+  var AT_LONG_RX = /@\s*([^\n¡!]{2,40}?)\s+(?:¡\s*)?(?:gracias|thanks|se\s+rif)/i;
+  function nickAfterAt(text){
+    var m = text.match(AT_LONG_RX);
+    if (m && m[1].trim()) return m[1].trim();
+    var a = text.match(AT_RX);
+    return a ? a[1] : null;
+  }
+
+  function dropVars(s){
+    return String(s||'').replace(/\$\([^)]*\)/g,'').replace(/\s{2,}/g,' ').trim();
+  }
+  /* Quita las menciones @nick antes de buscar el monto: si no, un nick
+     como "Beiker05" hacía que la donación saliera como $05. */
+  function stripMentions(s){ return String(s||'').replace(/@\S+/g,' '); }
+  var TIP_RX = [
+    new RegExp('('+W+')\\s+(?:acaba de donar|te acaba de donar|ha donado|te don[oó]|don[oó]|donated|tipped)\\D{0,15}?([\\d][\\d.,]*)','i'),
+    new RegExp('donaci[oó]n de\\s+('+W+')\\D{0,15}?([\\d][\\d.,]*)','i'),
+    new RegExp('(?:tip|propina) de\\s+('+W+')\\D{0,15}?([\\d][\\d.,]*)','i'),
+    new RegExp('^('+W+')\\s*[:\\-]\\s*(?:don[oó]|tip|propina)\\D{0,15}?([\\d][\\d.,]*)','i')
+  ];
+  var NICK_RX = [ new RegExp('(?:gracias|thanks)\\s+(?:a\\s+)?('+W+')','i') ];
+  // "donó", "tip", "propina" = señal fuerte de donación.
+  var TIPSTRONG_RX = /(dona|don[oó]|donat|tipp|tipe|\btip\b|propina)/i;
+  // "gracias" solo no basta: Botrix también da las gracias por subs,
+  // resubs y follows, y eso hacía que una resub saliera como donación.
+  var NOTTIP_RX = /(suscri|subscri|resub|\bsubs?\b|mes(es)?\b|month|renov|seguir|seguidor|follow|puntos|points|kick)/i;
+
+  function tryTip(username, content, msgId, ts){
+    var from = String(username||'').toLowerCase();
+    if (!CFG.tipAll && CFG.tipBots.indexOf(from) === -1) return false;
+
+    // Si pones " | " en la plantilla de Botrix, lo que va después
+    // se muestra aparte como el mensaje que dejó quien donó.
+    var donorMsg='', body=content;
+    var bar = content.lastIndexOf(' | ');
+    if (bar > 0){ donorMsg = dropVars(content.slice(bar+3)); body = content.slice(0,bar); }
+    body = dropVars(body);
+
+    // Los emotes traen números; se quitan antes de buscar el monto.
+    var clean = body.replace(/\[emote:\d+:[^\]]*\]/g,' ');
+    var forAmount = stripMentions(clean);
+
+    var amount=null, cur='';
+    var mc = forAmount.match(AMT_CODE_RX),
+        mn = forAmount.match(AMT_NUMSYM_RX),
+        ms = forAmount.match(AMT_SYM_RX);
+    if (mc){ amount=mc[1]; cur=mc[2].toUpperCase(); }
+    else if (mn){ amount=mn[1]; cur=mn[2]; }
+    else if (ms){ amount=ms[2]; cur=ms[1]; }
+
+    var strong = TIPSTRONG_RX.test(clean);
+    if (!amount && strong){
+      var am = forAmount.match(/([\d][\d.,]*)/);
+      if (am) amount = am[1];
+    }
+    if (!amount) return false;              // sin monto no es tip
+    if (!strong && !cur) return false;      // sin moneda ni palabra clara, tampoco
+    // Habla de subs, meses, follows o Kicks: no es una donación.
+    if (!strong && NOTTIP_RX.test(clean)) return false;
+
+    var who = nickAfterAt(clean);
+    if (!who){
+      for (var i=0;i<TIP_RX.length;i++){
+        var m = clean.match(TIP_RX[i]);
+        if (m){ who=m[1]; break; }
+      }
+    }
+    if (!who){
+      for (var j=0;j<NICK_RX.length;j++){
+        var n = clean.match(NICK_RX[j]); if (n){ who=n[1]; break; }
+      }
+    }
+
+    var money = /^[$€£]$/.test(cur) ? cur+amount : '$'+amount+(cur?' '+cur:'');
+    var head = (who ? nm(who)+' donó' : '<span class="name">Donación</span>') + ' ' + esc(money);
+    addEvent({type:'tip', html:head, sub:emotes(body), key:'tip:'+(msgId||content),
+              msg: donorMsg ? emotes(donorMsg) : null, src:'botrix', ts:ts});
+    return true;
+  }
+
+  /* ============================================================
+     KICKS ANUNCIADOS POR BOTRIX EN EL CHAT
+       @$(name) se rifó $(amount) KICKs! mariotqMONEY | $(message)
+     Kick manda su propio evento de Kicks, así que los dos se
+     juntan en una sola línea (nick + cantidad).
+     ============================================================ */
+  var KICKS_RX = /([\d][\d.,]*)\s*KICKS?\b/i;
+
+  function kicksKey(nick, amount){
+    return 'k:'+lc(nick)+':'+num(amount);
+  }
+
+  function tryKicks(username, content, msgId, ts){
+    var from = String(username||'').toLowerCase();
+    if (!CFG.tipAll && CFG.tipBots.indexOf(from) === -1) return false;
+
+    var donorMsg='', body=content;
+    var bar = content.lastIndexOf(' | ');
+    if (bar > 0){ donorMsg = dropVars(content.slice(bar+3)); body = content.slice(0,bar); }
+    body = dropVars(body);
+
+    var clean = body.replace(/\[emote:\d+:[^\]]*\]/g,' ');
+    var m = stripMentions(clean).match(KICKS_RX);
+    if (!m) return false;
+
+    var amount = m[1];
+    var who = nickAfterAt(clean);
+    if (!who){
+      var w = clean.match(new RegExp('^('+W+')\\s'));
+      if (w) who = w[1];
+    }
+    addEvent({type:'kicks', html:nm(who)+' mandó '+esc(amount)+' Kicks', ck:kicksKey(who, amount),
+              msg: donorMsg ? emotes(donorMsg) : null, src:'botrix', ts:ts, kicks:num(amount)});
+    return true;
+  }
+
+  /* ============================================================
+     SUBS, RESUBS, REGALOS Y HOSTS ANUNCIADOS POR BOTRIX
+     Son tus plantillas de "Alertas de texto" de Botrix:
+       Suscripción:   ¡Gracias @$(name) por la suscripcion mariotqLOVE
+       Re-suscripción:¡Gracias @$(name) por renovar tu suscripción! …
+       Sub regalada:  ¡Gracias por la sub de regalo, @$(name)! …
+       Host:          @$(name) ¡Gracias por ese raid con $(viewers) viewers!
+     Con señal, el evento directo de Kick llega primero y el anuncio
+     de Botrix solo lo confirma (no se duplica). Si tu celular estuvo
+     sin señal, el anuncio de Botrix (que se queda en el chat) es lo
+     que permite recuperarlo.
+     ============================================================ */
+  var NICK = '([\\w\\u00C0-\\u024F.\\-]{2,30})';
+  var BX_SUB   = new RegExp('gracias\\s+@\\s*'+NICK+'\\s+por\\s+la\\s+suscripci[oó]n','i');
+  var BX_RESUB = new RegExp('gracias\\s+@\\s*'+NICK+'\\s+por\\s+renovar','i');
+  var BX_GIFT  = new RegExp('gracias\\s+por\\s+la\\s+sub\\s+de\\s+regalo,?\\s*@\\s*'+NICK,'i');
+  var BX_HOST  = new RegExp('@\\s*'+NICK+'\\s+¡?\\s*gracias\\s+por\\s+ese\\s+raid\\s+con\\s+([\\d.,]+)','i');
+
+  function tryBotrixSub(username, content, msgId, ts){
+    var from = String(username||'').toLowerCase();
+    if (!CFG.tipAll && CFG.tipBots.indexOf(from) === -1) return false;
+    var clean = dropVars(content).replace(/\[emote:\d+:[^\]]*\]/g,' ').replace(/\s+/g,' ');
+    var m;
+    if ((m=clean.match(BX_RESUB))){
+      addEvent({type:'sub', html:nm(m[1])+' renovó su suscripción', sub:'Resub', cls:'resub',
+                ck:'sub:'+lc(m[1]), src:'botrix', ts:ts, subs:1});
+      return true;
+    }
+    if ((m=clean.match(BX_SUB))){
+      addEvent({type:'sub', html:nm(m[1])+' se suscribió', sub:'Sub nueva',
+                ck:'sub:'+lc(m[1]), src:'botrix', ts:ts, subs:1});
+      return true;
+    }
+    if ((m=clean.match(BX_GIFT))){
+      addEvent({type:'gift', html:nm(m[1])+' regaló sub', ck:'gift:'+lc(m[1]), src:'botrix', ts:ts, subs:1});
+      return true;
+    }
+    if ((m=clean.match(BX_HOST))){
+      var v=num(m[2]);
+      addEvent({type:'host', html:nm(m[1])+' te hosteó'+(v?' con '+plural(v,'viewer','viewers'):''),
+                ck:'host:'+lc(m[1]), src:'botrix', ts:ts});
+      return true;
+    }
+    return false;
+  }
+
+  /* Mensajes del bot ya procesados (en vivo o recuperados): se guardan
+     para que un mismo anuncio nunca entre dos veces. */
+  var BOTIDS=[];
+  try{ BOTIDS = JSON.parse(LSget('kickfeed.botids','[]')) || []; }catch(e){ BOTIDS=[]; }
+  function seenBotId(id){
+    if (!id) return false;
+    if (BOTIDS.indexOf(id)!==-1) return true;
+    BOTIDS.push(id); if (BOTIDS.length>500) BOTIDS=BOTIDS.slice(-400);
+    LSset('kickfeed.botids', JSON.stringify(BOTIDS));
+    return false;
+  }
+  function isBot(u){ return CFG.tipBots.indexOf(lc(u))!==-1; }
+
+  // Un mensaje de Botrix (en vivo o del historial).
+  function botMessage(username, content, msgId, ts){
+    if (seenBotId(msgId)) return true;
+    return tryBotrixSub(username, content, msgId, ts) ||
+           tryKicks(username, content, msgId, ts) ||
+           tryTip(username, content, msgId, ts);
+  }
+
+  /* ============================================================
+     MEMORIA DEL CHAT PARA MODERACIÓN
+     Se guardan los últimos mensajes de cada persona (solo en esta
+     sesión, no se suben a ningún lado) para enseñar qué escribió
+     cuando la silencian, la banean o le borran un mensaje.
+     ============================================================ */
+  var UMSG={}, MBYID={}, MIDQ=[], recentBan={}, nUsers=0;
+  function rememberMsg(user, id, content, ts){
+    if (!user || !content || isBot(user)) return;
+    if (id && MBYID[id]) return;
+    var k=lc(user);
+    if (!UMSG[k]){ UMSG[k]=[]; if (++nUsers>3000){ UMSG={}; nUsers=0; UMSG[k]=[]; } }
+    UMSG[k].push({id:id, t:content, ts:ts||Date.now()});
+    UMSG[k].sort(function(a,b){ return a.ts-b.ts; });
+    if (UMSG[k].length>3) UMSG[k].shift();
+    if (id){ MBYID[id]={u:user, t:content, ts:ts||Date.now()}; MIDQ.push(id);
+             if (MIDQ.length>1500) delete MBYID[MIDQ.shift()]; }
+  }
+  function lastMsgsHtml(user){
+    var now=Date.now();
+    return (UMSG[lc(user)]||[]).filter(function(m){ return now-m.ts < 20*60000; })
+      .map(function(m){ return '<span style="opacity:.55;font-size:.85em">'+hhmm(m.ts)+'</span> '+emotes(m.t); })
+      .join('<br>');
+  }
+  function fmtDur(min){
+    min=Math.round(min);
+    if (min<60) return min+' min';
+    if (min<1440){ var h=Math.floor(min/60), r=min%60; return h+' h'+(r?' '+r+' min':''); }
+    var d=Math.round(min/1440); return d+(d===1?' día':' días');
+  }
+  function parseFuture(s){
+    if (!s) return null;
+    var iso=String(s).trim().replace(' ','T');
+    return Date.parse(iso + (/[Zz]|[+\-]\d\d:?\d\d$/.test(iso) ? '' : 'Z')) || null;
+  }
+
+  // Celebraciones de Kick en el chat (Kicks o resubs compartidas).
+  function handleCelebration(d, ts){
+    var s=d.sender||{};
+    var content=d.content||d.message||'';
+    var meta=d.metadata||{};
+    if (typeof meta==='string'){ try{ meta=JSON.parse(meta); }catch(e){ meta={}; } }
+    var cel=meta.celebration||meta.kicks||meta.gift||meta.kicks_gift||null;
+    var amt=(cel&&(cel.amount||cel.kicks_amount||cel.quantity||cel.total))||meta.amount||meta.kicks;
+    var gn=(cel&&(cel.name||cel.gift_name))||'';
+    var celType=String((cel&&(cel.type||cel.celebration_type))||d.type||'').toLowerCase();
+
+    // Resub compartida: ya llegó por su propio evento. Aquí solo
+    // aprovechamos para pegarle el mensaje que escribió la persona.
+    if (/sub|renew|anniversar|month|milestone/.test(celType)){
+      if (content && !ts) enrichSub(s.username, emotes(content));
+      return;
+    }
+    // Sin cantidad y sin señas de ser un regalo, no lo damos por Kicks.
+    if (!amt && !/kick|gift/.test(celType)) return;
+    if (ts && seenBotId('c:'+d.id)) return;
+    if (!ts && d.id) seenBotId('c:'+d.id);
+    addEvent({type:'kicks', html:nm(s.username)+(amt?' mandó '+esc(amt)+' Kicks':' mandó Kicks'),
+              sub:gn?esc(gn):null, key:kicksKey(s.username, amt), ck:kicksKey(s.username, amt),
+              msg:content?emotes(content):null, src:'kick', ts:ts, kicks:num(amt)});
+  }
+  function isCelebration(d){
+    var meta=d.metadata||{};
+    if (typeof meta==='string'){ try{ meta=JSON.parse(meta); }catch(e){ meta={}; } }
+    return d.type==='celebration'||d.type==='kicks'||
+           !!(meta.celebration||meta.kicks||meta.gift||meta.kicks_gift);
+  }
+
+  /* ============================================================
+     EVENTOS DE KICK
+     ============================================================ */
+  function rawPush(short, rawChannel, d){
+    // Las encuestas mandan un aviso por cada voto: del diagnóstico solo
+    // se quedan dos (el más viejo y el más nuevo) para no sacar lo demás.
+    if (/^(PollUpdateEvent|PredictionUpdated)$/.test(short)){
+      var same=[]; RAW.forEach(function(x,i){ if (x.indexOf(' '+short+' @')>0) same.push(i); });
+      if (same.length>=2) RAW.splice(same[0],1);
+    }
+    RAW.unshift(hhmm(Date.now())+' '+short+' @'+rawChannel+'\n'+JSON.stringify(d).slice(0,1500));
+    RAW = RAW.slice(0,60);
+    if (CFG.keep) LSset('kickfeed.raw', JSON.stringify(RAW));
+  }
+
+  function handle(evName, d, rawChannel){
+    var short=String(evName||'').replace('App\\Events\\','').replace('App\\\\Events\\\\','');
+
+    // Diagnóstico: guarda los eventos crudos, menos el chat normal.
+    // (Kick ahora le pone "metadata" a TODOS los mensajes; antes eso
+    // hacía que el chat llenara el diagnóstico y sacara los eventos.)
+    var isChat = /ChatMessage/.test(short);
+    var plain = isChat && !isCelebration(d) && !isBot((d.sender||{}).username);
+    // Los bots mandan anuncios cada rato (redes, códigos…): solo se guardan
+    // si de verdad avisaban algo (sub, tip, Kicks). Ver más abajo.
+    var botChat = isChat && !isCelebration(d) && isBot((d.sender||{}).username);
+    if (!plain && !botChat) rawPush(short, rawChannel, d);
+    if (CFG.debug) console.log('[kickfeed]', short, rawChannel, d);
+
+    switch(short){
+
+      case 'FollowersUpdated': {
+        var user=d.username||(d.follower&&d.follower.username)||null;
+        if (d.followed===false) return;
+        if (user) addEvent({type:'follow', html:nm(user)+' te siguió', key:'f:'+user, ck:'follow:'+lc(user), src:'kick'});
+        else if (typeof d.followersCount==='number')
+          push('follow','Nuevo seguidor',
+               'Total: '+d.followersCount.toLocaleString('es-MX'),'fc:'+d.followersCount);
+        return;
+      }
+
+      case 'SubscriptionEvent': {
+        var m=Number(d.months||1);
+        addEvent({type:'sub', html:nm(d.username)+(m>1?' se resuscribió':' se suscribió'),
+                  sub:m>1?plural(m,'mes','meses')+' seguidos':'Sub nueva',
+                  key:'s:'+d.username+':'+m, ck:'sub:'+lc(d.username), src:'kick',
+                  cls:m>1?'resub':'', subs:1});
+        return;
+      }
+
+      // Kick avisa un regalo de subs por dos eventos distintos; los dos
+      // usan la misma clave, así que solo sale una línea y cuenta una vez.
+      case 'GiftedSubscriptionsEvent':
+      case 'LuckyUsersWhoGotGiftSubscriptionsEvent': {
+        var gifter=d.gifter_username||d.gifterUsername||(d.gifter&&d.gifter.username)||'';
+        var list=d.gifted_usernames||d.giftedUsernames||d.usernames||[];
+        var count=Number(d.gifted_count||d.giftedCount||list.length||1);
+        addEvent({type:'gift', html:nm(gifter||'Anónimo')+' regaló '+plural(count,'sub','subs'),
+                  sub:list.length?'Para: '+esc(list.slice(0,10).join(', '))+(list.length>10?'…':''):null,
+                  key:'g:'+lc(gifter)+':'+count, ck:'gift:'+lc(gifter), src:'kick', subs:count});
+        return;
+      }
+
+      case 'SubscriptionsUpdated': return;
+
+      /* ---- Kicks (la moneda) ---- */
+      case 'KicksGifted':
+      case 'GiftedKicks':
+      case 'KicksSent':
+      case 'GiftsLeaderboardUpdated': {
+        var sender=(d.sender&&d.sender.username)||d.username||d.gifter_username||
+                   (d.gifter&&d.gifter.username)||(d.user&&d.user.username);
+        var amount=d.amount||d.kicks||d.quantity||d.kicks_amount||
+                   (d.gift&&(d.gift.amount||d.gift.quantity||d.gift.tier));
+        if (short==='GiftsLeaderboardUpdated' && !amount) return;
+        var giftName=(d.gift&&(d.gift.name||d.gift.gift_name))||d.gift_name||'';
+        var text=deepMessage(d);
+        if (text && giftName && text===giftName) text=null;   // no repitas el nombre del regalo
+        addEvent({type:'kicks', html:nm(sender)+' mandó '+(amount?esc(amount)+' Kicks':'Kicks'),
+                  sub:giftName?esc(giftName):null, key:kicksKey(sender, amount), ck:kicksKey(sender, amount),
+                  msg:text?emotes(text):null, src:'kick', kicks:num(amount)});
+        return;
+      }
+
+      case 'RewardRedeemedEvent': {
+        var title=d.reward_title||d.title||'recompensa';
+        // Se agrupa por recompensa, sin importar quién la canjeó:
+        // el spam casi siempre viene de gente distinta.
+        var who = String(d.username||'Alguien');
+        var rkey = 'r:'+title.toLowerCase();
+
+        var hit = bump(rkey, CFG.rwwin, function(e){
+          e.users = e.users || [];
+          if (e.users.indexOf(who) === -1 && e.users.length < 15) e.users.push(who);
+          e.html = '<span class="name">'+esc(title)+'</span> canjeada';
+          e.sub  = 'Por: '+esc(e.users.join(', ')) +
+                   (e.n > e.users.length ? '…' : '');
+        });
+        if (hit){ rewardAlert(rkey, title, hit.n); return; }
+
+        push('reward', nm(who)+' canjeó “'+esc(title)+'”',
+             d.user_input?esc(d.user_input):null, rkey);
+        if (LOG.length && LOG[0].key===rkey) LOG[0].users=[who];
+        return;
+      }
+
+      case 'StreamHostEvent':
+      case 'StreamHostedEvent': {
+        var hu=d.host_username||d.hostUsername;
+        var v=Number(d.number_viewers||d.numberViewers||0);
+        addEvent({type:'host', html:nm(hu)+' te hosteó'+(v?' con '+plural(v,'viewer','viewers'):''),
+                  sub:d.optional_message?esc(d.optional_message):null,
+                  key:'h:'+hu+':'+v, ck:'host:'+lc(hu), src:'kick'});
+        return;
+      }
+
+      case 'StreamerIsLive':
+        viewers=null; paintViewers(); pollViewers();
+        push('live','<span class="name">Stream en vivo</span>',
+             (d.livestream&&d.livestream.session_title)?esc(d.livestream.session_title):null,'live:on');
+        return;
+      case 'StopStreamBroadcast':
+        viewers=0; paintViewers();
+        push('live','<span class="name">Stream terminado</span>',null,'live:off');
+        return;
+
+      /* ---- Moderación ---- */
+      case 'UserBannedEvent': {
+        var u=(d.user&&d.user.username)||d.username;
+        var by=(d.banned_by&&d.banned_by.username)||'';
+        var exp=parseFuture(d.expires_at);
+        var mins=d.duration ? Number(d.duration) : (exp ? Math.max(1,(exp-Date.now())/60000) : 0);
+        var perm = d.permanent===true || !mins;
+        var said = lastMsgsHtml(u);
+        recentBan[lc(u)] = Date.now();
+        addEvent({type:'mod', ic:'⛔',
+                  html: nm(u)+(perm ? ' fue baneado' : ' fue silenciado '+fmtDur(mins)),
+                  sub: [by?'Por '+esc(by):'', perm?'Permanente':'', said?'':'No alcancé a ver qué escribió']
+                        .filter(Boolean).join(' · '),
+                  msg: said || null, fold:1, key:'b:'+lc(u), ck:'ban:'+lc(u), src:'kick'});
+        return;
+      }
+      case 'UserUnbannedEvent': {
+        var u2=(d.user&&d.user.username)||d.username;
+        var by2=(d.unbanned_by&&d.unbanned_by.username)||'';
+        push('mod', nm(u2)+' fue desbaneado', by2?'Por '+esc(by2):null, 'ub:'+u2);
+        return;
+      }
+      case 'MessageDeletedEvent': {
+        var mid=(d.message&&d.message.id)||d.message_id||d.id;
+        var ai=!!(d.aiModerated||d.ai_moderated);
+        var rules=(d.violatedRules||d.violated_rules||[]).join(', ');
+        // Se espera un poco: cuando silencian a alguien, Kick también le
+        // borra sus mensajes, y eso ya sale en la línea del silencio.
+        setTimeout(function(){
+          var mm=MBYID[mid];
+          if (!mm && !ai) return;
+          if (mm && recentBan[lc(mm.u)] && Date.now()-recentBan[lc(mm.u)] < 30000) return;
+          addEvent({type:'mod', ic:'🗑',
+                    html: mm ? 'Le borraron un mensaje a '+nm(mm.u) : 'Kick borró un mensaje',
+                    sub: ai ? 'Lo quitó el filtro automático de Kick'+(rules?' · '+esc(rules):'') : null,
+                    msg: mm ? emotes(mm.t) : null, fold:1, key:'del:'+mid, src:'kick'});
+        }, 2500);
+        return;
+      }
+      case 'PinnedMessageCreatedEvent': {
+        var pm=d.message||{};
+        push('mod','<span class="name">Mensaje fijado</span>',null,'pin:'+(pm.id||''),
+             pm.content?emotes(pm.content):null);
+        return;
+      }
+
+      case 'ChatMessageEvent':
+      case 'ChatMessageSentEvent': {
+        var s=d.sender||{};
+        var content=d.content||d.message||'';
+        // Kick manda como "celebration" tanto los Kicks como las resubs
+        // que la gente comparte. Hay que distinguirlos o las resubs
+        // terminan apareciendo como "mandó Kicks".
+        if (isCelebration(d)){ handleCelebration(d); return; }
+        if (isBot(s.username) || CFG.tipAll){
+          if (botMessage(s.username, content, d.id) && isBot(s.username)) rawPush(short, rawChannel, d);
+          return;
+        }
+        // El chat normal no se guarda en el feed: solo se recuerda un
+        // ratito para la moderación.
+        rememberMsg(s.username, d.id, content, Date.now());
+        return;
+      }
+
+      case 'PollUpdateEvent': pollUpdate(d && d.poll ? d.poll : d); return;
+      case 'PollDeleteEvent': pollDelete(); return;
+      case 'PredictionCreated': case 'PredictionUpdated':
+        predUpdate(d && d.prediction ? d.prediction : d); return;
+
+      case 'ChatroomUpdatedEvent': case 'ChatroomClearEvent':
+      case 'PinnedMessageDeletedEvent': case 'LivestreamUpdated':
+      case 'UpdatedLiveStreamEvent': case 'TitleChangedEvent':
+        return;
+
+      default:
+        // por si Kick les cambia el nombre (PredictionLocked, PollEnded…)
+        if (/^Prediction/.test(short) && d && (d.prediction || d.outcomes)){ predUpdate(d.prediction || d); return; }
+        if (/^Poll/.test(short) && d && d.poll){ pollUpdate(d.poll); return; }
+        if (CFG.debug)
+          push('sys','[debug] '+esc(short),'<code>'+esc(JSON.stringify(d).slice(0,300))+'</code>');
+        return;
+    }
+  }
+
+  /* ============================================================
+     RECUPERAR LO QUE PASÓ SIN SEÑAL
+     Si tu celular se queda sin internet (o se apaga la pantalla y la
+     página se congela), al volver se lee el historial del chat de Kick
+     y se rescatan los anuncios de Botrix y los Kicks de ese rato. Cada
+     uno entra en su hora y sin duplicarse. Arriba queda una línea que
+     dice cuánto duró el corte y qué se recuperó.
+     ============================================================ */
+  function historyUrls(){
+    var u=[];
+    if (CFG.channelId) u.push('https://kick.com/api/v2/channels/'+CFG.channelId+'/messages');
+    if (CFG.slug) u.push('https://kick.com/api/v2/channels/'+encodeURIComponent(CFG.slug)+'/messages');
+    return u;
+  }
+  function fetchHistory(){
+    var urls=historyUrls(), i=0;
+    function next(){
+      if (i>=urls.length) return Promise.reject(new Error('sin historial'));
+      var url=urls[i++];
+      return fetch(url,{cache:'no-store'}).then(function(r){
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        return r.json();
+      }).then(function(j){
+        var arr=(j&&j.data&&(j.data.messages||j.data))||j.messages||j;
+        if (!Array.isArray(arr)) throw new Error('formato');
+        return arr.map(function(m){
+          var meta=m.metadata;
+          if (typeof meta==='string'){ try{ meta=JSON.parse(meta); }catch(e){ meta={}; } }
+          return {id:m.id, content:m.content||'', type:m.type, metadata:meta||{},
+                  sender:m.sender||{username:m.username}, ts:Date.parse(m.created_at)||0};
+        }).filter(function(m){ return m.ts; })
+          .sort(function(a,b){ return a.ts-b.ts; });
+      }).catch(function(e){ if (i<urls.length) return next(); throw e; });
+    }
+    return next();
+  }
+
+  var recovering=false;
+  function recover(from, to, reason){
+    if (recovering || !from) return;
+    recovering=true;
+    // 1) el chat de Kick (para las donaciones que anuncia Botrix)
+    var hist=fetchHistory().then(function(msgs){
+      var oldest=msgs.length?msgs[0].ts:to, got=0;
+      msgs.forEach(function(m){
+        if (m.ts < from-5000) return;           // eso ya lo tenías
+        var u=(m.sender||{}).username;
+        var lenBefore=LOG.length;
+        if (isCelebration(m)) handleCelebration({id:m.id, sender:m.sender, content:m.content,
+                                                 type:m.type, metadata:m.metadata}, m.ts);
+        else if (isBot(u)) botMessage(u, m.content, m.id, m.ts);
+        else rememberMsg(u, m.id, m.content, m.ts);
+        if (LOG.length>lenBefore) got++;
+      });
+      var partial = msgs.length>=20 && oldest > from+3000;
+      logRaw('RECUPERACIÓN chat '+hhmm(from)+'–'+hhmm(to)+': '+msgs.length+' mensajes, '+got+' eventos'+(partial?' (incompleto desde '+hhmm(oldest)+')':''));
+      return {got:got, partial: partial ? oldest : 0};
+    }).catch(function(e){
+      logRaw('RECUPERACIÓN chat falló: '+(e&&e.message));
+      return {got:0, failed:true};
+    });
+    // 2) tu servidor (subs, resubs, regalos y Kicks exactos)
+    var api=apiPoll();
+    Promise.all([hist, api]).then(function(r){
+      var h=r[0], a=r[1]||0;
+      noteGap(from, to, reason, h.got+a, h.partial||0, !!h.failed);
+    }).then(function(){ recovering=false; }, function(){ recovering=false; });
+  }
+
+  function logRaw(t){
+    RAW.unshift(hhmm(Date.now())+' '+t); RAW=RAW.slice(0,60);
+    if (CFG.keep) LSset('kickfeed.raw', JSON.stringify(RAW));
+  }
+
+  function recTxt(n){ return n===1 ? 'Se recuperó 1 evento' : 'Se recuperaron '+n+' eventos'; }
+  // La línea de aviso. Solo aparece si el corte fue real.
+  function gapSub(got, partialFrom, failed){
+    if (apiOk){
+      // Con el servidor, subs y Kicks siempre están completos. Lo único
+      // que depende del chat son las donaciones que anuncia Botrix.
+      return (got ? recTxt(got)+' de ese rato' : 'No hubo actividad en ese rato') +
+             ((failed||partialFrom) ? ' · <b>puede faltar alguna donación</b>' : '');
+    }
+    if (failed && !got) return '<b>No pude revisar el historial del chat</b>: puede faltar algo de ese rato';
+    if (partialFrom) return (got?recTxt(got)+'. ':'')+
+                     '<b>Puede faltar algo</b>: el chat de Kick solo guarda desde las '+hhmm(partialFrom);
+    return got ? recTxt(got)+' de ese rato' : 'No hubo actividad en ese rato';
+  }
+  function noteGap(from, to, reason, got, partialFrom, failed){
+    var secs=(to-from)/1000;
+    var real = reason==='close' ? secs>=15 : reason==='load' ? (secs>=30 && secs<=3*3600) : false;
+    // Si ya hay un aviso de este mismo corte, se actualiza en lugar de repetir.
+    for (var i=0;i<Math.min(LOG.length,40);i++){
+      var e=LOG[i];
+      if (e.type==='gap' && Math.abs((e.from||0)-from) < 90000){
+        e.from=Math.min(e.from,from); e.to=Math.max(e.to,to); e.got=(e.got||0)+got;
+        if (partialFrom) e.partial=partialFrom;
+        e.html='Sin conexión de '+hhmm(e.from)+' a '+hhmm(e.to);
+        e.sub=gapSub(e.got, e.partial, failed);
+        saveLog(true); scheduleRepaint(); return;
+      }
+    }
+    if (!got && !real) return;                 // se congeló un ratito y no pasó nada: no estorbar
+    addEvent({type:'gap', html:'Sin conexión de '+hhmm(from)+' a '+hhmm(to),
+              sub:gapSub(got, partialFrom, failed), ts:to,
+              extra:{from:from, to:to, got:got, partial:partialFrom||0}});
+  }
+
+  /* ---- detectar cortes ---- */
+  var gapFrom=0, gapReason='';
+  var prevAlive=parseInt(LSget('kickfeed.alive','0'),10)||0;
+  if (prevAlive && Date.now()-prevAlive > 20000){ gapFrom=prevAlive; gapReason='load'; }
+  function markAlive(){ LSset('kickfeed.alive', String(Date.now())); }
+  window.addEventListener('pagehide', function(){ if (ws && ws.readyState===1) markAlive(); });
+
+  // Si la página se congela (pantalla apagada, app en segundo plano),
+  // el reloj "brinca". Entonces se revisa el historial por si acaso.
+  var tick=Date.now();
+  setInterval(function(){
+    var now=Date.now();
+    var up = ws && ws.readyState===1;
+    if (up && lastUp && now-lastUp > 75000 && now-tick < 20000){
+      // La conexión se quedó "pegada" sin avisar (pasa en datos móviles):
+      // Kick no contestó el ping, así que se cierra y se vuelve a abrir.
+      if (!gapFrom){ gapFrom=lastUp; gapReason='close'; }
+      try{ ws.close(); }catch(e){}
+      up=false;
+    }
+    if (up && now-lastUp < 75000) markAlive();
+    if (now-tick > 20000 && ws && ws.readyState===1 && !gapFrom){
+      var f=tick; setTimeout(function(){ recover(f, now, 'freeze'); }, 1500);
+    }
+    tick=now;
+  }, 5000);
+
+  /* ============================================================
+     CONEXIÓN PUSHER
+     ============================================================ */
+  var PUSHER_KEY='32cbd69e4b950bf97679';
+  var WS_URL='wss://ws-us2.pusher.com/app/'+PUSHER_KEY+
+             '?protocol=7&client=js&version=8.4.0-rc2&flash=false';
+  var ws=null, retry=0, pingTimer=null, lastUp=0;
+
+  function channels(){
+    var c=[];
+    if (CFG.chatroomId){
+      c.push('chatrooms.'+CFG.chatroomId+'.v2');
+      c.push('chatrooms.'+CFG.chatroomId);
+      c.push('chatroom_'+CFG.chatroomId);
+    }
+    if (CFG.channelId){
+      c.push('channel.'+CFG.channelId);
+      c.push('channel_'+CFG.channelId);
+      c.push('predictions-channel-'+CFG.channelId);
+    }
+    return c;
+  }
+
+  function connect(){
+    if (!CFG.chatroomId && !CFG.channelId){
+      push('sys','Falta configurar el canal.','Agrega <code>?chatroom=ID&amp;channelid=ID</code> a la URL.');
+      return;
+    }
+    try{ ws=new WebSocket(WS_URL); }catch(e){ scheduleReconnect(); return; }
+
+    ws.onopen=function(){ retry=0; };
+
+    ws.onmessage=function(ev){
+      var msg; try{ msg=JSON.parse(ev.data); }catch(e){ return; }
+      lastUp=Date.now();
+
+      if (msg.event==='pusher:connection_established'){
+        $dot.classList.add('on');
+        channels().forEach(function(ch){
+          ws.send(JSON.stringify({event:'pusher:subscribe',data:{auth:'',channel:ch}}));
+        });
+        clearInterval(pingTimer);
+        pingTimer=setInterval(function(){
+          if (ws && ws.readyState===1) ws.send(JSON.stringify({event:'pusher:ping',data:{}}));
+        },30000);
+        markAlive();
+        setTimeout(pollSync, 1200);   // ¿hay una encuesta o predicción abierta?
+        // Se volvió a conectar después de un corte: a recuperar.
+        if (gapFrom){
+          var f=gapFrom, r=gapReason; gapFrom=0; gapReason='';
+          setTimeout(function(){ recover(f, Date.now(), r); }, 1500);
+        }
+        return;
+      }
+      if (msg.event==='pusher:ping'){ ws.send(JSON.stringify({event:'pusher:pong',data:{}})); return; }
+      if (msg.event==='pusher:pong'||msg.event==='pusher_internal:subscription_succeeded') return;
+      if (msg.event==='pusher:error'){ if(CFG.debug) console.warn('[kickfeed] pusher error',msg); return; }
+
+      var data=msg.data;
+      if (typeof data==='string'){ try{ data=JSON.parse(data); }catch(e){ data={}; } }
+      handle(msg.event, data||{}, msg.channel);
+    };
+
+    ws.onclose=function(){
+      $dot.classList.remove('on'); clearInterval(pingTimer);
+      if (!gapFrom && lastUp){ gapFrom=Math.max(lastUp, tick-5000); gapReason='close'; }
+      scheduleReconnect();
+    };
+    ws.onerror=function(){ try{ ws.close(); }catch(e){} };
+  }
+
+  function scheduleReconnect(){
+    retry++;
+    setTimeout(connect, Math.min(30000, 1000*Math.pow(1.6, Math.min(retry,10))));
+  }
+
+  document.addEventListener('visibilitychange',function(){
+    if (!document.hidden){
+      pollViewers();
+      if (!ws||ws.readyState>1){ retry=0; connect(); }
+    }
+  });
+
+
+  /* ============================================================
+     ENCUESTAS Y PREDICCIONES
+     Kick avisa por el mismo canal del chat cada vez que alguien vota.
+     La línea de "Encuesta en curso" se va llenando en vivo y, al
+     terminar, sale arriba otra con el resultado. Igual con las
+     predicciones (puntos del canal): abierta → cerrada → resultado.
+     Kick no manda quién la creó.
+     ============================================================ */
+  function LSjson(k){ try{ return JSON.parse(LSget(k,'null')); }catch(e){ return null; } }
+  var POLL=LSjson('kickfeed.poll'), PRED=LSjson('kickfeed.pred'), pollT=0, pTick=0;
+  var PREDSEEN=LSjson('kickfeed.preds')||[];
+  function savePoll(){ LSset('kickfeed.poll', JSON.stringify(POLL)); }
+  function savePred(){ LSset('kickfeed.pred', JSON.stringify(PRED)); }
+  function findEv(id){ if (!id) return null; for (var i=0;i<LOG.length;i++) if (LOG[i].id===id) return LOG[i]; return null; }
+  function pct(v,t){ return t ? Math.round(v*100/t) : 0; }
+  function mmss(s){ s=Math.max(0,Math.ceil(s)); return Math.floor(s/60)+':'+('0'+(s%60)).slice(-2); }
+  function durTxt(s){ s=Math.round(s||0); if (s<60) return s+' s'; var m=Math.floor(s/60), r=s%60; return m+' min'+(r?' '+r+' s':''); }
+  function nfmt(n){ return Number(n||0).toLocaleString('es-MX'); }
+  function joinY(a){ return a.length<2 ? a.join('') : a.slice(0,-1).join(', ')+' y '+a[a.length-1]; }
+
+  // rows: [{l, v (lo que define el %), r (texto de la derecha)}]
+  function barsHtml(rows, winIdx, noCup){
+    var tot=rows.reduce(function(a,r){ return a+r.v; },0);
+    return '<span class="pb">'+rows.map(function(r,i){
+      var w=winIdx && winIdx.indexOf(i)>=0, p=pct(r.v,tot);
+      return '<span class="'+(w?'win':'')+'"><span class="pr"><span class="lb">'+(w&&!noCup?'🏆 ':'')+esc(r.l)+
+             '</span><span class="pc">'+r.r+' · '+p+'%</span></span><span class="bar"><i style="width:'+p+'%"></i></span></span>';
+    }).join('')+'</span>';
+  }
+  function winners(rows){
+    var mx=0, out=[]; rows.forEach(function(r){ if (r.v>mx) mx=r.v; });
+    if (!mx) return [];
+    rows.forEach(function(r,i){ if (r.v===mx) out.push(i); });
+    return out;
+  }
+  function ptext(title, rows){ return title+': '+rows.map(function(r){ return r.l+' '+r.r; }).join(', '); }
+
+  // Cambia una línea del feed sin volver a crearla (así no parpadea).
+  // Guardar cada voto en el celular sería demasiado; se guarda cada 5 s.
+  var lazyT=0;
+  function lazySave(){ if (!lazyT) lazyT=setTimeout(function(){ lazyT=0; saveLog(); }, 5000); }
+  function updEv(ev, quiet){
+    if (!ev) return;
+    if (quiet) lazySave(); else saveLog();
+    var el=$feed.querySelector('.item[data-id="'+ev.id+'"]'); if (!el) return;
+    var ln=el.querySelector('.line'), sb=el.querySelector('.sub'), px=el.querySelector('.px');
+    if ((ev.sub && !sb) || (ev.px && !px)){ refreshEl(ev); return; }
+    if (ln) ln.innerHTML=ev.html;
+    if (sb) sb.innerHTML=ev.sub;
+    if (px) px.innerHTML=ev.px;
+  }
+  function pollEv(o){
+    var ts=o.ts && Date.now()-o.ts>5000 ? o.ts : 0;
+    return addEvent({type:'poll', html:o.html, sub:o.sub, ic:o.ic, src:'kick', ts:ts||undefined,
+                     extra:{px:o.px, ptxt:o.ptxt||''}});
+  }
+
+  /* --- encuestas --- */
+  function pollRows(){ return POLL.opts.map(function(o){ return {l:o.l, v:o.v, r:plural(o.v,'voto','votos')}; }); }
+  function pollTotal(){ return POLL.opts.reduce(function(a,o){ return a+o.v; },0); }
+  function pollPaint(quiet){
+    if (!POLL) return;
+    var ev=findEv(POLL.evId); if (!ev){ renderPins(); return; }
+    var q='<span class="q">'+esc(POLL.title)+'</span>';
+    ev.html='Empezó una encuesta';
+    ev.sub=plural(POLL.opts.length,'opción','opciones')+' · '+durTxt(POLL.dur);
+    ev.px=q; ev.ptxt=POLL.title;
+    if (!quiet) updEv(ev);
+    renderPins();
+  }
+  function pollResultPaint(){
+    var ev=findEv(POLL.resId); if (!ev) return;
+    var rows=pollRows(), w=winners(rows), tot=pollTotal();
+    ev.html = !tot ? 'Terminó la encuesta · nadie votó'
+            : w.length>1 ? 'Terminó la encuesta en empate: '+joinY(w.map(function(i){ return nm(rows[i].l); }))
+            : 'Terminó la encuesta · ganó '+nm(rows[w[0]].l);
+    ev.sub=(tot?plural(tot,'voto','votos')+' · ':'')+'duró '+durTxt(POLL.dur)+(POLL.stale?' · puede que falten los votos del final':'');
+    ev.px='<span class="q">'+esc(POLL.title)+'</span>'+(tot?barsHtml(rows, w):'');
+    ev.ptxt=ptext(POLL.title, rows);
+    updEv(ev);
+  }
+  function pollFinish(){
+    if (!POLL || POLL.done) return;
+    clearTimeout(pollT);
+    POLL.done=true;
+    if (POLL.lastUpd && POLL.endAt-POLL.lastUpd>8000 && Date.now()-POLL.endAt>8000) POLL.stale=1;
+    var r=pollEv({html:'Terminó la encuesta', sub:'', px:'', ts:Math.min(Date.now(), POLL.endAt+1000)});
+    POLL.resId=r && r.id;
+    pollResultPaint(); pollPaint(); savePoll(); tickCheck();
+  }
+  function pollUpdate(p){
+    if (!p || !p.title || !Array.isArray(p.options)) return;
+    var now=Date.now(), dur=Number(p.duration)||0, rem=Number(p.remaining);
+    if (!isFinite(rem)) rem=dur;
+    var k=p.title+'|'+p.options.map(function(o){ return o.label; }).join('|')+'|'+dur;
+    var endAt=now+Math.max(0,rem)*1000;
+    var same = POLL && POLL.k===k && now < POLL.endAt+120000 && !(POLL.done && rem>2);
+    if (!same){
+      if (POLL && !POLL.done) pollFinish();
+      if (rem<=0 && POLL && POLL.k===k) return;   // restos de una que ya se cerró
+      POLL={k:k, title:String(p.title), dur:dur, endAt:endAt, done:false,
+            opts:p.options.map(function(o){ return {l:String(o.label||''), v:Number(o.votes)||0}; })};
+      var ev=pollEv({html:'Empezó una encuesta', sub:plural(POLL.opts.length,'opción','opciones')+' · '+durTxt(dur),
+                     px:'<span class="q">'+esc(POLL.title)+'</span>', ptxt:POLL.title, ts:now-Math.max(0,dur-rem)*1000});
+      POLL.evId=ev && ev.id;
+    } else if (!POLL.done) POLL.endAt=endAt;
+    p.options.forEach(function(o,i){ if (POLL.opts[i]) POLL.opts[i].v=Number(o.votes)||0; });
+    POLL.lastUpd=now;
+    if (!POLL.done){
+      if (rem<=0) pollFinish();
+      else { clearTimeout(pollT); pollT=setTimeout(pollFinish, POLL.endAt-now+1500); }
+    } else pollResultPaint();          // votos que llegaron justo al cierre
+    pollPaint(true); savePoll(); tickCheck();
+  }
+  function pollDelete(){
+    if (!POLL || POLL.done || Date.now() > POLL.endAt-3000) return;   // si ya terminó, solo quitaron el resultado
+    clearTimeout(pollT);
+    POLL.done=true; POLL.cancel=1;
+    pollEv({html:'Borraron la encuesta antes de que terminara', sub:plural(pollTotal(),'voto','votos')+' hasta ese momento',
+            px:'<span class="q">'+esc(POLL.title)+'</span>', ptxt:POLL.title});
+    pollPaint(); savePoll(); tickCheck();
+  }
+
+  /* --- predicciones (puntos del canal) --- */
+  function predRows(){ return PRED.outs.map(function(o){ return {l:o.l, v:o.pts, r:nfmt(o.pts)+' pts'}; }); }
+  function predTot(k){ return PRED.outs.reduce(function(a,o){ return a+(o[k]||0); },0); }
+  function predPeople(){ var n=predTot('n'); return n ? plural(n,'persona','personas')+' · ' : ''; }
+  function predPaint(quiet){
+    if (!PRED) return;
+    var ev=findEv(PRED.evId); if (!ev){ renderPins(); return; }
+    var q='<span class="q">'+esc(PRED.title)+'</span>';
+    ev.html='Empezó una predicción';
+    ev.sub=plural(PRED.outs.length,'opción','opciones');
+    ev.px=q; ev.ptxt=PRED.title;
+    if (!quiet) updEv(ev);
+    renderPins();
+  }
+  function predUpdate(p, recovered){
+    if (!p || p.id==null || !Array.isArray(p.outcomes)) return;
+    var id=String(p.id), st=String(p.state||p.status||'').toUpperCase(), now=Date.now();
+    if (/^CANCEL/.test(st)) st='CANCELLED';
+    var outs=p.outcomes.map(function(o){ return {id:String(o.id), l:String(o.title||o.label||''),
+             pts:Number(o.total_vote_amount)||0, n:Number(o.vote_count)||0, w:!!(o.is_winner||o.winner),
+             rr:Number(o.return_rate)||0,
+             top:(o.top_users||[]).map(function(u){ return {u:String(u.username||''), a:Number(u.amount)||0}; })}; });
+    var winId=String(p.winning_outcome_id||p.winningOutcomeId||'');
+    if (!winId) outs.forEach(function(o){ if (o.w) winId=o.id; });
+    var created=parseKickDate(p.created_at)||now;
+    var done=(st==='RESOLVED'||st==='CANCELLED');
+    if (!PRED || PRED.id!==id){
+      if (PREDSEEN.indexOf(id)>=0) return;                 // ya se anunció su resultado
+      // al abrir el feed: solo predicciones de este stream
+      if (recovered && created < (startMs||now-6*3600e3)-60000) return;
+      PRED={id:id, title:String(p.title||''), state:st, outs:outs, created:created,
+            // si el reloj del celular va atrasado, que la cuenta no pase de la duración
+            endAt: Number(p.duration) ? Math.min(created, now)+Number(p.duration)*1000 : 0};
+      if (!done){ var ev=pollEv({html:'Empezó una predicción', sub:plural(outs.length,'opción','opciones'), ic:'🔮', ts:created,
+                                 px:'<span class="q">'+esc(PRED.title)+'</span>', ptxt:PRED.title}); PRED.evId=ev && ev.id; }
+    }
+    PRED.title=String(p.title||PRED.title); PRED.outs=outs; PRED.state=st;
+    // Kick da 24 h desde que se cierran las apuestas para elegir el resultado
+    var lk=parseKickDate(p.locked_at);
+    if (lk) PRED.lockAt=Math.min(lk, PRED.lockAt||now, now);
+    else if (st==='LOCKED' && !PRED.lockAt) PRED.lockAt=(PRED.endAt && PRED.endAt<now) ? PRED.endAt : now;
+    if (done && !PRED.resId){
+      PREDSEEN.push(id); PREDSEEN=PREDSEEN.slice(-30); LSset('kickfeed.preds', JSON.stringify(PREDSEEN));
+      var rows=predRows(), wi=-1;
+      outs.forEach(function(o,i){ if (o.id===winId) wi=i; });
+      var tot=nfmt(predTot('pts'));
+      var when=recovered ? (parseKickDate(p.updated_at||p.resolved_at||p.locked_at)||now) : now;
+      var r = st==='CANCELLED'
+        ? pollEv({html:'Se canceló la predicción · se regresaron los puntos', sub:predPeople()+tot+' pts', ic:'🔮', ts:when,
+                  px:'<span class="q">'+esc(PRED.title)+'</span>', ptxt:PRED.title})
+        : pollEv({html: wi>=0 ? 'Resultado de la predicción · ganó '+nm(outs[wi].l) : 'Terminó la predicción',
+                  sub:predPeople()+tot+' pts en juego', ic:'🔮', ts:when,
+                  px:'<span class="q">'+esc(PRED.title)+'</span>'+barsHtml(rows, wi>=0?[wi]:[])+topWinners(wi>=0?outs[wi]:null),
+                  ptxt:ptext(PRED.title, rows)});
+      PRED.resId=r && r.id;
+    }
+    predPaint(true); savePred(); tickCheck();
+  }
+
+  // Los 3 que más ganaron (Kick manda quién apostó más en cada opción).
+  function topWinners(o){
+    if (!o || !o.top || !o.top.length || !o.rr) return '';
+    var t=o.top.slice().sort(function(a,b){ return b.a-a.a; }).slice(0,3);
+    return '<span class="tw">'+(t.length>1?'Los que más ganaron: ':'El que más ganó: ')+t.map(function(x){
+      return '<b>'+esc(x.u)+'</b> +'+nfmt(Math.round(x.a*o.rr)); }).join(' · ')+'</span>';
+  }
+
+  /* --- fijados arriba del feed --- */
+  var $pins=document.getElementById('pins');
+  function hms(s){ s=Math.max(0,Math.floor(s)); var h=Math.floor(s/3600), m=Math.floor(s%3600/60), x=s%60;
+                   return h+':'+('0'+m).slice(-2)+':'+('0'+x).slice(-2); }
+  function pinHtml(kind, ic, title, badge, lk, sub, mini, q, bars, min){
+    if (min) return '<div class="pin min" data-k="'+kind+'"><div class="h">'+ic+' <b>'+title+'</b><span class="m">'+mini+'</span><span class="r">▸ abrir</span></div></div>';
+    return '<div class="pin" data-k="'+kind+'"><div class="h">'+ic+' <b>'+title+'</b><span class="lv'+(lk?' lk':'')+'">'+badge+'</span>'+
+           '<span class="r">▾ minimizar</span></div><div class="s">'+sub+'</div><div class="q">'+esc(q)+'</div>'+bars+'</div>';
+  }
+  function renderPins(){
+    var h='', now=Date.now();
+    if (enabled.poll !== false){
+      if (POLL && !POLL.done){
+        var left=mmss((POLL.endAt-now)/1000), tv=plural(pollTotal(),'voto','votos');
+        h+=pinHtml('poll','📊','Encuesta en curso','EN VIVO',false,'Quedan '+left+' · '+tv,
+                   ' · quedan '+left+' · '+tv, POLL.title, barsHtml(pollRows(), lead(pollRows()), true), POLL.min);
+      }
+      if (PRED && (PRED.state==='ACTIVE' || PRED.state==='LOCKED')){
+        var pts=nfmt(predTot('pts'))+' pts';
+        if (PRED.state==='ACTIVE'){
+          var l2=PRED.endAt ? (PRED.endAt-now)/1000 : 0, cierra=l2>0 ? 'Se cierra en '+mmss(l2) : '';
+          h+=pinHtml('pred','🔮','Predicción','EN VIVO',false,[cierra, predPeople()+pts].filter(Boolean).join(' · '),
+                     ' · '+[cierra.toLowerCase(), pts].filter(Boolean).join(' · '), PRED.title, barsHtml(predRows(), lead(predRows()), true), PRED.min);
+        } else {
+          var dl=PRED.lockAt ? (PRED.lockAt+24*3600e3-now)/1000 : 0, tm=dl>0 ? '⏳ '+hms(dl) : '';
+          h+=pinHtml('pred','🔮','Predicción','CERRADA',true,[predPeople()+pts+' en juego', tm].filter(Boolean).join(' · '),
+                     ' cerrada'+(tm?' · '+tm:''), PRED.title, barsHtml(predRows(), lead(predRows()), true), PRED.min);
+        }
+      }
+    }
+    if ($pins.innerHTML!==h) $pins.innerHTML=h;
+  }
+  // La opción que va ganando se pinta más fuerte (sin trofeo hasta que termine).
+  function lead(rows){ var w=winners(rows); return w.length===1 ? w : []; }
+  $pins.addEventListener('click', function(ev){
+    var el=ev.target.closest('.pin'); if (!el) return;
+    var k=el.getAttribute('data-k');
+    if (k==='poll' && POLL){ POLL.min=!POLL.min; savePoll(); }
+    if (k==='pred' && PRED){ PRED.min=!PRED.min; savePred(); }
+    renderPins();
+  });
+
+  // Cuenta regresiva en las líneas que están en vivo.
+  function predOpen(){ return PRED && (PRED.state==='ACTIVE' || PRED.state==='LOCKED'); }
+  function tickCheck(){
+    // Si pasaron las 24 h sin resultado, Kick regresa los puntos: se quita.
+    if (PRED && PRED.state==='LOCKED' && PRED.lockAt && Date.now() > PRED.lockAt+24*3600e3+60000){ PRED.state='EXPIRED'; savePred(); }
+    var need=(POLL && !POLL.done) || predOpen();
+    if (need && !pTick) pTick=setInterval(function(){
+      if (POLL && !POLL.done && Date.now()>POLL.endAt+1500) pollFinish();
+      if (PRED && PRED.state==='LOCKED' && PRED.lockAt && Date.now() > PRED.lockAt+24*3600e3+60000){ PRED.state='EXPIRED'; savePred(); }
+      if (!document.hidden) renderPins();
+      if (!((POLL && !POLL.done) || predOpen())){ clearInterval(pTick); pTick=0; renderPins(); }
+    }, 1000);
+    renderPins();
+  }
+  // Al abrir el feed o volver la señal: ¿hay alguna abierta? (si Kick no deja leerlo, no pasa nada)
+  function pollSync(){
+    var base='https://kick.com/api/v2/channels/'+encodeURIComponent(CFG.slug);
+    fetch(base+'/polls',{cache:'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+      var p=j && ((j.data && (j.data.poll || (j.data.title && j.data))) || j.poll);
+      if (p && Number(p.remaining)>0) pollUpdate(p);
+      else if (POLL && !POLL.done && Date.now()>POLL.endAt) pollFinish();
+    }).catch(function(){});
+    fetch(base+'/predictions/latest',{cache:'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+      var p=j && ((j.data && j.data.prediction) || j.prediction);
+      if (p) predUpdate(p, true);
+    }).catch(function(){});
+  }
+  if (POLL && !POLL.done){ if (Date.now()>POLL.endAt+1500) pollFinish(); else { pollT=setTimeout(pollFinish, POLL.endAt-Date.now()+1500); tickCheck(); } }
+  if (predOpen()) tickCheck();
+
+  /* ============================================================
+     TU SERVIDOR (VÍA OFICIAL DE KICK)
+     Kick le avisa a tu servidor de cada sub, resub, regalo, Kicks, follow
+     y ban, aunque el feed esté cerrado o sin señal. El feed le pregunta
+     cada 20 s (y al reconectar) y acomoda lo que falte en su hora. Los
+     contadores ★ y ⚡ salen de ahí: son exactos y no se reinician si el
+     stream se corta y vuelve en menos de 30 minutos.
+     ============================================================ */
+  var apiOk=null, apiBusy=false, apiLast=0, apiInfo=null;
+  var apiCursor=parseInt(LSget('kickfeed.apicur','0'),10)||0;
+  var APIIDS=[];
+  try{ APIIDS=JSON.parse(LSget('kickfeed.apiids','[]'))||[]; }catch(e){ APIIDS=[]; }
+  function seenApiId(id){
+    if (!id) return false;
+    if (APIIDS.indexOf(id)!==-1) return true;
+    APIIDS.push(id); if (APIIDS.length>800) APIIDS=APIIDS.slice(-600);
+    LSset('kickfeed.apiids', JSON.stringify(APIIDS));
+    return false;
+  }
+
+  function apiEvent(e){
+    var d=e.d||{}, ts=e.ts||Date.now(), u=d.user||'';
+    switch(d.kind){
+      case 'sub':
+        return addEvent({type:'sub', html:nm(u)+' se suscribió', sub:'Sub nueva',
+                         ck:'sub:'+lc(u), src:'api', ts:ts, subs:1});
+      case 'resub':
+        return addEvent({type:'sub', html:nm(u)+' se resuscribió', cls:'resub',
+                         sub: d.months>1 ? plural(d.months,'mes','meses')+' seguidos' : 'Resub',
+                         ck:'sub:'+lc(u), src:'api', ts:ts, subs:1});
+      case 'gift': {
+        var g=d.giftees||[], c=Number(d.count)||g.length||1;
+        return addEvent({type:'gift', html:nm(u||'Anónimo')+' regaló '+plural(c,'sub','subs'),
+                         sub: g.length ? 'Para: '+esc(g.slice(0,10).join(', '))+(g.length>10?'…':'') : null,
+                         ck:'gift:'+lc(u), src:'api', ts:ts, subs:c});
+      }
+      case 'kicks':
+        return addEvent({type:'kicks', html:nm(u)+' mandó '+esc(d.amount)+' Kicks',
+                         sub: d.name ? esc(d.name) : null, msg: d.message ? emotes(d.message) : null,
+                         ck:kicksKey(u, d.amount), src:'api', ts:ts, kicks:num(d.amount)});
+      case 'follow':
+        return addEvent({type:'follow', html:nm(u)+' te siguió', ck:'follow:'+lc(u), src:'api', ts:ts});
+      case 'ban': {
+        var exp=parseFuture(d.expires_at), mins = exp ? Math.max(1,(exp-ts)/60000) : 0;
+        var said=lastMsgsHtml(u);
+        return addEvent({type:'mod', ic:'⛔', html: nm(u)+(mins ? ' fue silenciado '+fmtDur(mins) : ' fue baneado'),
+                         sub: [d.mod?'Por '+esc(d.mod):'', !mins?'Permanente':'', d.reason?'Motivo: '+esc(d.reason):'']
+                               .filter(Boolean).join(' · '),
+                         msg: said || null, fold:1, ck:'ban:'+lc(u), src:'api', ts:ts});
+      }
+    }
+    return null;
+  }
+
+  // Totales exactos del servidor + lo que Kick acaba de mandar en vivo y
+  // el servidor todavía no confirma (para que el número no "brinque").
+  function applyTotals(t){
+    var now=Date.now(), xs=0, xk=0;
+    LOG.forEach(function(e){
+      if (e.src!=='api' && e.ts>=now-120000 && e.ts>=t.from-60000){ xs+=e.subs||0; xk+=e.kicks||0; }
+    });
+    sess.subs=(t.subs||0)+xs; sess.kicks=(t.kicks||0)+xk;
+    saveSess(); paintSubs(); paintKicks();
+    $sb.title='Subs de la sesión: '+(t.newSubs||0)+' nuevas, '+(t.resubs||0)+' resubs, '+(t.gifted||0)+' regaladas';
+  }
+
+  // Devuelve cuántas líneas nuevas agregó (lo que el feed no había visto).
+  function apiPoll(){
+    if (!CFG.api || apiBusy) return Promise.resolve(0);
+    apiBusy=true;
+    var since = apiCursor || (Date.now()-12*3600e3);
+    var url = CFG.api+'/api/events?since='+since+'&from='+(startMs||0);
+    return fetch(url,{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+      if (!j || !j.ok) throw new Error((j&&j.error)||'respuesta rara');
+      var got=0;
+      (j.events||[]).forEach(function(e){
+        if (seenApiId(e.id)) return;
+        var before=LOG.length;
+        apiEvent(e);
+        if (LOG.length>before) got++;
+      });
+      if (j.cursor && j.cursor>apiCursor){ apiCursor=j.cursor; LSset('kickfeed.apicur', String(apiCursor)); }
+      if (j.totals) applyTotals(j.totals);
+      apiOk=true; apiLast=Date.now(); apiInfo=j;
+      paintApi();
+      if (PL.kind){
+        var hit=(j.events||[]).some(function(e){ var k=(e.d||{}).kind;
+          return PL.kind==='kicks' ? k==='kicks' : (k==='sub'||k==='resub'||k==='gift'); });
+        if (hit) reloadList(); else renderList();
+      }
+      return got;
+    }).catch(function(e){
+      apiOk=false; paintApi();
+      logRaw('SERVIDOR no respondió: '+(e&&e.message));
+      return 0;
+    }).then(function(n){ apiBusy=false; return n; });
+  }
+
+  /* Estado del servidor en el ⚙ */
+  var ab=document.createElement('div');
+  ab.className='chip wide'; ab.style.cssText='cursor:default';
+  function paintApi(){
+    if (!CFG.api){ ab.textContent='🛰  Servidor apagado (?api=0)'; return; }
+    if (apiOk===null){ ab.textContent='🛰  Servidor: conectando…'; return; }
+    if (!apiOk){ ab.textContent='🛰  Servidor: sin respuesta (se usa solo Kick en vivo + Botrix)'; return; }
+    var lh=apiInfo&&apiInfo.lastHook;
+    ab.textContent='🛰  Servidor conectado ✓'+(lh?' · último aviso de Kick '+hhmm(lh):'');
+  }
+  paintApi();
+  $filt.insertBefore(ab, ver);
+  if (CFG.api){
+    setTimeout(apiPoll, 800);
+    setInterval(function(){ if (!document.hidden) apiPoll(); }, 20000);
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) apiPoll(); });
+  }
+
+  /* ============================================================
+     PANELES ★ (QUIÉN SE SUSCRIBIÓ) Y ⚡ (QUIÉN MANDÓ KICKS)
+     Tocas ★ o ⚡ en la barra y se abre la lista completa que guarda
+     tu servidor: lo más nuevo arriba y, conforme bajas, lo de días
+     anteriores con una rayita por día. Se cierra tocando otra vez.
+     ============================================================ */
+  var $pl=document.getElementById('plist'), $plTtl=document.getElementById('plTtl'),
+      $plSum=document.getElementById('plSum'), $plList=document.getElementById('plList');
+  var PL={kind:null, items:[], more:false, loading:false, err:false};
+
+  function toggleList(kind){
+    if (PL.kind===kind){ closeList(); return; }
+    if (graphOpen) closeGraph();
+    closeTitle();
+    PL={kind:kind, items:[], more:true, loading:false, err:false};
+    $pl.classList.add('show');
+    $sb.classList.toggle('open', kind==='subs'); $kc.classList.toggle('open', kind==='kicks');
+    renderList(); loadPage();
+    if (CFG.api) apiPoll();
+  }
+  function closeList(){
+    PL.kind=null; $pl.classList.remove('show');
+    $sb.classList.remove('open'); $kc.classList.remove('open');
+  }
+  $sb.onclick=function(){ toggleList('subs'); };
+  $kc.onclick=function(){ toggleList('kicks'); };
+  $pl.querySelector('.ph').onclick=closeList;
+
+  function loadPage(){
+    if (!PL.kind || PL.loading || !PL.more) return;
+    if (!CFG.api){ PL.err=true; PL.more=false; renderList(); return; }
+    PL.loading=true; var kind=PL.kind;
+    var last=PL.items[PL.items.length-1];
+    var url=CFG.api+'/api/list?kind='+kind+'&limit=40'+(last?'&before='+last.ts:'');
+    fetch(url,{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+      if (PL.kind!==kind) return;
+      if (!j || !j.ok) throw new Error('x');
+      PL.items=PL.items.concat(j.events||[]); PL.more=!!j.more; PL.err=false;
+    }).catch(function(){ if (PL.kind===kind){ PL.err=true; PL.more=false; } })
+      .then(function(){ PL.loading=false; renderList(); });
+  }
+  // Recarga la primera página (cuando llegan subs o Kicks nuevos).
+  function reloadList(){
+    if (!PL.kind || PL.loading) return;
+    var k=PL.kind; PL={kind:k, items:[], more:true, loading:false, err:false};
+    loadPage();
+  }
+  $plList.addEventListener('scroll', function(){
+    if ($plList.scrollTop + $plList.clientHeight > $plList.scrollHeight - 80) loadPage();
+  });
+
+  // Una fila por persona: una sub regalada a 3 personas son 3 filas.
+  function listRows(e){
+    var d=e.d||{}, out=[];
+    if (PL.kind==='subs'){
+      if (d.kind==='sub') out.push({u:d.user, tag:'Nueva', cls:'kn', n:1});
+      else if (d.kind==='resub') out.push({u:d.user, tag: d.months>1 ? 'Resub · '+d.months+' meses' : 'Resub', cls:'kr', n:1});
+      else if (d.kind==='gift'){
+        var by = d.user ? 'Regalada por '+d.user : 'Regalada (anónimo)';
+        if ((d.giftees||[]).length) d.giftees.forEach(function(g){ out.push({u:g, tag:by, cls:'kg', n:1}); });
+        else out.push({u:d.user||'Anónimo', tag:'Regaló '+(d.count||1), cls:'kg', n:d.count||1});
+      }
+    } else if (d.kind==='kicks'){
+      out.push({u:d.user, tag:'⚡ '+Number(d.amount||0).toLocaleString('es-MX'), cls:'kk', n:Number(d.amount)||0,
+                sub:[d.name, d.message].filter(Boolean).join(' · ')});
+    }
+    return out;
+  }
+
+  function renderList(){
+    if (!PL.kind) return;
+    var subs=PL.kind==='subs', t=apiInfo&&apiInfo.totals;
+    $plTtl.textContent = subs ? '★ Subs de la sesión · '+(sess.subs||0)
+                              : '⚡ Kicks de la sesión · '+Number(sess.kicks||0).toLocaleString('es-MX');
+    var sum='';
+    if (subs && t) sum='<b style="color:var(--c-sub)">'+plural(t.newSubs||0,'nueva','nuevas')+'</b>'+
+                       '<b style="color:var(--c-resub)">'+plural(t.resubs||0,'resub','resubs')+'</b>'+
+                       '<b style="color:var(--c-gift)">'+plural(t.gifted||0,'regalada','regaladas')+'</b>';
+    if (!subs && t){
+      var from=t.from||0, n=0, who={};
+      PL.items.forEach(function(e){ if (e.ts>=from-60000){ n++; who[lc(e.d&&e.d.user)]=1; } });
+      sum='<b style="color:var(--c-kicks)">'+plural(n,'envío','envíos')+'</b><b>'+plural(Object.keys(who).length,'persona','personas')+'</b>';
+    }
+    $plSum.innerHTML=sum; $plSum.style.display=sum?'':'none';
+
+    // Agrupado por día, con el total de cada día.
+    var groups=[], cur=null;
+    PL.items.forEach(function(e){
+      var k=dayKey(e.ts);
+      if (!cur || cur.k!==k){ cur={k:k, ts:e.ts, rows:[], total:0}; groups.push(cur); }
+      listRows(e).forEach(function(r){ r.ts=e.ts; cur.rows.push(r); cur.total+=r.n; });
+    });
+    var h='';
+    groups.forEach(function(g, gi){
+      var complete = gi<groups.length-1 || !PL.more;
+      h+='<div class="dsep"><span>'+dayLabel(g.ts)+'</span><span>'+
+         (complete ? (subs ? plural(g.total,'sub','subs') : Number(g.total).toLocaleString('es-MX')+' Kicks') : '…')+'</span></div>';
+      g.rows.forEach(function(r){
+        h+='<div class="prow"><span class="t">'+hhmm(r.ts)+'</span><span class="n">'+esc(r.u||'—')+
+           (r.sub?'<span class="m">'+emotes(r.sub)+'</span>':'')+'</span><span class="k '+r.cls+'">'+esc(r.tag)+'</span></div>';
+      });
+    });
+    if (PL.loading) h+='<div class="pmore">Cargando…</div>';
+    else if (PL.err) h+='<div class="pmore">No pude cargar la lista del servidor. Toca ★ o ⚡ para reintentar.</div>';
+    else if (!PL.items.length) h+='<div class="pmore">'+(subs?'Todavía no hay subs guardadas':'Todavía no hay Kicks guardados')+'</div>';
+    else if (!PL.more) h+='<div class="pmore">Es todo lo que hay guardado</div>';
+    $plList.innerHTML=h;
+  }
+
+  /* Botón de prueba en el ⚙: ¿tu celular puede leer el historial del chat? */
+  var hb=document.createElement('button');
+  hb.className='chip wide'; hb.textContent='🔎  Probar historial del chat';
+  hb.onclick=function(){
+    hb.textContent='🔎  Probando…';
+    fetchHistory().then(function(m){
+      hb.textContent = m.length ? '✅  Sí funciona: '+m.length+' mensajes, desde las '+hhmm(m[0].ts)
+                                : '⚠️  Respondió, pero sin mensajes';
+    }).catch(function(e){
+      var why=String(e&&e.message||'');
+      hb.textContent='❌  No se pudo leer el historial'+(/40[13]|429/.test(why)?' (Kick lo bloqueó)':
+                       /formato/.test(why)?' (Kick respondió algo inesperado)':' (sin conexión o bloqueado)');
+    });
+  };
+  $filt.insertBefore(hb, ver);
+
+  /* ============================================================
+     ✏️ TÍTULO Y CATEGORÍA (dentro del ⚙)
+     Lee lo que tienes puesto en Kick y lo cambia a través de tu
+     servidor (Kick no deja hacerlo directo desde una página).
+     Necesita la clave 🔑 del "Enlace para tus celulares".
+     ============================================================ */
+  var $tp=document.getElementById('tpanel'), $tpTitle=document.getElementById('tpTitle'),
+      $tpCnt=document.getElementById('tpCnt'), $tpCur=document.getElementById('tpCur'),
+      $tpSug=document.getElementById('tpSug'), $tpQ=document.getElementById('tpQ'),
+      $tpRes=document.getElementById('tpRes'), $tpGo=document.getElementById('tpGo'),
+      $tpSt=document.getElementById('tpSt');
+  var TP={open:false, cur:null, cat:null, busy:false, seq:0, timer:0};
+  var CAT_DEFAULT=['IRL','Just Chatting'];
+  var LOGIN_URL=(CFG.api||'https://kick-feed-mariotq.vercel.app').replace(/^https?:\/\//,'')+'/api/login';
+
+  function recentCats(){ try{ return JSON.parse(LSget('kickfeed.cats','[]'))||[]; }catch(e){ return []; } }
+  function addRecent(c){
+    if (!c || !c.id) return;
+    var r=recentCats().filter(function(x){ return x.id!==c.id; });
+    r.unshift({id:c.id, name:c.name, thumbnail:c.thumbnail||''});
+    LSset('kickfeed.cats', JSON.stringify(r.slice(0,6)));
+  }
+  function tpStatus(t, cls){ $tpSt.className='st'+(cls?' '+cls:''); $tpSt.textContent=t||''; }
+  function tpErr(status, j){
+    if (status===403) return '🔑 La clave no coincide. Abre otra vez el «Enlace para tus celulares».';
+    if (status===409) return 'Falta conectar tu cuenta de Kick: abre '+LOGIN_URL;
+    return (j && j.error) || ('El servidor respondió '+status);
+  }
+  function catImg(c){ return c && c.thumbnail ? '<img src="'+esc(c.thumbnail)+'" alt="" onerror="this.style.visibility=\'hidden\'">' : '<img alt="">'; }
+  function sameCat(a,b){ return !!(a && b && String(a.id)===String(b.id)); }
+
+  function tpChanged(){
+    if (!TP.cur) return false;
+    var t=$tpTitle.value.trim();
+    return (t && t!==(TP.cur.title||'').trim()) || (TP.cat && !sameCat(TP.cat, TP.cur.category));
+  }
+  function tpPaint(){
+    $tpCnt.textContent=$tpTitle.value.length+'/140';
+    var c=TP.cat;
+    $tpCur.innerHTML = c ? catImg(c)+'<span>'+esc(c.name||'—')+'</span>'+
+        (sameCat(c, TP.cur&&TP.cur.category) ? '<span class="tg">la de ahora</span>' : '<span class="tg nw">nueva</span>')
+      : '<span style="color:var(--dim)">'+(TP.cur?'Sin categoría':'—')+'</span>';
+    // atajos de categoría: las que has usado + IRL y Just Chatting
+    var seen={}, h='', n=0;
+    if (c) seen[lc(c.name)]=1;
+    recentCats().concat(CAT_DEFAULT.map(function(nm){ return {name:nm}; })).forEach(function(x){
+      if (n>=5 || seen[lc(x.name)]) return; seen[lc(x.name)]=1; n++;
+      h+='<button data-i="'+esc(x.id||'')+'" data-n="'+esc(x.name)+'">'+esc(x.name)+'</button>';
+    });
+    $tpSug.innerHTML = TP.cur ? h : '';
+    $tpGo.disabled = TP.busy || !tpChanged();
+    $tpGo.textContent = TP.busy ? 'Cambiando…' : 'Cambiar en Kick';
+  }
+  function tpEnable(on){ $tpTitle.disabled=!on; $tpQ.disabled=!on; }
+
+  function openTitle(){
+    $filt.classList.remove('open'); closeList(); if (graphOpen) closeGraph();
+    TP.open=true; $tp.classList.add('show');
+    TP.cur=null; TP.cat=null; $tpTitle.value=''; $tpQ.value=''; $tpRes.style.display='none';
+    tpEnable(false); tpStatus(''); tpPaint();
+    if (!CFG.api){ $tpTitle.placeholder='—'; tpStatus('El servidor está apagado (?api=0).','err'); return; }
+    if (!CFG.key){ $tpTitle.placeholder='—';
+      tpStatus('🔑 Falta tu clave. Abre una vez en este celular el «Enlace para tus celulares» que sale al autorizar en '+LOGIN_URL,'err'); return; }
+    $tpTitle.placeholder='Cargando…';
+    var seq=++TP.seq, st=0;
+    fetch(CFG.api+'/api/channel?key='+encodeURIComponent(CFG.key),{cache:'no-store'})
+      .then(function(r){ st=r.status; return r.json().catch(function(){ return {}; }); })
+      .then(function(j){
+        if (seq!==TP.seq || !TP.open) return;
+        if (!j || !j.ok) throw {msg:tpErr(st,j)};
+        TP.cur={title:j.title||'', category:j.category||null}; TP.cat=TP.cur.category;
+        $tpTitle.value=TP.cur.title; $tpTitle.placeholder='Escribe el título';
+        addRecent(TP.cur.category); tpEnable(true); tpPaint();
+      }).catch(function(e){
+        if (seq!==TP.seq || !TP.open) return;
+        $tpTitle.placeholder='—';
+        tpStatus(e&&e.msg ? e.msg : 'Sin conexión con el servidor. Toca ✏️ otra vez para reintentar.','err');
+      });
+  }
+  function closeTitle(){
+    if (!TP.open) return;
+    TP.open=false; TP.seq++; $tp.classList.remove('show');
+    try{ document.activeElement && document.activeElement.blur(); }catch(e){}
+  }
+
+  function tpSearch(term, pick){
+    term=String(term||'').trim(); clearTimeout(TP.timer);
+    if (term.length<2){ $tpRes.style.display='none'; return; }
+    var seq=++TP.seq, st=0;
+    $tpRes.style.display=''; $tpRes.innerHTML='<div class="m">Buscando…</div>';
+    fetch(CFG.api+'/api/categories?key='+encodeURIComponent(CFG.key)+'&q='+encodeURIComponent(term),{cache:'no-store'})
+      .then(function(r){ st=r.status; return r.json().catch(function(){ return {}; }); })
+      .then(function(j){
+        if (seq!==TP.seq || !TP.open) return;
+        if (!j || !j.ok) throw {msg:tpErr(st,j)};
+        var list=j.data||[];
+        if (pick){
+          var ex=list.filter(function(c){ return lc(c.name)===lc(term); })[0];
+          if (ex){ tpPick(ex); return; }
+        }
+        TP.found=list;
+        $tpRes.innerHTML = list.length ? list.slice(0,8).map(function(c,i){
+            return '<button data-k="'+i+'">'+catImg(c)+'<span>'+esc(c.name)+'</span></button>'; }).join('')
+          : '<div class="m">No encontré ninguna categoría con «'+esc(term)+'»</div>';
+      }).catch(function(e){
+        if (seq!==TP.seq || !TP.open) return;
+        $tpRes.innerHTML='<div class="m">'+esc(e&&e.msg ? e.msg : 'No pude buscar (sin conexión)')+'</div>';
+      });
+  }
+  function tpPick(c){
+    TP.cat={id:c.id, name:c.name, thumbnail:c.thumbnail||''};
+    $tpQ.value=''; $tpRes.style.display='none'; $tpQ.blur(); tpStatus(''); tpPaint();
+  }
+  $tpRes.onclick=function(ev){
+    var b=ev.target.closest('button[data-k]'); if (!b || !TP.found) return;
+    tpPick(TP.found[+b.getAttribute('data-k')]);
+  };
+  $tpSug.onclick=function(ev){
+    var b=ev.target.closest('button'); if (!b) return;
+    var id=b.getAttribute('data-i'), nm=b.getAttribute('data-n');
+    if (id){ var r=recentCats().filter(function(x){ return String(x.id)===id; })[0]; if (r){ tpPick(r); return; } }
+    tpSearch(nm, true);
+  };
+  $tpQ.addEventListener('input', function(){
+    var v=$tpQ.value; clearTimeout(TP.timer);
+    if (v.trim().length<2){ TP.seq++; $tpRes.style.display='none'; return; }
+    TP.timer=setTimeout(function(){ tpSearch(v); }, 350);
+  });
+  $tpQ.addEventListener('keydown', function(ev){ if (ev.key==='Enter'){ ev.preventDefault(); tpSearch($tpQ.value); } });
+  $tpTitle.addEventListener('input', function(){ tpStatus(''); tpPaint(); });
+  $tpTitle.addEventListener('keydown', function(ev){ if (ev.key==='Enter'){ ev.preventDefault(); $tpTitle.blur(); } });
+
+  $tpGo.onclick=function(){
+    if (TP.busy || !tpChanged()) return;
+    var body={key:CFG.key}, t=$tpTitle.value.trim();
+    if (t && t!==(TP.cur.title||'').trim()) body.title=t;
+    if (TP.cat && !sameCat(TP.cat, TP.cur.category)) body.category_id=TP.cat.id;
+    TP.busy=true; tpEnable(false); tpStatus(''); tpPaint();
+    var st=0, chosen=TP.cat;
+    // text/plain para que el navegador no haga la consulta previa (CORS)
+    fetch(CFG.api+'/api/channel',{method:'POST', cache:'no-store',
+          headers:{'Content-Type':'text/plain;charset=UTF-8'}, body:JSON.stringify(body)})
+      .then(function(r){ st=r.status; return r.json().catch(function(){ return {}; }); })
+      .then(function(j){
+        if (!j || !j.ok) throw {msg:tpErr(st,j)};
+        TP.cur={title:j.title||t, category:j.category||chosen};
+        TP.cat=TP.cur.category; $tpTitle.value=TP.cur.title;
+        if (body.category_id) addRecent(chosen);
+        tpStatus('✅ Listo, ya cambió en Kick','ok');
+        logRaw('TÍTULO/CATEGORÍA cambiados: '+JSON.stringify({title:body.title, category:body.category_id&&chosen.name}));
+      }).catch(function(e){
+        tpStatus('❌ '+(e&&e.msg ? e.msg : 'Sin conexión con el servidor, no se cambió nada. Intenta otra vez.'),'err');
+      }).then(function(){ TP.busy=false; if (TP.open) tpEnable(true); tpPaint(); });
+  };
+  document.getElementById('tpCancel').onclick=closeTitle;
+  document.getElementById('tpHead').onclick=closeTitle;
+
+  var tb=document.createElement('button');
+  tb.className='chip wide'; tb.textContent='✏️  Título y categoría';
+  tb.onclick=openTitle;
+  $filt.insertBefore(tb, cp);
+
+  connect();
+
+  /* ============================================================
+     MODO PRUEBA
+     ============================================================ */
+  var demo=[
+    ['App\\Events\\FollowersUpdated',{followersCount:1234,username:'chopo_dog',followed:true}],
+    ['App\\Events\\SubscriptionEvent',{username:'viajero_mx',months:1}],
+    ['App\\Events\\SubscriptionEvent',{username:'rappitendero',months:7}],
+    ['App\\Events\\GiftedSubscriptionsEvent',{gifter_username:'donmario',gifted_usernames:['ana','luis','pepe']}],
+    ['App\\Events\\KicksGifted',{sender:{username:'kickero'},amount:500,gift:{name:'Cohete'},message:'¡Saludos desde Guadalajara jefe! 🛵'}],
+    ['App\\Events\\RewardRedeemedEvent',{username:'moto_gdl',reward_title:'CLIPS',user_input:'se cayó la señal'}],
+    ['App\\Events\\StreamHostEvent',{host_username:'streamer_amigo',number_viewers:42}],
+    ['App\\Events\\StreamerIsLive',{livestream:{session_title:'IRL Zapopan 🛵'}}],
+    ['App\\Events\\ChatMessageEvent',{id:'m1',sender:{username:'troll123'},content:'jajaja que stream tan aburrido'}],
+    ['App\\Events\\UserBannedEvent',{user:{username:'troll123'},banned_by:{username:'tq_bot_irl'},duration:10,permanent:false}],
+    ['App\\Events\\ChatMessageEvent',{id:'bx1',sender:{username:'BotRix'},content:'¡Gracias @viajero_mx por la suscripcion mariotqLOVE'}],
+    ['App\\Events\\ChatMessageEvent',{id:'bx2',sender:{username:'BotRix'},content:'¡Gracias @nuevo_sub por renovar tu suscripción! mariotqLOVE'}],
+    ['App\\Events\\ChatMessageEvent',{id:'t'+Math.random(),sender:{username:'Botrix'},content:'¡pepe_gdl acaba de donar $150 MXN! Gracias por el apoyo'}],
+    ['App\\Events\\ChatMessageEvent',{id:'x'+Math.random(),sender:{username:'chatero',identity:{color:'#53fc18'}},content:'buenas noches jefe'}]
+  ];
+  var di=0;
+  document.getElementById('test').onclick=function(){
+    var e=demo[di++%demo.length];
+    handle(e[0], JSON.parse(JSON.stringify(e[1])), 'test');
+  };
+
+  window.kickfeed={cfg:CFG,handle:handle,pollSync:pollSync,channels:channels,recover:recover,apiPoll:apiPoll,
+                   fetchHistory:fetchHistory, sess:function(){return sess;},
+                   log:function(){return LOG;}, raw:function(){return RAW;}};
+})();
+</script>
+</body>
+</html>
