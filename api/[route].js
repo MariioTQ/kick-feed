@@ -199,6 +199,7 @@ async function webhook(req, res) {
     const ev = { id: msgId, type, ts, rt, d: normalize(type, p) };
     await redis('ZADD', 'ev', rt, JSON.stringify(ev));
     await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
+    await addToLists(ev);
     if (type === 'livestream.status.updated') {
       await setJSON('live', Object.assign({ at: rt }, ev.d));
       // "Sesión" = el stream del día. Si el stream se corta y vuelve en
@@ -218,6 +219,35 @@ async function webhook(req, res) {
     await logPush('raw', { at: Date.now(), type, body: raw.slice(0, 1500) }, 40);
   }
   return send(res, 200, { ok: true });
+}
+
+/* ---- listas para los paneles ★ (subs) y ⚡ (Kicks), ordenadas por hora ---- */
+function listOf(kind) { return kind === 'kicks' ? 'L:kicks' : (kind === 'sub' || kind === 'resub' || kind === 'gift') ? 'L:subs' : ''; }
+async function addToLists(ev) {
+  const key = listOf((ev.d || {}).kind);
+  if (!key) return;
+  await redis('ZADD', key, ev.ts, JSON.stringify(ev));
+  await redis('ZREMRANGEBYRANK', key, 0, -5001);       // las últimas 5,000
+}
+async function backfillLists() {
+  // La primera vez, arma las listas con lo que ya estaba guardado.
+  if (await redis('GET', 'listsReady')) return;
+  const all = await redis('ZRANGE', 'ev', 0, -1);
+  for (const s of (all || [])) { try { await addToLists(JSON.parse(s)); } catch (e) {} }
+  await redis('SET', 'listsReady', '1');
+}
+async function list(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const q = req.query || {};
+  const key = q.kind === 'kicks' ? 'L:kicks' : 'L:subs';
+  await backfillLists();
+  const before = Number(q.before) || 0;                // para ir cargando hacia atrás
+  const limit = Math.min(100, Number(q.limit) || 40);
+  const max = before ? '(' + before : '+inf';
+  const items = await redis('ZREVRANGEBYSCORE', key, max, '-inf', 'LIMIT', 0, limit);
+  const evs = (items || []).map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).filter(Boolean);
+  return send(res, 200, { ok: true, kind: q.kind === 'kicks' ? 'kicks' : 'subs', events: evs, more: evs.length === limit });
 }
 
 async function events(req, res) {
@@ -332,6 +362,7 @@ module.exports = async function handler(req, res) {
   try {
     if (route === 'webhook') return await webhook(req, res);
     if (route === 'events') return await events(req, res);
+    if (route === 'list') return await list(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
     if (route === 'status') return await status(req, res);
