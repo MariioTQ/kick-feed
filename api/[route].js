@@ -21,7 +21,7 @@ const crypto = require('crypto');
 const CHANNEL = (process.env.KICK_CHANNEL || 'mariotq').toLowerCase();
 const CLIENT_ID = process.env.KICK_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.KICK_CLIENT_SECRET || '';
-const SCOPES = 'user:read channel:read channel:write events:subscribe kicks:read';
+const SCOPES = 'user:read channel:read channel:write events:subscribe kicks:read chat:write moderation:ban moderation:chat_message:manage';
 const EVENTS = [
   'channel.subscription.new', 'channel.subscription.renewal', 'channel.subscription.gifts',
   'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated'
@@ -346,6 +346,72 @@ async function categories(req, res) {
   return send(res, 200, { ok: true, data: data.slice(0, 20).map(c => ({ id: c.id, name: c.name, thumbnail: c.thumbnail || '' })) });
 }
 
+/* ---- chat: moderar y escribir (solo con la clave de tus celulares) ---- */
+function kickErr(status, j, need) {
+  const msg = j && (j.message || j.error);
+  if (status === 401 || (status === 403 && (!msg || /scope|permission|unauthori|^forbidden$/i.test(msg))))
+    return 'Kick no dio permiso: palomea "' + need + '" en tu app de Kick y vuelve a autorizar';
+  if (status === 403) return 'Kick no dejó: ' + msg;
+  if (status === 429) return 'Kick pidió esperar un momento, intenta otra vez';
+  return (j && (j.message || j.error)) || ('Kick respondió ' + status);
+}
+async function kickCall(method, path, token, body) {
+  const r = await fetch('https://api.kick.com/public/v1' + path, {
+    method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const j = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, j };
+}
+async function mod(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
+  const b = await readJSONBody(req);
+  if (!(await checkKey(b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const t = await validToken();
+  if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
+  const me = Number(t.user_id), uid = Number(b.user_id);
+  const act = String(b.action || '');
+  let r, need = 'Ejecuta acciones de moderación para moderadores';
+  if (act === 'delete') {
+    if (!b.message_id) return send(res, 400, { ok: false, error: 'falta el mensaje' });
+    need = 'Ejecuta acciones de moderador en mensajes de chat';
+    r = await kickCall('DELETE', '/chat/' + encodeURIComponent(String(b.message_id)), t.access_token);
+  } else {
+    if (!uid) return send(res, 400, { ok: false, error: 'falta la persona' });
+    if (uid === me) return send(res, 400, { ok: false, error: 'No te puedes silenciar a ti mismo' });
+    if (act === 'unban') {
+      r = await kickCall('DELETE', '/moderation/bans', t.access_token, { broadcaster_user_id: me, user_id: uid });
+    } else if (act === 'timeout' || act === 'ban') {
+      const body = { broadcaster_user_id: me, user_id: uid };
+      if (act === 'timeout') body.duration = Math.max(1, Math.min(10080, Math.round(Number(b.duration) || 10)));
+      if (b.reason) body.reason = String(b.reason).slice(0, 100);
+      r = await kickCall('POST', '/moderation/bans', t.access_token, body);
+    } else return send(res, 400, { ok: false, error: 'acción rara' });
+  }
+  await logPush('modlog', { at: Date.now(), act, user: b.username || uid, ok: r.ok, status: r.status, duration: b.duration || null }, 100);
+  if (!r.ok) return send(res, 200, { ok: false, error: kickErr(r.status, r.j, need) });
+  return send(res, 200, { ok: true });
+}
+async function chatSend(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
+  const b = await readJSONBody(req);
+  if (!(await checkKey(b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const t = await validToken();
+  if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
+  const content = String(b.content || '').trim().slice(0, 500);
+  if (!content) return send(res, 400, { ok: false, error: 'mensaje vacío' });
+  const body = { type: 'user', broadcaster_user_id: Number(t.user_id), content };
+  if (b.reply_to) body.reply_to_message_id = String(b.reply_to);
+  const r = await kickCall('POST', '/chat', t.access_token, body);
+  if (!r.ok) return send(res, 200, { ok: false, error: kickErr(r.status, r.j, 'Escribir en el feed del chat') });
+  const d = r.j.data || r.j;
+  return send(res, 200, { ok: !!(d.is_sent !== false), message_id: d.message_id || null });
+}
+
 async function events(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -431,8 +497,12 @@ async function callback(req, res) {
     const lines = subs.map(s => '<li>' + (s.ok ? '<span class="ok">✔</span> ' : '<span class="bad">✘</span> ') + esc(s.name) + (s.error ? ' <small>(' + esc(s.error) + ')</small>' : '') + '</li>').join('');
     const sc = String(tok.scope || '');
     const canWrite = /channel:write/.test(sc);
+    const perm = (re, ok, label) => '<p>' + (re.test(sc) ? '<span class="ok">✔</span> ' + ok : '<span class="bad">✘</span> Falta <b>' + label + '</b>: márcalo en tu app de Kick y vuelve a conectar') + '</p>';
     return html(200, '<h1 class="ok">✅ Listo, ' + esc(u.name) + '</h1><p>Kick ya le avisa a tu servidor de estos eventos:</p><ul>' + lines + '</ul>' +
       '<p>' + (canWrite ? '<span class="ok">✔</span> Permiso para cambiar título y categoría' : '<span class="bad">✘</span> Falta el permiso <b>Actualizar información del canal</b>: márcalo en tu app de Kick y vuelve a conectar') + '</p>' +
+      perm(/moderation:ban/, 'Permiso para silenciar y banear desde el chat', 'Ejecuta acciones de moderación para moderadores') +
+      perm(/moderation:chat_message:manage/, 'Permiso para borrar mensajes', 'Ejecuta acciones de moderador en mensajes de chat') +
+      perm(/chat:write/, 'Permiso para escribir en el chat', 'Escribir en el feed del chat') +
       '<h1 style="margin-top:22px">🔑 Enlace para tus celulares</h1><p>Ábrelo <b>una vez</b> en cada celular (o pégalo en IRL Plus Chat). Así el feed puede cambiar tu título y categoría. <b>No lo compartas.</b></p>' +
       '<p><code id="fu" style="word-break:break-all">' + esc(feedUrl) + '</code></p>' +
       '<a class="btn" href="#" onclick="navigator.clipboard.writeText(document.getElementById(\'fu\').textContent);this.textContent=\'✅ Copiado\';return false">Copiar enlace</a> ' +
@@ -487,6 +557,8 @@ module.exports = async function handler(req, res) {
     if (route === 'list') return await list(req, res);
     if (route === 'channel') return await channel(req, res);
     if (route === 'categories') return await categories(req, res);
+    if (route === 'mod') return await mod(req, res);
+    if (route === 'chat') return await chatSend(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
     if (route === 'status') return await status(req, res);
