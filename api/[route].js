@@ -408,6 +408,27 @@ async function mod(req, res) {
   if (!r.ok) return send(res, 200, { ok: false, error: kickErr(r.status, r.j, need) });
   return send(res, 200, { ok: true });
 }
+/* ---- la llave actual del chat en vivo de Kick (si al celular no le contesta) ---- */
+async function realtimeKey(req, res) {
+  cors(res);
+  const q = req.query || {};
+  if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const cached = await getJSON('rtkey');
+  if (cached && Date.now() - cached.at < 3600e3 && q.fresh !== '1') return send(res, 200, Object.assign({ ok: true, cached: true }, cached));
+  const chId = Number(q.channel) || 6692133;
+  const body = { client: { id: 'kf' + crypto.randomBytes(6).toString('hex'), type: 'web' }, capabilities: { accepted_providers: [{ provider: 'pusher' }] } };
+  try {
+    const r = await fetch('https://web.kick.com/api/v1/realtime/channels/' + chId + '/chat/connection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    const cs = (j.data && j.data.connections) || [];
+    const p = cs.find(c => c && c.provider === 'pusher' && c.credentials && /^[a-z0-9]+$/i.test(c.credentials.app_key || ''));
+    if (!p) return send(res, 200, { ok: false, error: 'Kick no dio llave (' + r.status + ')', providers: cs.map(c => c && c.provider) });
+    const out = { app_key: p.credentials.app_key, cluster: p.credentials.cluster || 'us2', at: Date.now() };
+    await setJSON('rtkey', out);
+    return send(res, 200, Object.assign({ ok: true }, out));
+  } catch (e) { return send(res, 200, { ok: false, error: e.message }); }
+}
 async function chatRead(req, res) {
   const q = req.query || {};
   if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
@@ -593,6 +614,7 @@ module.exports = async function handler(req, res) {
     if (route === 'channel') return await channel(req, res);
     if (route === 'categories') return await categories(req, res);
     if (route === 'mod') return await mod(req, res);
+    if (route === 'realtime') return await realtimeKey(req, res);
     if (route === 'chat') return await chatSend(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
