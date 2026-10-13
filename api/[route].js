@@ -172,6 +172,36 @@ function normalize(type, p) {
       return { kind: 'other' };
   }
 }
+// La hora que se usa para ordenar y contar. En las renovaciones Kick manda
+// en "created_at" la fecha del periodo anterior (un mes antes), así que ahí
+// manda la hora en que llegó el aviso. Igual si la fecha viene muy lejos.
+const FIX_WIN = 30 * 60000;
+function effTs(e) {
+  if (!e) return 0;
+  if (e.type === 'channel.subscription.renewal' && e.rt) return e.rt;
+  if (e.rt && e.ts && e.type !== 'livestream.status.updated' && Math.abs(e.ts - e.rt) > FIX_WIN) return e.rt;
+  return e.ts || e.rt || 0;
+}
+function fixEv(e) { if (e) e.ts = effTs(e); return e; }
+// Una sola vez: corrige las que ya estaban guardadas con la fecha mala.
+async function repairTimes() {
+  if (await redis('GET', 'fixTs1')) return;
+  for (const key of ['L:subs', 'L:kicks', 'ev']) {
+    const all = await redis('ZRANGE', key, 0, -1, 'WITHSCORES');
+    for (let i = 0; i + 1 < (all || []).length; i += 2) {
+      let e; try { e = JSON.parse(all[i]); } catch (x) { continue; }
+      const t = effTs(e);
+      if (t && t !== e.ts) {
+        const score = key === 'ev' ? Number(all[i + 1]) : t;
+        e.ts = t;
+        await redis('ZREM', key, all[i]);
+        await redis('ZADD', key, score, JSON.stringify(e));
+      }
+    }
+  }
+  await redis('SET', 'fixTs1', '1');
+}
+
 function evTime(type, p, fallback) {
   const t = Date.parse(p.created_at || (p.metadata && p.metadata.created_at) || (type === 'livestream.status.updated' ? (p.is_live ? p.started_at : p.ended_at) : '') || '');
   return t || fallback;
@@ -196,7 +226,7 @@ async function webhook(req, res) {
   if (fresh) {
     const rt = Date.now();                       // cuándo llegó (para que el feed no se salte nada)
     const ts = evTime(type, p, rt);              // cuándo pasó (lo que dice Kick)
-    const ev = { id: msgId, type, ts, rt, d: normalize(type, p) };
+    const ev = fixEv({ id: msgId, type, ts, rt, d: normalize(type, p) });
     await redis('ZADD', 'ev', rt, JSON.stringify(ev));
     await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
     await addToLists(ev);
@@ -208,7 +238,10 @@ async function webhook(req, res) {
       const se = (await getJSON('session')) || {};
       if (ev.d.is_live) {
         const st = Date.parse(ev.d.started_at) || ts;
-        if (!se.start || !se.lastEnd || st - se.lastEnd > 30 * 60000) se.start = st;
+        if (!se.start || !se.lastEnd || st - se.lastEnd > 30 * 60000) {
+          se.prevEnd = se.lastEnd || 0;      // cuándo terminó el stream anterior
+          se.start = st;
+        }
         se.live = true;
       } else {
         se.lastEnd = Date.parse(ev.d.ended_at) || ts; se.live = false;
@@ -242,11 +275,13 @@ async function list(req, res) {
   const q = req.query || {};
   const key = q.kind === 'kicks' ? 'L:kicks' : 'L:subs';
   await backfillLists();
+  await repairTimes();
   const before = Number(q.before) || 0;                // para ir cargando hacia atrás
   const limit = Math.min(100, Number(q.limit) || 40);
   const max = before ? '(' + before : '+inf';
   const items = await redis('ZREVRANGEBYSCORE', key, max, '-inf', 'LIMIT', 0, limit);
-  const evs = (items || []).map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).filter(Boolean);
+  const evs = (items || []).map(s => { try { return fixEv(JSON.parse(s)); } catch (e) { return null; } }).filter(Boolean)
+    .sort((a, b) => b.ts - a.ts);                      // lo más nuevo arriba
   return send(res, 200, { ok: true, kind: q.kind === 'kicks' ? 'kicks' : 'subs', events: evs, more: evs.length === limit });
 }
 
@@ -317,8 +352,9 @@ async function events(req, res) {
   const q = req.query || {};
   const since = Number(q.since) || 0;                 // cursor: lo que el feed todavía no tiene
   const limit = Math.min(500, Number(q.limit) || 300);
+  await repairTimes();
   const list = await redis('ZRANGEBYSCORE', 'ev', '(' + since, '+inf', 'LIMIT', 0, limit);
-  const evs = (list || []).map(s => { try { return JSON.parse(s); } catch (e) { return null; } }).filter(Boolean);
+  const evs = (list || []).map(s => { try { return fixEv(JSON.parse(s)); } catch (e) { return null; } }).filter(Boolean);
   const cursor = evs.reduce((m, e) => Math.max(m, e.rt || e.ts || 0), since);
   const live = await getJSON('live');
   const se = await getJSON('session');
@@ -328,12 +364,20 @@ async function events(req, res) {
   if (se && se.start && (se.live || (se.lastEnd && Date.now() - se.lastEnd < 30 * 60000))) from = se.start;
   let totals = null;
   if (from) {
-    const sess = await redis('ZRANGEBYSCORE', 'ev', from - 3600000, '+inf');
-    totals = { from, subs: 0, kicks: 0, newSubs: 0, resubs: 0, gifted: 0 };
+    // Lo que llegó mientras no estabas en vivo (p. ej. una renovación en la
+    // madrugada) cuenta para el siguiente stream. Máximo las 24 h de antes.
+    const offFrom = (se && se.start === from && se.prevEnd) ? Math.max(se.prevEnd, from - 24 * 3600e3) : 0;
+    const sess = await redis('ZRANGEBYSCORE', 'ev', (offFrom ? Math.min(offFrom, from) : from) - 3600000, '+inf');
+    totals = { from, subs: 0, kicks: 0, newSubs: 0, resubs: 0, gifted: 0, offFrom, offSubs: 0, offKicks: 0 };
     (sess || []).forEach(s => {
-      let e; try { e = JSON.parse(s); } catch (x) { return; }
-      if ((e.ts || 0) < from - 60000) return;
-      const d = e.d || {};
+      let e; try { e = fixEv(JSON.parse(s)); } catch (x) { return; }
+      const t = e.ts || 0, d = e.d || {};
+      let off = false;
+      if (t < from - 60000) {
+        if (!(offFrom && t >= offFrom && /^(sub|resub|gift|kicks)$/.test(d.kind || ''))) return;
+        off = true;
+      }
+      if (off) { if (d.kind === 'kicks') totals.offKicks += d.amount || 0; else totals.offSubs += d.kind === 'gift' ? (d.count || 1) : 1; }
       if (d.kind === 'sub') { totals.subs++; totals.newSubs++; }
       else if (d.kind === 'resub') { totals.subs++; totals.resubs++; }
       else if (d.kind === 'gift') { totals.subs += d.count || 1; totals.gifted += d.count || 1; }
