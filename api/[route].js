@@ -24,8 +24,10 @@ const CLIENT_SECRET = process.env.KICK_CLIENT_SECRET || '';
 const SCOPES = 'user:read channel:read channel:write events:subscribe kicks:read chat:write moderation:ban moderation:chat_message:manage';
 const EVENTS = [
   'channel.subscription.new', 'channel.subscription.renewal', 'channel.subscription.gifts',
-  'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated'
+  'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated',
+  'chat.message.sent'          // el chat por la vía oficial (respaldo cuando Kick no deja conectar directo)
 ];
+const SUBS_VER = '3';          // si cambia la lista, el servidor se vuelve a suscribir solo
 const KEEP = 4000;          // cuántos eventos se guardan como máximo
 
 /* ---------------- Redis (Upstash, por su API web) ---------------- */
@@ -164,7 +166,7 @@ function normalize(type, p) {
       return { kind: 'follow', user: uname(p.follower) };
     case 'moderation.banned': {
       const m = p.metadata || {};
-      return { kind: 'ban', user: uname(p.banned_user), mod: uname(p.moderator), reason: m.reason || '', expires_at: m.expires_at || null };
+      return { kind: 'ban', user: uname(p.banned_user), uid: (p.banned_user || {}).user_id || 0, mod: uname(p.moderator), reason: m.reason || '', expires_at: m.expires_at || null };
     }
     case 'livestream.status.updated':
       return { kind: 'live', is_live: !!p.is_live, started_at: p.started_at || null, ended_at: p.ended_at || null, title: p.title || '' };
@@ -221,6 +223,18 @@ async function webhook(req, res) {
   }
   let p = {};
   try { p = JSON.parse(raw); } catch (e) {}
+  // Mensajes del chat: camino ligero (1 escritura) para no gastar el plan gratis.
+  if (type === 'chat.message.sent') {
+    const s = p.sender || {}, idt = s.identity || {}, rp = p.replies_to || null;
+    const rt = Date.now();
+    const m = { id: String(p.message_id || msgId), ts: Date.parse(p.created_at) || rt, rt,
+      u: s.username || '', uid: s.user_id || 0, color: idt.username_color || '', badges: idt.badges || [],
+      t: String(p.content || '').slice(0, 600) };
+    if (rp) m.rq = { id: rp.message_id || '', u: (rp.sender || {}).username || '', t: String(rp.content || '').slice(0, 200) };
+    await redis('ZADD', 'chat', rt, JSON.stringify(m));
+    if (Math.random() < 0.05) await redis('ZREMRANGEBYRANK', 'chat', 0, -401);   // se quedan los últimos 400
+    return send(res, 200, { ok: true });
+  }
   // Kick puede reintentar el mismo aviso: se guarda una sola vez.
   const fresh = await redis('SET', 'seen:' + msgId, '1', 'NX', 'EX', 7 * 86400);
   if (fresh) {
@@ -394,9 +408,21 @@ async function mod(req, res) {
   if (!r.ok) return send(res, 200, { ok: false, error: kickErr(r.status, r.j, need) });
   return send(res, 200, { ok: true });
 }
+async function chatRead(req, res) {
+  const q = req.query || {};
+  if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const since = Number(q.since) || 0;
+  let list;
+  if (since) list = await redis('ZRANGEBYSCORE', 'chat', '(' + since, '+inf', 'LIMIT', 0, 150);
+  else list = ((await redis('ZRANGE', 'chat', -50, -1)) || []);
+  const msgs = (list || []).map(x => { try { return JSON.parse(x); } catch (e) { return null; } }).filter(Boolean);
+  const cursor = msgs.reduce((mx, m) => Math.max(mx, m.rt || 0), since);
+  return send(res, 200, { ok: true, cursor, msgs });
+}
 async function chatSend(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (req.method === 'GET') return chatRead(req, res);
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
   const b = await readJSONBody(req);
   if (!(await checkKey(b.key))) return send(res, 403, { ok: false, error: 'clave' });
@@ -412,9 +438,17 @@ async function chatSend(req, res) {
   return send(res, 200, { ok: !!(d.is_sent !== false), message_id: d.message_id || null });
 }
 
+async function ensureSubs() {
+  if ((await redis('GET', 'subsVer')) === SUBS_VER) return;
+  const t = await validToken(); if (!t) return;
+  await redis('SET', 'subsVer', SUBS_VER);          // primero, para no repetirlo si tarda
+  try { const r = await subscribeAll(t); await logPush('raw', { at: Date.now(), type: 'resubscribe', body: JSON.stringify(r).slice(0, 800) }, 40); }
+  catch (e) { await redis('DEL', 'subsVer'); }
+}
 async function events(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
+  try { await ensureSubs(); } catch (e) {}
   const q = req.query || {};
   const since = Number(q.since) || 0;                 // cursor: lo que el feed todavía no tiene
   const limit = Math.min(500, Number(q.limit) || 300);
@@ -494,6 +528,7 @@ async function callback(req, res) {
     if (!fkey) { fkey = b64url(crypto.randomBytes(18)); await redis('SET', 'feedkey', fkey); }
     const feedUrl = 'https://mariiotq.github.io/kick-feed/?key=' + encodeURIComponent(fkey);
     const subs = await subscribeAll(tok);
+    await redis('SET', 'subsVer', SUBS_VER);
     const lines = subs.map(s => '<li>' + (s.ok ? '<span class="ok">✔</span> ' : '<span class="bad">✘</span> ') + esc(s.name) + (s.error ? ' <small>(' + esc(s.error) + ')</small>' : '') + '</li>').join('');
     const sc = String(tok.scope || '');
     const canWrite = /channel:write/.test(sc);
