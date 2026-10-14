@@ -130,6 +130,7 @@ async function subscribeAll(tok) {
 
 /* ---------------- verificar que el aviso sí viene de Kick ---------------- */
 let PUBKEY = process.env.KICK_PUBLIC_KEY || '';
+let PUBOBJ = null;
 async function kickPublicKey() {
   if (PUBKEY) return PUBKEY;
   const r = await fetch('https://api.kick.com/public/v1/public-key');
@@ -141,8 +142,8 @@ async function verifyKick(req, raw) {
   const id = req.headers['kick-event-message-id'], ts = req.headers['kick-event-message-timestamp'];
   const sig = req.headers['kick-event-signature'];
   if (!id || !ts || !sig) return false;
-  const key = await kickPublicKey();
-  return crypto.verify('sha256', Buffer.from(id + '.' + ts + '.' + raw), { key, padding: crypto.constants.RSA_PKCS1_PADDING },
+  if (!PUBOBJ) PUBOBJ = crypto.createPublicKey(await kickPublicKey());   // se lee una sola vez
+  return crypto.verify('sha256', Buffer.from(id + '.' + ts + '.' + raw), { key: PUBOBJ, padding: crypto.constants.RSA_PKCS1_PADDING },
     Buffer.from(sig, 'base64'));
 }
 
@@ -191,8 +192,10 @@ function effTs(e) {
 }
 function fixEv(e) { if (e) e.ts = effTs(e); return e; }
 // Una sola vez: corrige las que ya estaban guardadas con la fecha mala.
+let FIXED = false;              // ya se corrigieron las horas (se recuerda mientras el servidor sigue despierto)
 async function repairTimes() {
-  if (await redis('GET', 'fixTs1')) return;
+  if (FIXED) return;
+  if (await redis('GET', 'fixTs1')) { FIXED = true; return; }
   for (const key of ['L:subs', 'L:kicks', 'ev']) {
     const all = await redis('ZRANGE', key, 0, -1, 'WITHSCORES');
     for (let i = 0; i + 1 < (all || []).length; i += 2) {
@@ -246,7 +249,7 @@ function cleanEntry(t) {
 let SPAMC = { at: 0, cfg: null, norm: [] };
 function setSpamCache(cfg) { SPAMC = { at: Date.now(), cfg, norm: cfg.list.map(e => [e, spamNorm(e)]).filter(x => x[1].length >= 5) }; return cfg; }
 async function spamCfg(fresh) {
-  if (!fresh && SPAMC.cfg && Date.now() - SPAMC.at < 60000) return SPAMC.cfg;
+  if (!fresh && SPAMC.cfg && Date.now() - SPAMC.at < 300000) return SPAMC.cfg;   // se revisa cada 5 min
   const c = (await getJSON('spam')) || { on: true, list: SPAM_DEFAULT.slice() };
   if (!Array.isArray(c.list)) c.list = [];
   return setSpamCache(c);
@@ -288,13 +291,41 @@ async function seedChatters() {
   await redis('SET', 'chSeed', '1');
   CHSEED = true;
 }
+let CBUF = [], CFLUSH = Date.now(), CFLN = 0;
+async function chatKeep(m) {
+  CBUF.push(m);
+  // si un celular está en ámbar (leyendo por aquí) o es spam, se guarda al momento
+  if (m.spam || CBUF.length >= 150 || Date.now() - CFLUSH > 20000 || await chatWanted()) await chatFlush();
+}
+async function chatFlush() {
+  if (!CBUF.length) return;
+  const items = CBUF; CBUF = []; CFLUSH = Date.now();
+  const args = []; items.forEach(x => args.push(x.rt, JSON.stringify(x)));
+  await redis('ZADD', 'chat', ...args);                              // todos en una sola consulta
+  if (++CFLN % 5 === 0) await redis('ZREMRANGEBYRANK', 'chat', 0, -501);   // se quedan los últimos 500
+}
+let KNOWN = null;
+async function knownLoad() {
+  if (KNOWN) return;
+  await seedChatters();
+  KNOWN = new Set((await redis('SMEMBERS', 'chatters')) || []);
+}
+// ¿Algún celular está leyendo el chat por aquí (punto ámbar)? Se revisa una vez por minuto.
+let WANT = { until: 0, at: 0 };
+async function chatWanted() {
+  if (Date.now() - WANT.at > 60000) {
+    try { WANT = { until: Number(await redis('GET', 'chatWant')) || 0, at: Date.now() }; } catch (e) { WANT.at = Date.now(); }
+  }
+  return WANT.until > Date.now();
+}
 async function chatters(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
   const q = req.query || {};
   if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
   await seedChatters();
-  return send(res, 200, { ok: true, users: (await redis('SMEMBERS', 'chatters')) || [] });
+  const t = await getJSON('tok');
+  return send(res, 200, { ok: true, users: (await redis('SMEMBERS', 'chatters')) || [], kick_user_id: (t && t.user_id) || null });
 }
 
 /* ---------------- rutas ---------------- */
@@ -319,20 +350,28 @@ async function webhook(req, res) {
       u: s.username || '', uid: s.user_id || 0, color: idt.username_color || '', badges: idt.badges || [],
       t: String(p.content || '').slice(0, 600) };
     if (rp) m.rq = { id: rp.message_id || '', u: (rp.sender || {}).username || '', t: String(rp.content || '').slice(0, 200) };
-    // ¿Primera vez que escribe en tu canal?
-    if (m.u) {
-      try { await seedChatters(); if (Number(await redis('SADD', 'chatters', m.u.toLowerCase())) === 1) m.first = 1; } catch (e) {}
-    }
-    // Antispam: lo antes posible, antes de guardar nada más.
+    // Tu chat manda miles de mensajes por stream: aquí casi nunca se toca la
+    // base de datos (el plan gratis trae 500,000 consultas al mes).
+    // Antispam: lo antes posible. Solo usa la base si encuentra spam.
     if (!m.badges.length && m.u) {
       try {
         const cfg = await spamCfg();
         const rule = cfg.on ? spamHit(m.t) : null;
         if (rule) { m.spam = 1; await spamDelete(m, rule); }
-      } catch (e) { /* si algo falla, el mensaje igual se guarda */ }
+      } catch (e) { /* si algo falla, el mensaje sigue su camino */ }
     }
-    await redis('ZADD', 'chat', rt, JSON.stringify(m));
-    if (Math.random() < 0.05) await redis('ZREMRANGEBYRANK', 'chat', 0, -401);   // se quedan los últimos 400
+    // ¿Primera vez que escribe en tu canal? Solo se pregunta a la base por
+    // nombres que este servidor todavía no conoce.
+    if (m.u) {
+      try {
+        const lu = m.u.toLowerCase();
+        await knownLoad();
+        if (!KNOWN.has(lu)) { KNOWN.add(lu); if (Number(await redis('SADD', 'chatters', lu)) === 1) m.first = 1; }
+      } catch (e) {}
+    }
+    // Respaldo del chat ("chat proxy"): siempre guarda los últimos 500 mensajes,
+    // pero en tandas (una consulta cada ~20 s, no una por mensaje).
+    try { await chatKeep(m); } catch (e) {}
     return send(res, 200, { ok: true });
   }
   // Kick puede reintentar el mismo aviso: se guarda una sola vez.
@@ -414,8 +453,10 @@ async function list(req, res) {
 }
 
 /* ---- cambiar título y categoría (solo con la clave de tus celulares) ---- */
+let KEYC = { k: null, at: 0 };
 async function checkKey(q) {
-  const k = await redis('GET', 'feedkey');
+  if (!KEYC.k || Date.now() - KEYC.at > 60000) KEYC = { k: await redis('GET', 'feedkey'), at: Date.now() };
+  const k = KEYC.k;
   const a = Buffer.from(String(q || '')), b = Buffer.from(String(k || ''));
   return !!k && a.length === b.length && crypto.timingSafeEqual(a, b);
 }
@@ -543,13 +584,22 @@ async function realtimeKey(req, res) {
     return send(res, 200, Object.assign({ ok: true }, out));
   } catch (e) { return send(res, 200, { ok: false, error: e.message }); }
 }
+let WANTSET = 0;
 async function chatRead(req, res) {
   const q = req.query || {};
   if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  try { await chatFlush(); } catch (e) {}          // lo que este servidor tenga pendiente
+  // avisa que hay un celular usando el respaldo en vivo: el chat se guarda al momento los próximos 3 minutos
+  // (rec=1 es solo para recuperar lo perdido o cargar los últimos mensajes: no hace falta)
+  if (q.rec !== '1' && Date.now() - WANTSET > 30000) {
+    WANTSET = Date.now(); const until = Date.now() + 180000;
+    await redis('SET', 'chatWant', String(until)); WANT = { until, at: Date.now() };
+  }
   const since = Number(q.since) || 0;
   let list;
-  if (since) list = await redis('ZRANGEBYSCORE', 'chat', '(' + since, '+inf', 'LIMIT', 0, 150);
-  else list = ((await redis('ZRANGE', 'chat', -50, -1)) || []);
+  if (since && q.rec === '1') list = ((await redis('ZREVRANGEBYSCORE', 'chat', '+inf', '(' + since, 'LIMIT', 0, 300)) || []).reverse();   // lo más reciente de lo perdido
+  else if (since) list = await redis('ZRANGEBYSCORE', 'chat', '(' + since, '+inf', 'LIMIT', 0, 150);
+  else list = ((await redis('ZRANGE', 'chat', -100, -1)) || []);   // los últimos 100
   const msgs = (list || []).map(x => { try { return JSON.parse(x); } catch (e) { return null; } }).filter(Boolean);
   const cursor = msgs.reduce((mx, m) => Math.max(mx, m.rt || 0), since);
   return send(res, 200, { ok: true, cursor, msgs });
@@ -603,8 +653,10 @@ async function spamApi(req, res) {
   return send(res, 200, out);
 }
 
+let SUBS_OK = false;
 async function ensureSubs() {
-  if ((await redis('GET', 'subsVer')) === SUBS_VER) return;
+  if (SUBS_OK) return;
+  if ((await redis('GET', 'subsVer')) === SUBS_VER) { SUBS_OK = true; return; }
   const t = await validToken(); if (!t) return;
   await redis('SET', 'subsVer', SUBS_VER);          // primero, para no repetirlo si tarda
   try { const r = await subscribeAll(t); await logPush('raw', { at: Date.now(), type: 'resubscribe', body: JSON.stringify(r).slice(0, 800) }, 40); }
@@ -621,14 +673,17 @@ async function events(req, res) {
   const list = await redis('ZRANGEBYSCORE', 'ev', '(' + since, '+inf', 'LIMIT', 0, limit);
   const evs = (list || []).map(s => { try { return fixEv(JSON.parse(s)); } catch (e) { return null; } }).filter(Boolean);
   const cursor = evs.reduce((m, e) => Math.max(m, e.rt || e.ts || 0), since);
-  const live = await getJSON('live');
-  const se = await getJSON('session');
+  // tres datos en una sola consulta (antes eran tres)
+  const [liveS, seS, lhS] = (await redis('MGET', 'live', 'session', 'lastHook')) || [];
+  const pj = v => { try { return v ? JSON.parse(v) : null; } catch (e) { return null; } };
+  const live = pj(liveS), se = pj(seS);
   // Totales exactos de la sesión: desde que empezó el stream del día (lo
   // manda Kick) o, si el servidor todavía no lo sabe, desde ?from= del feed.
   let from = Number(q.from) || 0;
   if (se && se.start && (se.live || (se.lastEnd && Date.now() - se.lastEnd < 30 * 60000))) from = se.start;
   let totals = null;
-  if (from) {
+  // Los totales se recalculan cuando llegó algo nuevo o el feed los pide (tot=1)
+  if (from && (evs.length || q.tot === '1' || !since)) {
     // Lo que llegó mientras no estabas en vivo (p. ej. una renovación en la
     // madrugada) cuenta para el siguiente stream. Máximo las 24 h de antes.
     const offFrom = (se && se.start === from && se.prevEnd) ? Math.max(se.prevEnd, from - 24 * 3600e3) : 0;
@@ -649,7 +704,7 @@ async function events(req, res) {
       else if (d.kind === 'kicks') totals.kicks += d.amount || 0;
     });
   }
-  const lastHook = Number(await redis('GET', 'lastHook')) || 0;
+  const lastHook = Number(lhS) || 0;
   return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs });
 }
 
@@ -691,6 +746,7 @@ async function callback(req, res) {
     const rotate = await redis('GET', 'newkey:' + q.state);
     if (rotate) { await redis('DEL', 'newkey:' + q.state); fkey = null; }
     if (!fkey) { fkey = b64url(crypto.randomBytes(18)); await redis('SET', 'feedkey', fkey); }
+    KEYC = { k: fkey, at: Date.now() };
     const feedUrl = 'https://mariiotq.github.io/kick-feed/?key=' + encodeURIComponent(fkey);
     const subs = await subscribeAll(tok);
     await redis('SET', 'subsVer', SUBS_VER);
