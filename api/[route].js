@@ -271,6 +271,32 @@ async function spamDelete(m, rule, manual) {
   return ev.d;
 }
 
+/* ---------------- quién ya ha escrito en tu chat ----------------
+   Para resaltar el primer mensaje de un espectador nuevo. La primera vez se
+   llena con lo que ya hay guardado del chat y con quienes te han dado subs o
+   Kicks (los seguidores no, para que un seguidor nuevo sí salga resaltado). */
+let CHSEED = false;
+async function seedChatters() {
+  if (CHSEED) return;
+  if (await redis('GET', 'chSeed')) { CHSEED = true; return; }
+  const names = new Set();
+  ((await redis('ZRANGE', 'chat', 0, -1)) || []).forEach(x => { try { const m = JSON.parse(x); if (m.u) names.add(String(m.u).toLowerCase()); } catch (e) {} });
+  ((await redis('ZRANGE', 'ev', 0, -1)) || []).forEach(x => { try { const d = (JSON.parse(x) || {}).d || {};
+    if (d.user && /^(sub|resub|gift|kicks)$/.test(d.kind || '')) names.add(String(d.user).toLowerCase()); } catch (e) {} });
+  const arr = Array.from(names);
+  for (let i = 0; i < arr.length; i += 200) await redis('SADD', 'chatters', ...arr.slice(i, i + 200));
+  await redis('SET', 'chSeed', '1');
+  CHSEED = true;
+}
+async function chatters(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const q = req.query || {};
+  if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  await seedChatters();
+  return send(res, 200, { ok: true, users: (await redis('SMEMBERS', 'chatters')) || [] });
+}
+
 /* ---------------- rutas ---------------- */
 async function webhook(req, res) {
   if (req.method !== 'POST') return send(res, 200, { ok: true, info: 'Aquí Kick manda los avisos.' });
@@ -293,6 +319,10 @@ async function webhook(req, res) {
       u: s.username || '', uid: s.user_id || 0, color: idt.username_color || '', badges: idt.badges || [],
       t: String(p.content || '').slice(0, 600) };
     if (rp) m.rq = { id: rp.message_id || '', u: (rp.sender || {}).username || '', t: String(rp.content || '').slice(0, 200) };
+    // ¿Primera vez que escribe en tu canal?
+    if (m.u) {
+      try { await seedChatters(); if (Number(await redis('SADD', 'chatters', m.u.toLowerCase())) === 1) m.first = 1; } catch (e) {}
+    }
     // Antispam: lo antes posible, antes de guardar nada más.
     if (!m.badges.length && m.u) {
       try {
@@ -730,6 +760,7 @@ module.exports = async function handler(req, res) {
     if (route === 'mod') return await mod(req, res);
     if (route === 'realtime') return await realtimeKey(req, res);
     if (route === 'spam') return await spamApi(req, res);
+    if (route === 'chatters') return await chatters(req, res);
     if (route === 'chat') return await chatSend(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
