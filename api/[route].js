@@ -25,9 +25,10 @@ const SCOPES = 'user:read channel:read channel:write events:subscribe kicks:read
 const EVENTS = [
   'channel.subscription.new', 'channel.subscription.renewal', 'channel.subscription.gifts',
   'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated',
-  'chat.message.sent'          // el chat por la vía oficial (respaldo cuando Kick no deja conectar directo)
+  'chat.message.sent',         // el chat por la vía oficial (respaldo cuando Kick no deja conectar directo)
+  'livestream.metadata.updated' // cambio de título o categoría
 ];
-const SUBS_VER = '3';          // si cambia la lista, el servidor se vuelve a suscribir solo
+const SUBS_VER = '4';          // si cambia la lista, el servidor se vuelve a suscribir solo
 const KEEP = 4000;          // cuántos eventos se guardan como máximo
 
 /* ---------------- Redis (Upstash, por su API web) ---------------- */
@@ -168,6 +169,10 @@ function normalize(type, p) {
       const m = p.metadata || {};
       return { kind: 'ban', user: uname(p.banned_user), uid: (p.banned_user || {}).user_id || 0, mod: uname(p.moderator), reason: m.reason || '', expires_at: m.expires_at || null };
     }
+    case 'livestream.metadata.updated': {
+      const md = p.metadata || {}, c = md.category || null;
+      return { kind: 'meta', title: md.title || '', cat: c ? { id: c.id || 0, name: c.name || '' } : null };
+    }
     case 'livestream.status.updated':
       return { kind: 'live', is_live: !!p.is_live, started_at: p.started_at || null, ended_at: p.ended_at || null, title: p.title || '' };
     default:
@@ -209,6 +214,63 @@ function evTime(type, p, fallback) {
   return t || fallback;
 }
 
+/* ---------------- antispam ----------------
+   Lo que siempre mandan los bots que spamean (Mario las pasó el 14 oct 2026).
+   Solo BORRA el mensaje (no banea) y solo a cuentas sin ninguna insignia:
+   subs, VIPs, OGs, mods, etc. nunca se tocan. La lista se cambia desde el
+   ⚙ del feed (🛡 Antispam). Para que no se escapen con letras raras, puntos
+   o espacios, se compara una versión "limpia" de los dos textos. */
+const SPAM_DEFAULT = ['botkiva', 'ai stream upgrades', 'zero cost upgrades',
+  "Don't work too hard, leave some success for the rest of us",
+  'Hey stranger, still running the show'];
+const LOOK = (() => {
+  const m = {};
+  const add = (from, to) => Array.from(from).forEach((c, i) => { m[c] = to[i]; });
+  add('ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ', 'abcdefghijklmnopqrstuvwyz');
+  add('авсеһіјкмнорѕтухԁԛԝүёї', 'abcehijkmhopstyxdqwyei');
+  add('αβεικνορτυχ', 'abeikvoptux');
+  add('@4$50137', 'aassoiet');
+  return m;
+})();
+function spamNorm(s) {
+  s = String(s || '').replace(/\[emote:\d+:[^\]]*\]/g, ' ');
+  try { s = s.normalize('NFKC'); } catch (e) {}
+  s = s.toLowerCase();
+  try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+  s = Array.from(s).map(c => LOOK[c] || c).join('');
+  return s.replace(/[^a-z0-9]+/g, '');
+}
+function cleanEntry(t) {
+  return String(t || '').replace(/\[emote:\d+:([^\]]*)\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+let SPAMC = { at: 0, cfg: null, norm: [] };
+function setSpamCache(cfg) { SPAMC = { at: Date.now(), cfg, norm: cfg.list.map(e => [e, spamNorm(e)]).filter(x => x[1].length >= 5) }; return cfg; }
+async function spamCfg(fresh) {
+  if (!fresh && SPAMC.cfg && Date.now() - SPAMC.at < 60000) return SPAMC.cfg;
+  const c = (await getJSON('spam')) || { on: true, list: SPAM_DEFAULT.slice() };
+  if (!Array.isArray(c.list)) c.list = [];
+  return setSpamCache(c);
+}
+function spamHit(text) {
+  const n = spamNorm(text);
+  if (n.length < 5) return null;
+  for (const [e, ne] of SPAMC.norm) if (n.indexOf(ne) !== -1) return e;
+  return null;
+}
+async function spamDelete(m, rule, manual) {
+  const t = await validToken();
+  let r = { ok: false, status: 0, j: {} };
+  if (t) r = await kickCall('DELETE', '/chat/' + encodeURIComponent(m.id), t.access_token);
+  const ok = r.ok || r.status === 404;                // 404: ya lo había borrado alguien
+  const rt = Date.now();
+  const ev = { id: 'spam:' + m.id, type: 'antispam', ts: rt, rt,
+    d: { kind: 'spam', user: m.u, uid: m.uid || 0, mid: m.id, text: String(m.t || '').slice(0, 300), rule, manual: !!manual, ok,
+         error: ok ? '' : kickErr(r.status, r.j, 'Ejecuta acciones de moderador en mensajes de chat') } };
+  await redis('ZADD', 'ev', rt, JSON.stringify(ev));
+  await logPush('spamlog', { at: rt, u: m.u, t: ev.d.text.slice(0, 200), rule, ok, manual: !!manual }, 30);
+  return ev.d;
+}
+
 /* ---------------- rutas ---------------- */
 async function webhook(req, res) {
   if (req.method !== 'POST') return send(res, 200, { ok: true, info: 'Aquí Kick manda los avisos.' });
@@ -231,6 +293,14 @@ async function webhook(req, res) {
       u: s.username || '', uid: s.user_id || 0, color: idt.username_color || '', badges: idt.badges || [],
       t: String(p.content || '').slice(0, 600) };
     if (rp) m.rq = { id: rp.message_id || '', u: (rp.sender || {}).username || '', t: String(rp.content || '').slice(0, 200) };
+    // Antispam: lo antes posible, antes de guardar nada más.
+    if (!m.badges.length && m.u) {
+      try {
+        const cfg = await spamCfg();
+        const rule = cfg.on ? spamHit(m.t) : null;
+        if (rule) { m.spam = 1; await spamDelete(m, rule); }
+      } catch (e) { /* si algo falla, el mensaje igual se guarda */ }
+    }
     await redis('ZADD', 'chat', rt, JSON.stringify(m));
     if (Math.random() < 0.05) await redis('ZREMRANGEBYRANK', 'chat', 0, -401);   // se quedan los últimos 400
     return send(res, 200, { ok: true });
@@ -241,7 +311,21 @@ async function webhook(req, res) {
     const rt = Date.now();                       // cuándo llegó (para que el feed no se salte nada)
     const ts = evTime(type, p, rt);              // cuándo pasó (lo que dice Kick)
     const ev = fixEv({ id: msgId, type, ts, rt, d: normalize(type, p) });
-    await redis('ZADD', 'ev', rt, JSON.stringify(ev));
+    let skip = false;
+    if (type === 'livestream.metadata.updated') {
+      // Kick manda todo junto (título, categoría, idioma…): se compara con lo
+      // anterior para decir qué cambió de verdad.
+      const prev = await getJSON('meta');
+      const cur = { title: ev.d.title, cat: ev.d.cat };
+      await setJSON('meta', cur);
+      const ch = [];
+      if (!prev || prev.title !== cur.title) ch.push('title');
+      if (!prev || ((prev.cat || {}).id || 0) !== ((cur.cat || {}).id || 0)) ch.push('category');
+      ev.d.changed = ch;
+      if (prev) { ev.d.oldTitle = prev.title || ''; ev.d.oldCat = (prev.cat || {}).name || ''; }
+      skip = !ch.length;
+    }
+    if (!skip) await redis('ZADD', 'ev', rt, JSON.stringify(ev));
     await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
     await addToLists(ev);
     if (type === 'livestream.status.updated') {
@@ -459,6 +543,36 @@ async function chatSend(req, res) {
   return send(res, 200, { ok: !!(d.is_sent !== false), message_id: d.message_id || null });
 }
 
+/* ---- antispam: ver y cambiar la lista (solo con la clave de tus celulares) ---- */
+async function spamApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const b = req.method === 'POST' ? await readJSONBody(req) : {};
+  const key = (req.query && req.query.key) || b.key;
+  if (!(await checkKey(key))) return send(res, 403, { ok: false, error: 'clave' });
+  const cfg = await spamCfg(true);
+  let done = null;
+  if (req.method === 'POST') {
+    const act = String(b.action || '');
+    if (act === 'on') cfg.on = !!b.on;
+    else if (act === 'add' || act === 'mark') {
+      const txt = cleanEntry(b.text);
+      if (spamNorm(txt).length < 5) return send(res, 200, { ok: false, error: 'Muy corto: pon al menos 5 letras' });
+      if (!cfg.list.some(e => spamNorm(e) === spamNorm(txt))) cfg.list.unshift(txt);
+      cfg.list = cfg.list.slice(0, 200);
+      if (act === 'mark' && b.message_id)
+        done = await spamDelete({ id: String(b.message_id), u: String(b.username || ''), uid: Number(b.user_id) || 0, t: String(b.text || '') }, txt, true);
+    } else if (act === 'remove') cfg.list = cfg.list.filter(e => e !== String(b.text || ''));
+    else return send(res, 400, { ok: false, error: 'acción rara' });
+    await setJSON('spam', cfg);
+    setSpamCache(cfg);
+  }
+  const log = ((await redis('LRANGE', 'spamlog', 0, 19)) || []).map(x => { try { return JSON.parse(x); } catch (e) { return null; } }).filter(Boolean);
+  const out = { ok: true, on: cfg.on !== false, list: cfg.list, log };
+  if (done) { out.deleted = done.ok; if (!done.ok) out.error = done.error; }
+  return send(res, 200, out);
+}
+
 async function ensureSubs() {
   if ((await redis('GET', 'subsVer')) === SUBS_VER) return;
   const t = await validToken(); if (!t) return;
@@ -615,6 +729,7 @@ module.exports = async function handler(req, res) {
     if (route === 'categories') return await categories(req, res);
     if (route === 'mod') return await mod(req, res);
     if (route === 'realtime') return await realtimeKey(req, res);
+    if (route === 'spam') return await spamApi(req, res);
     if (route === 'chat') return await chatSend(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
