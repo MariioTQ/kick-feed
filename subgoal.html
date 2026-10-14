@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sub Goal Kick</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+  }
+
+  #goal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    opacity: 1;
+    transition: opacity 0.8s ease;
+  }
+
+  #txt {
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    font-size: 50px;
+    font-weight: 800;
+    color: #ffffff;
+    text-shadow:
+      -2px -2px 0 #000, 2px -2px 0 #000,
+      -2px  2px 0 #000, 2px  2px 0 #000,
+       0    3px 6px rgba(0,0,0,.55);
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div id="goal"><span id="txt">Sub Goal: 0/10</span></div>
+
+<script>
+// ===================== CONFIGURACION =====================
+// La meta se puede cambiar sin tocar el archivo, agregando ?meta=15 a la URL.
+var API = "https://kick-feed-mariotq.vercel.app/api/events?since=9999999999999";
+var META = parseInt(new URLSearchParams(location.search).get("meta"), 10) || 10;
+var PLANTILLA = "Sub Goal: {actual}/{meta}";
+var SEGUNDOS_ANTES_DE_OCULTAR = 6;
+var CADA_SEGUNDOS = 5;
+// =========================================================
+
+var caja = document.getElementById("goal");
+var texto = document.getElementById("txt");
+
+var subs = 0;
+var desglose = null;
+var completado = false;
+var temporizador = null;
+
+function pintar() {
+  texto.textContent = PLANTILLA.replace("{actual}", subs).replace("{meta}", META);
+}
+
+function mostrar() { caja.style.opacity = "1"; }
+function ocultar() { caja.style.opacity = "0"; }
+
+function aplicar(t) {
+  desglose = t;
+  var n = (t && typeof t.subs === "number") ? t.subs : 0;
+  subs = n;
+  pintar();
+
+  if (n < META) {
+    if (completado) { completado = false; clearTimeout(temporizador); }
+    mostrar();
+    return;
+  }
+
+  if (!completado) {
+    completado = true;
+    mostrar();
+    clearTimeout(temporizador);
+    temporizador = setTimeout(ocultar, SEGUNDOS_ANTES_DE_OCULTAR * 1000);
+  }
+}
+
+function consultar() {
+  fetch(API, { cache: "no-store" })
+    .then(function (r) { return r.json(); })
+    .then(function (j) { aplicar(j.totals); })
+    .catch(function () {});
+}
+
+// Tocar el letrero muestra el desglose real del servidor durante 20 segundos.
+caja.addEventListener("click", function () {
+  var d = desglose;
+  texto.style.fontSize = "22px";
+  texto.textContent = d
+    ? ("nuevas " + (d.newSubs || 0) +
+       "   resubs " + (d.resubs || 0) +
+       "   regaladas " + (d.gifted || 0) +
+       "   total " + (d.subs || 0))
+    : "sin datos del servidor";
+  setTimeout(function () { texto.style.fontSize = ""; pintar(); }, 20000);
+});
+
+pintar();
+mostrar();
+consultar();
+setInterval(consultar, CADA_SEGUNDOS * 1000);
+</script>
+
+</body>
+</html>
