@@ -772,20 +772,29 @@ async function obsCfg() {
   if (Date.now() - OBSC.t > 5 * 60000) OBSC = { v: await getJSON('obs'), t: Date.now() };
   return OBSC.v;
 }
-function obsRun(url, pass, reqs, ms) {
+// Abre la conexión con OBS, entra con la contraseña y deja mandar uno o
+// varios paquetes de peticiones (cada paquete es un solo viaje de ida y vuelta).
+function obsSession(url, pass, work, ms) {
   return new Promise((resolve, reject) => {
     if (typeof WebSocket === 'undefined') return reject(new Error('Tu servidor necesita Node 22 o más nuevo (Vercel → Settings → Node.js Version)'));
-    let ws = null, done = false, tm = null;
+    let ws = null, done = false, tm = null, n = 0;
+    const pending = {};
     const fin = (err, val) => {
       if (done) return; done = true; clearTimeout(tm);
       try { if (ws && ws.readyState <= 1) ws.close(1000); } catch (e) {}
       if (err) reject(err); else resolve(val);
     };
-    tm = setTimeout(() => fin(new Error('OBS no contestó: revisa la dirección y que OBS esté prendido')), ms || 7000);
+    tm = setTimeout(() => fin(new Error('OBS no contestó: revisa la dirección y que OBS esté prendido')), ms || 8000);
     try { ws = new WebSocket(url); } catch (e) { return fin(new Error('La dirección de OBS no es válida')); }
     ws.onerror = () => fin(new Error('No se pudo conectar con OBS: revisa la dirección y que OBS esté prendido'));
     ws.onclose = ev => fin(new Error(ev && ev.code === 4009 ? 'La contraseña de OBS no coincide'
       : 'OBS cerró la conexión' + (ev && ev.code && ev.code !== 1000 && ev.code !== 1005 ? ' (código ' + ev.code + ')' : '')));
+    const batch = reqs => new Promise(res2 => {
+      if (!reqs.length) return res2([]);
+      const id = 'kf' + (++n); pending[id] = res2;
+      ws.send(JSON.stringify({ op: 8, d: { requestId: id, haltOnFailure: false, executionType: 0,
+        requests: reqs.map((r, i) => ({ requestType: r[0], requestId: String(i), requestData: r[1] || {} })) } }));
+    });
     ws.onmessage = ev => {
       let m;
       try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8')); } catch (e) { return; }
@@ -798,13 +807,16 @@ function obsRun(url, pass, reqs, ms) {
           d.authentication = crypto.createHash('sha256').update(secret + a.challenge).digest('base64');
         }
         ws.send(JSON.stringify({ op: 1, d }));
-      } else if (m.op === 2) {                             // Identified: todo en un solo paquete
-        ws.send(JSON.stringify({ op: 8, d: { requestId: 'kf', haltOnFailure: false, executionType: 0,
-          requests: reqs.map((r, i) => ({ requestType: r[0], requestId: String(i), requestData: r[1] || {} })) } }));
-      } else if (m.op === 9) fin(null, (m.d && m.d.results) || []);
+      } else if (m.op === 2) {                             // Identified: ya se puede pedir
+        Promise.resolve().then(() => work(batch)).then(v => fin(null, v), e => fin(e));
+      } else if (m.op === 9) {
+        const cb = m.d && pending[m.d.requestId];
+        if (cb) { delete pending[m.d.requestId]; cb((m.d && m.d.results) || []); }
+      }
     };
   });
 }
+function obsRun(url, pass, reqs, ms) { return obsSession(url, pass, b => b(reqs), ms); }
 let OBSB = null;          // para calcular el bitrate de salida entre una consulta y otra
 function obsOut(cfg, results, act) {
   const by = t => results.find(x => x.requestType === t) || {};
@@ -848,15 +860,148 @@ async function obsApi(req, res) {
   if (!cfg) return send(res, 200, { ok: true, configured: false });
   let pass = '';
   try { pass = obsOpen(cfg.p); } catch (e) { return send(res, 200, { ok: false, configured: true, url: cfg.url, hasPass: true, error: 'Vuelve a escribir la contraseña de OBS' }); }
-  const reqs = [];
+  if (act === 'catalog') {
+    try { return send(res, 200, Object.assign({ ok: true, configured: true, url: cfg.url, hasPass: !!cfg.p }, await obsSession(cfg.url, pass, obsCatalog, 12000))); }
+    catch (e) { return send(res, 200, { ok: false, configured: true, url: cfg.url, hasPass: !!cfg.p, error: e.message }); }
+  }
+  let steps = [];
   if (act === 'scene') {
-    const s = String(b.scene || '').slice(0, 200);
-    if (!s) return send(res, 400, { ok: false, error: 'falta la escena' });
-    reqs.push(['SetCurrentProgramScene', { sceneName: s }]);
+    const sc = String(b.scene || '').slice(0, 200);
+    if (!sc) return send(res, 400, { ok: false, error: 'falta la escena' });
+    steps = [{ t: 'scene', scene: sc }];
+  } else if (act === 'run') {
+    steps = (Array.isArray(b.steps) ? b.steps : []).slice(0, 20).filter(x => x && typeof x === 'object' && OBS_STEPS[x.t]);
+    if (!steps.length) return send(res, 400, { ok: false, error: 'no hay nada que hacer' });
   } else if (act !== 'status' && act !== 'config') return send(res, 400, { ok: false, error: 'acción rara' });
-  reqs.push(['GetSceneList'], ['GetStreamStatus']);
-  try { return send(res, 200, obsOut(cfg, await obsRun(cfg.url, pass, reqs), act)); }
+  const probes = (Array.isArray(b.q) ? b.q : []).slice(0, 40).filter(x => x && typeof x === 'object' && x.k);
+  try { return send(res, 200, await obsSession(cfg.url, pass, batch => obsWork(batch, cfg, act, steps, probes, !!b.shot), 10000)); }
   catch (e) { return send(res, 200, { ok: false, configured: true, url: cfg.url, hasPass: !!cfg.p, error: e.message }); }
+}
+
+/* ---- atajos: lo que se puede hacer en OBS desde el feed ----
+   El feed manda "pasos" sencillos y aquí se convierten en peticiones de OBS.
+   Solo existen estos; nada más se puede pedir. */
+const OBS_STEPS = { scene: 1, item: 1, filter: 1, mute: 1, vol: 1, refresh: 1, stream: 1, record: 1, wait: 1 };
+const str = v => String(v == null ? '' : v).slice(0, 200);
+const okOf = r => !!(r && r.requestStatus && r.requestStatus.result);
+const dataOf = r => (r && r.responseData) || {};
+async function obsWork(batch, cfg, act, steps, probes, shot) {
+  // 1) ¿qué número tiene cada fuente en su escena? (por nombre: aunque la borres y la vuelvas a poner, sigue sirviendo)
+  //    y cómo están ahora los filtros y volúmenes que se van a cambiar
+  const pre = [], preIdx = [];
+  const addPre = (key, r) => { preIdx.push(key); pre.push(r); };
+  steps.forEach((st, i) => {
+    if (st.t === 'item') addPre('id:' + i, ['GetSceneItemId', { sceneName: str(st.scene), sourceName: str(st.source) }]);
+    if (st.t === 'filter' && (st.mode || 'toggle') === 'toggle') addPre('f:' + i, ['GetSourceFilter', { sourceName: str(st.source), filterName: str(st.filter) }]);
+    if (st.t === 'vol' && st.step != null) addPre('v:' + i, ['GetInputVolume', { inputName: str(st.input) }]);
+  });
+  probes.forEach((p, i) => { if (p.t === 'item') addPre('pid:' + i, ['GetSceneItemId', { sceneName: str(p.scene), sourceName: str(p.source) }]); });
+  const preR = {}; (await batch(pre)).forEach((r, i) => { preR[preIdx[i]] = r; });
+  const itemId = (key, fallback) => { const r = preR[key]; return okOf(r) ? dataOf(r).sceneItemId : (Number(fallback) || null); };
+  // 2) las fuentes que se alternan: ¿están visibles ahora?
+  const en = [], enIdx = [];
+  steps.forEach((st, i) => {
+    if (st.t === 'item' && (st.mode || 'toggle') === 'toggle') {
+      const id = itemId('id:' + i, st.id);
+      if (id != null) { enIdx.push(i); en.push(['GetSceneItemEnabled', { sceneName: str(st.scene), sceneItemId: id }]); }
+    }
+  });
+  const enR = {}; (await batch(en)).forEach((r, i) => { enR[enIdx[i]] = r; });
+  // 3) hacer los pasos en orden (con sus esperas) y luego ver cómo quedó todo
+  const reqs = [], kinds = [];
+  const push = (kind, r) => { kinds.push(kind); reqs.push(r); };
+  const flip = (mode, cur) => mode === 'on' ? true : mode === 'off' ? false : !cur;
+  steps.forEach((st, i) => {
+    const mode = st.mode || 'toggle';
+    if (st.t === 'scene') push('do', ['SetCurrentProgramScene', { sceneName: str(st.scene) }]);
+    else if (st.t === 'item') {
+      const id = itemId('id:' + i, st.id); if (id == null) return push('miss', null);
+      const cur = enR[i] ? !!dataOf(enR[i]).sceneItemEnabled : false;
+      push('do', ['SetSceneItemEnabled', { sceneName: str(st.scene), sceneItemId: id, sceneItemEnabled: flip(mode, cur) }]);
+    } else if (st.t === 'filter') {
+      const cur = preR['f:' + i] ? !!dataOf(preR['f:' + i]).filterEnabled : false;
+      push('do', ['SetSourceFilterEnabled', { sourceName: str(st.source), filterName: str(st.filter), filterEnabled: flip(mode, cur) }]);
+    } else if (st.t === 'mute') {
+      if (mode === 'toggle') push('do', ['ToggleInputMute', { inputName: str(st.input) }]);
+      else push('do', ['SetInputMute', { inputName: str(st.input), inputMuted: mode === 'on' }]);
+    } else if (st.t === 'vol') {
+      let db = Number(st.db);
+      if (st.step != null) { const cur = Number(dataOf(preR['v:' + i]).inputVolumeDb); db = (isFinite(cur) ? Math.max(cur, -60) : -60) + Number(st.step || 0); }
+      if (!isFinite(db)) return;
+      db = Math.round(Math.max(-60, Math.min(0, db)) * 10) / 10;
+      push('do', ['SetInputVolume', { inputName: str(st.input), inputVolumeDb: db <= -60 ? -100 : db }]);
+    } else if (st.t === 'refresh') push('do', ['PressInputPropertiesButton', { inputName: str(st.input), propertyName: 'refreshnocache' }]);
+    else if (st.t === 'stream') push('do', [mode === 'on' ? 'StartStream' : mode === 'off' ? 'StopStream' : 'ToggleStream']);
+    else if (st.t === 'record') push('do', [mode === 'on' ? 'StartRecord' : mode === 'off' ? 'StopRecord' : 'ToggleRecord']);
+    else if (st.t === 'wait') push('wait', ['Sleep', { sleepMillis: Math.max(100, Math.min(10000, Math.round(Number(st.s || 1) * 1000))) }]);
+  });
+  const doReqs = reqs.filter(Boolean);
+  const nDo = doReqs.length;
+  doReqs.push(['GetSceneList'], ['GetStreamStatus'], ['GetRecordStatus']);
+  const pIdx = [];
+  probes.forEach((p, i) => {
+    let r = null;
+    if (p.t === 'item') { const id = itemId('pid:' + i, p.id); if (id != null) r = ['GetSceneItemEnabled', { sceneName: str(p.scene), sceneItemId: id }]; }
+    else if (p.t === 'filter') r = ['GetSourceFilter', { sourceName: str(p.source), filterName: str(p.filter) }];
+    else if (p.t === 'mute') r = ['GetInputMute', { inputName: str(p.input) }];
+    else if (p.t === 'vol') r = ['GetInputVolume', { inputName: str(p.input) }];
+    if (r) { pIdx.push(i); doReqs.push(r); }
+  });
+  const R = await batch(doReqs);
+  const out = obsOut(cfg, R.slice(nDo, nDo + 3), act === 'scene' ? '' : act);
+  const rec = dataOf(R[nDo + 2]); out.record = { on: !!rec.outputActive, paused: !!rec.outputPaused };
+  // cómo están los atajos que se ven en pantalla
+  out.state = {};
+  pIdx.forEach((i, j) => {
+    const p = probes[i], r = R[nDo + 3 + j]; if (!okOf(r)) return;
+    const d = dataOf(r), k = String(p.k).slice(0, 80);
+    if (p.t === 'item') out.state[k] = !!d.sceneItemEnabled;
+    else if (p.t === 'filter') out.state[k] = !!d.filterEnabled;
+    else if (p.t === 'mute') out.state[k] = !!d.inputMuted;
+    else if (p.t === 'vol') { const v = Number(d.inputVolumeDb); out.state[k] = Math.round(Math.max(-100, isFinite(v) ? v : -100) * 10) / 10; }
+  });
+  // ¿salió bien lo que se pidió?
+  if (nDo || kinds.includes('miss')) {
+    const bad = [];
+    let j = 0;
+    kinds.forEach(k => { if (k === 'miss') { bad.push('No encontré esa fuente en la escena'); return; }
+      const r = R[j++]; if (k === 'do' && !okOf(r)) bad.push((r && r.requestStatus && r.requestStatus.comment) || (r && r.requestType) || 'falló'); });
+    if (bad.length) { out.ok = false; out.error = (act === 'scene' ? 'OBS no cambió la escena: ' : 'OBS no pudo: ') + bad.join(' · '); }
+  }
+  // 4) foto de lo que está saliendo (solo si la pidieron)
+  if (shot && out.current) {
+    const [r] = await batch([['GetSourceScreenshot', { sourceName: out.current, imageFormat: 'jpg', imageWidth: 480, imageCompressionQuality: 55 }]]);
+    if (okOf(r)) out.shot = dataOf(r).imageData;
+  }
+  return out;
+}
+// Todo lo que hay en tu OBS, para armar los atajos (escenas, fuentes, audios, filtros)
+async function obsCatalog(batch) {
+  const [sl, il] = await batch([['GetSceneList'], ['GetInputList']]);
+  const scenes = (dataOf(sl).scenes || []).slice().sort((a, b) => (b.sceneIndex || 0) - (a.sceneIndex || 0)).map(x => x.sceneName);
+  const inputs = (dataOf(il).inputs || []).map(x => ({ name: x.inputName, kind: x.unversionedInputKind || x.inputKind || '' }));
+  const r2 = [], idx = [];
+  scenes.forEach(n => { idx.push(['items', n]); r2.push(['GetSceneItemList', { sceneName: n }]); });
+  inputs.forEach(x => { idx.push(['mute', x.name]); r2.push(['GetInputMute', { inputName: x.name }]);
+                        idx.push(['vol', x.name]); r2.push(['GetInputVolume', { inputName: x.name }]); });
+  scenes.concat(inputs.map(x => x.name)).forEach(n => { idx.push(['filters', n]); r2.push(['GetSourceFilterList', { sourceName: n }]); });
+  const R2 = await batch(r2);
+  const items = {}, filters = {}, groups = [], audio = {};
+  R2.forEach((r, i) => {
+    const [k, n] = idx[i]; if (!okOf(r)) return; const d = dataOf(r);
+    if (k === 'items') items[n] = (d.sceneItems || []).slice().sort((a, b) => (b.sceneItemIndex || 0) - (a.sceneItemIndex || 0))
+      .map(x => { if (x.isGroup && groups.indexOf(x.sourceName) < 0) groups.push(x.sourceName); return { id: x.sceneItemId, name: x.sourceName, on: !!x.sceneItemEnabled, group: !!x.isGroup }; });
+    else if (k === 'mute') audio[n] = Object.assign(audio[n] || {}, { muted: !!d.inputMuted });
+    else if (k === 'vol') { const v = Number(d.inputVolumeDb); audio[n] = Object.assign(audio[n] || {}, { db: Math.round(Math.max(-100, isFinite(v) ? v : -100) * 10) / 10 }); }
+    else if (k === 'filters' && (d.filters || []).length) filters[n] = d.filters.map(f => ({ name: f.filterName, on: !!f.filterEnabled }));
+  });
+  if (groups.length) {
+    const R3 = await batch(groups.map(g => ['GetGroupSceneItemList', { sceneName: g }]));
+    R3.forEach((r, i) => { if (okOf(r)) items[groups[i]] = (dataOf(r).sceneItems || []).slice().sort((a, b) => (b.sceneItemIndex || 0) - (a.sceneItemIndex || 0))
+      .map(x => ({ id: x.sceneItemId, name: x.sourceName, on: !!x.sceneItemEnabled, group: false })); });
+  }
+  inputs.forEach(x => { if (audio[x.name] && 'muted' in audio[x.name]) { x.audio = true; x.muted = audio[x.name].muted; x.db = audio[x.name].db; } });
+  return { scenes, groups, items, inputs, filters };
 }
 
 async function login(req, res) {
