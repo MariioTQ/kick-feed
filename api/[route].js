@@ -6,14 +6,17 @@
      /api/login     conectar tu cuenta de Kick (una sola vez)
      /api/callback  Kick regresa aquí después de "Autorizar"
      /api/status    página para revisar que todo esté funcionando
+     /api/prefs     los mismos ajustes en tus dos celulares
+     /api/obs       cambiar de escena en OBS desde el feed
 
    Variables que se configuran en Vercel (Settings → Environment Variables):
      KICK_CLIENT_ID, KICK_CLIENT_SECRET   las dos claves de tu app de Kick
      KICK_CHANNEL                         opcional, por defecto "mariotq"
    La base de datos (Upstash for Redis) agrega sola sus variables.
 
-   No se guarda ninguna contraseña. Solo el permiso que tú autorizas en
-   la página oficial de Kick, y únicamente si la cuenta es KICK_CHANNEL.
+   No se guarda ninguna contraseña de Kick. Solo el permiso que tú autorizas
+   en la página oficial de Kick, y únicamente si la cuenta es KICK_CHANNEL.
+   (La de OBS, si la pones, se guarda cifrada y nunca se vuelve a mostrar.)
    ================================================================== */
 'use strict';
 const crypto = require('crypto');
@@ -674,7 +677,8 @@ async function events(req, res) {
   const evs = (list || []).map(s => { try { return fixEv(JSON.parse(s)); } catch (e) { return null; } }).filter(Boolean);
   const cursor = evs.reduce((m, e) => Math.max(m, e.rt || e.ts || 0), since);
   // tres datos en una sola consulta (antes eran tres)
-  const [liveS, seS, lhS] = (await redis('MGET', 'live', 'session', 'lastHook')) || [];
+  // + la hora de los últimos ajustes compartidos: así cada celular sabe si el otro cambió algo, sin gastar otra consulta
+  const [liveS, seS, lhS, paS] = (await redis('MGET', 'live', 'session', 'lastHook', 'prefsAt')) || [];
   const pj = v => { try { return v ? JSON.parse(v) : null; } catch (e) { return null; } };
   const live = pj(liveS), se = pj(seS);
   // Totales exactos de la sesión: desde que empezó el stream del día (lo
@@ -705,7 +709,154 @@ async function events(req, res) {
     });
   }
   const lastHook = Number(lhS) || 0;
-  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs });
+  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0 });
+}
+
+/* ---- los mismos ajustes en tus dos celulares ----
+   Se guardan juntos en 'prefs'. Cada celular ve en /api/events si cambiaron
+   ('pat') y solo entonces los pide. Guardar = 1 consulta; leer = 1 consulta. */
+let PREFC = { at: 0, by: '', v: null, t: 0 };
+async function prefsApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const b = req.method === 'POST' ? await readJSONBody(req) : {};
+  const q = req.query || {};
+  if (!(await checkKey(q.key || b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  if (req.method === 'POST') {
+    const p = b.prefs;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) return send(res, 400, { ok: false, error: 'faltan los ajustes' });
+    const s = JSON.stringify(p);
+    if (s.length > 30000) return send(res, 400, { ok: false, error: 'demasiado grande' });
+    const at = Date.now(), by = String(b.by || '').slice(0, 40);
+    await redis('MSET', 'prefs', JSON.stringify({ at, by, v: p }), 'prefsAt', String(at));
+    PREFC = { at, by, v: p, t: Date.now() };
+    return send(res, 200, { ok: true, at, by });
+  }
+  if (Date.now() - PREFC.t > 15000) {
+    const v = await getJSON('prefs');
+    PREFC = { at: (v && v.at) || 0, by: (v && v.by) || '', v: (v && v.v) || null, t: Date.now() };
+  }
+  return send(res, 200, { ok: true, at: PREFC.at, by: PREFC.by, prefs: PREFC.v });
+}
+
+/* ---- control de OBS (obs-websocket 5) ----
+   El celular no puede abrir ws:// desde una página https (el navegador lo
+   bloquea), así que tu servidor habla con OBS por él. La contraseña de OBS se
+   guarda cifrada en tu base de datos: nunca está en GitHub ni en el celular,
+   y nunca se vuelve a mostrar. Cada consulta abre la conexión, pide lo
+   necesario en un solo paquete y la cierra. */
+function obsKey() { return crypto.createHash('sha256').update('obs:' + (CLIENT_SECRET || R_TOK || 'kick-feed')).digest(); }
+function obsSeal(s) {
+  if (!s) return '';
+  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', obsKey(), iv);
+  const enc = Buffer.concat([c.update(String(s), 'utf8'), c.final()]);
+  return 'g1:' + Buffer.concat([iv, c.getAuthTag(), enc]).toString('base64');
+}
+function obsOpen(s) {
+  if (!s) return '';
+  if (!String(s).startsWith('g1:')) return String(s);
+  const b = Buffer.from(String(s).slice(3), 'base64');
+  const d = crypto.createDecipheriv('aes-256-gcm', obsKey(), b.subarray(0, 12));
+  d.setAuthTag(b.subarray(12, 28));
+  return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8');
+}
+function obsUrl(u) {
+  let s = String(u || '').trim();
+  if (!s) return '';
+  if (!/^wss?:\/\//i.test(s)) s = 'ws://' + s;
+  try { const x = new URL(s); if (!/^wss?:$/.test(x.protocol) || !x.hostname) return ''; return x.protocol + '//' + x.host + (x.pathname && x.pathname !== '/' ? x.pathname : ''); }
+  catch (e) { return ''; }
+}
+let OBSC = { v: null, t: 0 };
+async function obsCfg() {
+  if (Date.now() - OBSC.t > 5 * 60000) OBSC = { v: await getJSON('obs'), t: Date.now() };
+  return OBSC.v;
+}
+function obsRun(url, pass, reqs, ms) {
+  return new Promise((resolve, reject) => {
+    if (typeof WebSocket === 'undefined') return reject(new Error('Tu servidor necesita Node 22 o más nuevo (Vercel → Settings → Node.js Version)'));
+    let ws = null, done = false, tm = null;
+    const fin = (err, val) => {
+      if (done) return; done = true; clearTimeout(tm);
+      try { if (ws && ws.readyState <= 1) ws.close(1000); } catch (e) {}
+      if (err) reject(err); else resolve(val);
+    };
+    tm = setTimeout(() => fin(new Error('OBS no contestó: revisa la dirección y que OBS esté prendido')), ms || 7000);
+    try { ws = new WebSocket(url); } catch (e) { return fin(new Error('La dirección de OBS no es válida')); }
+    ws.onerror = () => fin(new Error('No se pudo conectar con OBS: revisa la dirección y que OBS esté prendido'));
+    ws.onclose = ev => fin(new Error(ev && ev.code === 4009 ? 'La contraseña de OBS no coincide'
+      : 'OBS cerró la conexión' + (ev && ev.code && ev.code !== 1000 && ev.code !== 1005 ? ' (código ' + ev.code + ')' : '')));
+    ws.onmessage = ev => {
+      let m;
+      try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8')); } catch (e) { return; }
+      if (m.op === 0) {                                    // Hello: OBS dice si pide contraseña
+        const d = { rpcVersion: 1, eventSubscriptions: 0 };
+        const a = m.d && m.d.authentication;
+        if (a) {
+          if (!pass) return fin(new Error('OBS pide contraseña: escríbela en Conexión con OBS'));
+          const secret = crypto.createHash('sha256').update(pass + a.salt).digest('base64');
+          d.authentication = crypto.createHash('sha256').update(secret + a.challenge).digest('base64');
+        }
+        ws.send(JSON.stringify({ op: 1, d }));
+      } else if (m.op === 2) {                             // Identified: todo en un solo paquete
+        ws.send(JSON.stringify({ op: 8, d: { requestId: 'kf', haltOnFailure: false, executionType: 0,
+          requests: reqs.map((r, i) => ({ requestType: r[0], requestId: String(i), requestData: r[1] || {} })) } }));
+      } else if (m.op === 9) fin(null, (m.d && m.d.results) || []);
+    };
+  });
+}
+let OBSB = null;          // para calcular el bitrate de salida entre una consulta y otra
+function obsOut(cfg, results, act) {
+  const by = t => results.find(x => x.requestType === t) || {};
+  const sl = by('GetSceneList').responseData || {}, st = by('GetStreamStatus').responseData || {};
+  const out = {
+    ok: true, configured: true, url: cfg.url, hasPass: !!cfg.p,
+    scenes: (sl.scenes || []).slice().sort((a, b) => (b.sceneIndex || 0) - (a.sceneIndex || 0)).map(s => s.sceneName),  // como se ven en OBS, de arriba a abajo
+    current: sl.currentProgramSceneName || '',
+    stream: { on: !!st.outputActive, reconnecting: !!st.outputReconnecting, dur: Number(st.outputDuration) || 0,
+              cong: Number(st.outputCongestion) || 0, skip: Number(st.outputSkippedFrames) || 0, total: Number(st.outputTotalFrames) || 0 }
+  };
+  const now = Date.now(), bytes = Number(st.outputBytes) || 0;
+  if (OBSB && st.outputActive && bytes >= OBSB.bytes && now - OBSB.at > 1500 && now - OBSB.at < 30000)
+    out.stream.kbps = Math.round((bytes - OBSB.bytes) * 8 / (now - OBSB.at));
+  OBSB = st.outputActive ? { bytes, at: now } : null;
+  if (act === 'scene') {
+    const s = by('SetCurrentProgramScene').requestStatus || {};
+    if (!s.result) { out.ok = false; out.error = 'OBS no cambió la escena' + (s.comment ? ': ' + s.comment : ''); }
+  }
+  return out;
+}
+async function obsApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const b = req.method === 'POST' ? await readJSONBody(req) : {};
+  const q = req.query || {};
+  if (!(await checkKey(q.key || b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const act = String(b.action || q.action || 'status');
+  if (act === 'forget') { await redis('DEL', 'obs'); OBSC = { v: null, t: Date.now() }; OBSB = null; return send(res, 200, { ok: true, configured: false }); }
+  if (act === 'config') {
+    const url = obsUrl(b.url);
+    if (!url) return send(res, 200, { ok: false, error: 'Pon la dirección así: ws://IP:puerto' });
+    const old = await getJSON('obs');
+    // contraseña vacía = se queda la que ya estaba
+    const p = b.pass ? obsSeal(String(b.pass)) : (b.nopass ? '' : (old && old.p) || '');
+    const cfg = { url, p, at: Date.now() };
+    await setJSON('obs', cfg);
+    OBSC = { v: cfg, t: Date.now() }; OBSB = null;
+  }
+  const cfg = await obsCfg();
+  if (!cfg) return send(res, 200, { ok: true, configured: false });
+  let pass = '';
+  try { pass = obsOpen(cfg.p); } catch (e) { return send(res, 200, { ok: false, configured: true, url: cfg.url, hasPass: true, error: 'Vuelve a escribir la contraseña de OBS' }); }
+  const reqs = [];
+  if (act === 'scene') {
+    const s = String(b.scene || '').slice(0, 200);
+    if (!s) return send(res, 400, { ok: false, error: 'falta la escena' });
+    reqs.push(['SetCurrentProgramScene', { sceneName: s }]);
+  } else if (act !== 'status' && act !== 'config') return send(res, 400, { ok: false, error: 'acción rara' });
+  reqs.push(['GetSceneList'], ['GetStreamStatus']);
+  try { return send(res, 200, obsOut(cfg, await obsRun(cfg.url, pass, reqs), act)); }
+  catch (e) { return send(res, 200, { ok: false, configured: true, url: cfg.url, hasPass: !!cfg.p, error: e.message }); }
 }
 
 async function login(req, res) {
@@ -817,6 +968,8 @@ module.exports = async function handler(req, res) {
     if (route === 'realtime') return await realtimeKey(req, res);
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'chatters') return await chatters(req, res);
+    if (route === 'prefs') return await prefsApi(req, res);
+    if (route === 'obs') return await obsApi(req, res);
     if (route === 'chat') return await chatSend(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
