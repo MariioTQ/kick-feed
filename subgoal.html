@@ -41,7 +41,7 @@
 <script>
 // ===================== CONFIGURACION =====================
 // La meta se puede cambiar sin tocar el archivo, agregando ?meta=15 a la URL.
-var API = "https://kick-feed-mariotq.vercel.app/api/events?since=9999999999999";
+var API = "https://kick-feed-mariotq.vercel.app/api/events?since=9999999999999&tot=1";
 var META = parseInt(new URLSearchParams(location.search).get("meta"), 10) || 10;
 var PLANTILLA = "Sub Goal: {actual}/{meta}";
 var SEGUNDOS_ANTES_DE_OCULTAR = 6;
