@@ -864,6 +864,14 @@ async function obsApi(req, res) {
     try { return send(res, 200, Object.assign({ ok: true, configured: true, url: cfg.url, hasPass: !!cfg.p }, await obsSession(cfg.url, pass, obsCatalog, 12000))); }
     catch (e) { return send(res, 200, { ok: false, configured: true, url: cfg.url, hasPass: !!cfg.p, error: e.message }); }
   }
+  if (act === 'now') {
+    try {
+      const r = await obsRun(cfg.url, pass, [['GetCurrentProgramScene'], ['GetStreamStatus']], 6000);
+      const sc = dataOf(r[0]), st = dataOf(r[1]);
+      return send(res, 200, { ok: true, configured: true, current: sc.sceneName || sc.currentProgramSceneName || '',
+                              stream: { on: !!st.outputActive, reconnecting: !!st.outputReconnecting } });
+    } catch (e) { return send(res, 200, { ok: false, configured: true, error: e.message }); }
+  }
   let steps = [];
   if (act === 'scene') {
     const sc = String(b.scene || '').slice(0, 200);
@@ -881,7 +889,7 @@ async function obsApi(req, res) {
 /* ---- atajos: lo que se puede hacer en OBS desde el feed ----
    El feed manda "pasos" sencillos y aquí se convierten en peticiones de OBS.
    Solo existen estos; nada más se puede pedir. */
-const OBS_STEPS = { scene: 1, item: 1, filter: 1, mute: 1, vol: 1, refresh: 1, stream: 1, record: 1, wait: 1 };
+const OBS_STEPS = { scene: 1, item: 1, filter: 1, mute: 1, vol: 1, refresh: 1, stream: 1, record: 1, replay: 1, text: 1, wait: 1 };
 const str = v => String(v == null ? '' : v).slice(0, 200);
 const okOf = r => !!(r && r.requestStatus && r.requestStatus.result);
 const dataOf = r => (r && r.responseData) || {};
@@ -932,7 +940,9 @@ async function obsWork(batch, cfg, act, steps, probes, shot) {
       push('do', ['SetInputVolume', { inputName: str(st.input), inputVolumeDb: db <= -60 ? -100 : db }]);
     } else if (st.t === 'refresh') push('do', ['PressInputPropertiesButton', { inputName: str(st.input), propertyName: 'refreshnocache' }]);
     else if (st.t === 'stream') push('do', [mode === 'on' ? 'StartStream' : mode === 'off' ? 'StopStream' : 'ToggleStream']);
-    else if (st.t === 'record') push('do', [mode === 'on' ? 'StartRecord' : mode === 'off' ? 'StopRecord' : 'ToggleRecord']);
+    else if (st.t === 'record') push('do', [mode === 'on' ? 'StartRecord' : mode === 'off' ? 'StopRecord' : mode === 'pause' ? 'ToggleRecordPause' : 'ToggleRecord']);
+    else if (st.t === 'replay') push('do', ['SaveReplayBuffer']);
+    else if (st.t === 'text') push('do', ['SetInputSettings', { inputName: str(st.input), inputSettings: { text: String(st.text == null ? '' : st.text).slice(0, 500) }, overlay: true }]);
     else if (st.t === 'wait') push('wait', ['Sleep', { sleepMillis: Math.max(100, Math.min(10000, Math.round(Number(st.s || 1) * 1000))) }]);
   });
   const doReqs = reqs.filter(Boolean);
@@ -965,7 +975,8 @@ async function obsWork(batch, cfg, act, steps, probes, shot) {
     const bad = [];
     let j = 0;
     kinds.forEach(k => { if (k === 'miss') { bad.push('No encontré esa fuente en la escena'); return; }
-      const r = R[j++]; if (k === 'do' && !okOf(r)) bad.push((r && r.requestStatus && r.requestStatus.comment) || (r && r.requestType) || 'falló'); });
+      const r = R[j++]; if (k === 'do' && !okOf(r)) bad.push(r && r.requestType === 'SaveReplayBuffer' ? 'el replay buffer de OBS está apagado'
+        : (r && r.requestStatus && r.requestStatus.comment) || (r && r.requestType) || 'falló'); });
     if (bad.length) { out.ok = false; out.error = (act === 'scene' ? 'OBS no cambió la escena: ' : 'OBS no pudo: ') + bad.join(' · '); }
   }
   // 4) foto de lo que está saliendo (solo si la pidieron)
