@@ -91,9 +91,17 @@ function page(title, body) {
     'font-weight:700;padding:10px 16px;border-radius:10px;text-decoration:none}small{color:#9aa1ad}</style></head><body><main>' + body + '</main></body></html>';
 }
 
+/* Si Kick tarda demasiado, mejor avisar que dejar al feed esperando */
+async function kfetch(url, opts, ms) {
+  try { return await fetch(url, Object.assign({}, opts || {}, { signal: AbortSignal.timeout(ms || 9000) })); }
+  catch (e) {
+    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new Error('Kick tardó demasiado en contestar, intenta otra vez');
+    throw e;
+  }
+}
 /* ---------------- tokens de Kick ---------------- */
 async function tokenRequest(params) {
-  const r = await fetch('https://id.kick.com/oauth/token', {
+  const r = await kfetch('https://id.kick.com/oauth/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(params).toString()
   });
@@ -112,7 +120,7 @@ async function validToken() {
   return nt;
 }
 async function kickApi(path, token, opts) {
-  const r = await fetch('https://api.kick.com/public/v1' + path, Object.assign({
+  const r = await kfetch('https://api.kick.com/public/v1' + path, Object.assign({
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json' }
   }, opts || {}));
   const j = await r.json().catch(() => ({}));
@@ -136,7 +144,7 @@ let PUBKEY = process.env.KICK_PUBLIC_KEY || '';
 let PUBOBJ = null;
 async function kickPublicKey() {
   if (PUBKEY) return PUBKEY;
-  const r = await fetch('https://api.kick.com/public/v1/public-key');
+  const r = await kfetch('https://api.kick.com/public/v1/public-key');
   const j = await r.json();
   PUBKEY = (j.data && (j.data.public_key || j.data.publicKey)) || j.public_key || '';
   return PUBKEY;
@@ -486,7 +494,7 @@ async function channel(req, res) {
     if (body.title && String(body.title).trim()) patch.stream_title = String(body.title).trim().slice(0, 140);
     if (body.category_id) patch.category_id = Number(body.category_id);
     if (!Object.keys(patch).length) return send(res, 400, { ok: false, error: 'nada que cambiar' });
-    const r = await fetch('https://api.kick.com/public/v1/channels', {
+    const r = await kfetch('https://api.kick.com/public/v1/channels', {
       method: 'PATCH', headers: { Authorization: 'Bearer ' + t.access_token, 'Content-Type': 'application/json' },
       body: JSON.stringify(patch)
     });
@@ -528,7 +536,7 @@ function kickErr(status, j, need) {
   return (j && (j.message || j.error)) || ('Kick respondió ' + status);
 }
 async function kickCall(method, path, token, body) {
-  const r = await fetch('https://api.kick.com/public/v1' + path, {
+  const r = await kfetch('https://api.kick.com/public/v1' + path, {
     method, headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Accept: 'application/json' },
     body: body ? JSON.stringify(body) : undefined
   });
@@ -576,7 +584,7 @@ async function realtimeKey(req, res) {
   const chId = Number(q.channel) || 6692133;
   const body = { client: { id: 'kf' + crypto.randomBytes(6).toString('hex'), type: 'web' }, capabilities: { accepted_providers: [{ provider: 'pusher' }] } };
   try {
-    const r = await fetch('https://web.kick.com/api/v1/realtime/channels/' + chId + '/chat/connection', {
+    const r = await kfetch('https://web.kick.com/api/v1/realtime/channels/' + chId + '/chat/connection', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     const cs = (j.data && j.data.connections) || [];
@@ -1004,7 +1012,7 @@ async function obsCatalog(batch) {
       .map(x => { if (x.isGroup && groups.indexOf(x.sourceName) < 0) groups.push(x.sourceName); return { id: x.sceneItemId, name: x.sourceName, on: !!x.sceneItemEnabled, group: !!x.isGroup }; });
     else if (k === 'mute') audio[n] = Object.assign(audio[n] || {}, { muted: !!d.inputMuted });
     else if (k === 'vol') { const v = Number(d.inputVolumeDb); audio[n] = Object.assign(audio[n] || {}, { db: Math.round(Math.max(-100, isFinite(v) ? v : -100) * 10) / 10 }); }
-    else if (k === 'filters' && (d.filters || []).length) filters[n] = d.filters.map(f => ({ name: f.filterName, on: !!f.filterEnabled }));
+    else if (k === 'filters' && (d.filters || []).length) filters[n] = d.filters.map(f => ({ name: f.filterName, on: !!f.filterEnabled, kind: String(f.filterKind || '') }));
   });
   if (groups.length) {
     const R3 = await batch(groups.map(g => ['GetGroupSceneItemList', { sceneName: g }]));
