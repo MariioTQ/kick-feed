@@ -237,6 +237,9 @@ function evTime(type, p, fallback) {
 const SPAM_DEFAULT = ['botkiva', 'ai stream upgrades', 'zero cost upgrades',
   "Don't work too hard, leave some success for the rest of us",
   'Hey stranger, still running the show'];
+// 20 oct 2026: el bot nuevo (flux_neonblaze17388 y parecidos). Se agregan una sola vez a tu lista.
+const SPAM_ADD2 = ['AI-powered viewers', 'daily reward drops', 'stays active around the clock',
+  'hope your day is full of wins', "Keep grinding, you're killing it"];
 const LOOK = (() => {
   const m = {};
   const add = (from, to) => Array.from(from).forEach((c, i) => { m[c] = to[i]; });
@@ -263,6 +266,11 @@ async function spamCfg(fresh) {
   if (!fresh && SPAMC.cfg && Date.now() - SPAMC.at < 300000) return SPAMC.cfg;   // se revisa cada 5 min
   const c = (await getJSON('spam')) || { on: true, list: SPAM_DEFAULT.slice() };
   if (!Array.isArray(c.list)) c.list = [];
+  if ((Number(c.seed) || 1) < 2) {                  // las frases del bot nuevo (las puedes quitar en el ⚙)
+    SPAM_ADD2.forEach(e => { if (!c.list.some(x => spamNorm(x) === spamNorm(e))) c.list.push(e); });
+    c.seed = 2;
+    try { await setJSON('spam', c); } catch (e) {}
+  }
   return setSpamCache(c);
 }
 function spamHit(text) {
@@ -371,6 +379,9 @@ async function webhook(req, res) {
         if (rule) { m.spam = 1; await spamDelete(m, rule); }
       } catch (e) { /* si algo falla, el mensaje sigue su camino */ }
     }
+    // ⌨️ Comandos para tus mods (!brb…): cambian OBS desde el chat. Solo se
+    // revisa si el mensaje empieza con «!» y lo manda un mod o tú.
+    if (m.u && !m.spam && /^\s*!/.test(m.t)) { try { await modCmd(m); } catch (e) {} }
     // ¿Primera vez que escribe en tu canal? Solo se pregunta a la base por
     // nombres que este servidor todavía no conoce.
     if (m.u) {
@@ -635,6 +646,101 @@ async function chatSend(req, res) {
   if (!r.ok) return send(res, 200, { ok: false, error: kickErr(r.status, r.j, 'Escribir en el feed del chat') });
   const d = r.j.data || r.j;
   return send(res, 200, { ok: !!(d.is_sent !== false), message_id: d.message_id || null });
+}
+
+/* ---------------- comandos para mods ----------------
+   Tú eliges el comando (!brb), qué pasa en OBS (lo mismo que tus atajos) y
+   qué mods lo pueden usar. Funciona aunque el feed esté cerrado: lo recibe
+   tu servidor con el chat. Solo mods (o tú) que estén en tu lista. */
+const CMD_STEPS = { scene: 1, item: 1, filter: 1, mute: 1, refresh: 1, stream: 1, record: 1, replay: 1, text: 1, wait: 1, chat: 1 };
+const CMD_RX = /^![a-z0-9_ñáéíóúü]{1,24}$/;
+let MCC = { at: 0, cfg: null };
+async function modCfg(fresh) {
+  if (!fresh && MCC.cfg && Date.now() - MCC.at < 15000) return MCC.cfg;
+  const c = (await getJSON('modcmds')) || { on: false, users: [], cmds: [], del: false };
+  MCC = { at: Date.now(), cfg: c };
+  return c;
+}
+function cmdStep(s) {
+  const o = { t: String(s.t) };
+  ['scene', 'source', 'filter', 'input', 'mode'].forEach(k => { if (s[k] != null && s[k] !== '') o[k] = String(s[k]).slice(0, 200); });
+  if (s.text != null) o.text = String(s.text).slice(0, 500);
+  if (s.id != null && isFinite(Number(s.id))) o.id = Number(s.id);
+  if (s.s != null && isFinite(Number(s.s))) o.s = Math.max(0.5, Math.min(10, Number(s.s)));
+  return o;
+}
+function cleanModCfg(c) {
+  c = c || {};
+  const users = (Array.isArray(c.users) ? c.users : []).map(u => String(u || '').trim().replace(/^@/, '').toLowerCase().replace(/[^a-z0-9_.\-]/g, ''))
+    .filter((u, i, a) => u && a.indexOf(u) === i).slice(0, 40);
+  const seen = {};
+  const cmds = (Array.isArray(c.cmds) ? c.cmds : []).map(x => {
+    const cc = String((x && x.c) || '').trim().toLowerCase();
+    if (!CMD_RX.test(cc) || seen[cc]) return null;
+    const steps = (Array.isArray(x.steps) ? x.steps : []).filter(s => s && typeof s === 'object' && CMD_STEPS[s.t]).slice(0, 10).map(cmdStep);
+    if (!steps.length) return null;
+    seen[cc] = 1;
+    return { c: cc, steps, name: String(x.name || '').slice(0, 40) };
+  }).filter(Boolean).slice(0, 40);
+  return { on: c.on !== false, users, cmds, del: !!c.del, at: Date.now() };
+}
+const isModOrMe = b => (b || []).some(x => /^(moderator|broadcaster)$/i.test(String((x && (x.type || x.text)) || '')));
+const isMe = b => (b || []).some(x => /^broadcaster$/i.test(String((x && (x.type || x.text)) || '')));
+async function modCmd(m) {
+  const word = String(m.t).trim().split(/\s+/)[0].toLowerCase();
+  if (!CMD_RX.test(word) || !isModOrMe(m.badges)) return;       // de los demás ni se pregunta a la base
+  const cfg = await modCfg();
+  if (!cfg.on) return;
+  const cmd = (cfg.cmds || []).find(c => c.c === word);
+  if (!cmd) return;
+  const u = String(m.u).toLowerCase();
+  if (!isMe(m.badges) && (cfg.users || []).indexOf(u) < 0) return;  // ese mod no está en tu lista
+  // una sola vez por mensaje (Kick puede repetir el aviso) y no más de una vez cada 3 s
+  if (!(await redis('SET', 'cmd:' + m.id, '1', 'NX', 'EX', 3600))) return;
+  if (!(await redis('SET', 'cmdcd:' + word, '1', 'NX', 'EX', 3))) return;
+  const obsSteps = cmd.steps.filter(s => s.t !== 'chat'), chats = cmd.steps.filter(s => s.t === 'chat' && s.text);
+  let ok = true, err = '', scene = '';
+  if (obsSteps.length) {
+    const oc = await obsCfg();
+    if (!oc) { ok = false; err = 'OBS sin conectar'; }
+    else {
+      let pass = '';
+      try { pass = obsOpen(oc.p); } catch (e) { ok = false; err = 'Vuelve a escribir la contraseña de OBS'; }
+      if (ok) {
+        try { const out = await obsSession(oc.url, pass, b => obsWork(b, oc, 'run', obsSteps, [], false), 9000);
+              ok = out.ok !== false; err = out.error || ''; scene = out.current || ''; }
+        catch (e) { ok = false; err = e.message; }
+      }
+    }
+  }
+  const tk = (chats.length || cfg.del) ? await validToken() : null;
+  if (tk) {
+    for (const s of chats) {
+      const r = await kickCall('POST', '/chat', tk.access_token, { type: 'user', broadcaster_user_id: Number(tk.user_id), content: String(s.text).slice(0, 500) });
+      if (!r.ok && ok) { ok = false; err = kickErr(r.status, r.j, 'Escribir en el feed del chat'); }
+    }
+    if (cfg.del) await kickCall('DELETE', '/chat/' + encodeURIComponent(m.id), tk.access_token);
+  }
+  const rt = Date.now();
+  const ev = { id: 'cmd:' + m.id, type: 'modcmd', ts: rt, rt, d: { kind: 'cmd', user: m.u, cmd: word, ok, error: err, scene } };
+  await redis('ZADD', 'ev', rt, JSON.stringify(ev));
+  await logPush('cmdlog', { at: rt, u: m.u, c: word, ok, e: err }, 20);
+}
+// ver y cambiar los comandos (solo con la clave de tus celulares)
+async function modCmdApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const b = req.method === 'POST' ? await readJSONBody(req) : {};
+  const key = (req.query && req.query.key) || b.key;
+  if (!(await checkKey(key))) return send(res, 403, { ok: false, error: 'clave' });
+  let cfg = await modCfg(true);
+  if (req.method === 'POST' && b.action === 'save') {
+    cfg = cleanModCfg(b.cfg);
+    await setJSON('modcmds', cfg);
+    MCC = { at: Date.now(), cfg };
+  }
+  const log = ((await redis('LRANGE', 'cmdlog', 0, 19)) || []).map(x => { try { return JSON.parse(x); } catch (e) { return null; } }).filter(Boolean);
+  return send(res, 200, { ok: true, cfg, log });
 }
 
 /* ---- antispam: ver y cambiar la lista (solo con la clave de tus celulares) ---- */
@@ -1134,6 +1240,7 @@ module.exports = async function handler(req, res) {
     if (route === 'mod') return await mod(req, res);
     if (route === 'realtime') return await realtimeKey(req, res);
     if (route === 'spam') return await spamApi(req, res);
+    if (route === 'modcmd') return await modCmdApi(req, res);
     if (route === 'chatters') return await chatters(req, res);
     if (route === 'prefs') return await prefsApi(req, res);
     if (route === 'obs') return await obsApi(req, res);
