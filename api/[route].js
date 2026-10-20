@@ -578,9 +578,12 @@ async function mod(req, res) {
 async function realtimeKey(req, res) {
   cors(res);
   const q = req.query || {};
-  if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  // ?pub=1: la llave pública del chat de Kick (la misma que usa kick.com) para la página
+  // de chat compartido de un amigo, que no tiene tu clave. Solo lee la guardada (1 h).
+  const pub = q.pub === '1';
+  if (!pub && !(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
   const cached = await getJSON('rtkey');
-  if (cached && Date.now() - cached.at < 3600e3 && q.fresh !== '1') return send(res, 200, Object.assign({ ok: true, cached: true }, cached));
+  if (cached && Date.now() - cached.at < 3600e3 && (pub || q.fresh !== '1')) return send(res, 200, { ok: true, cached: true, app_key: cached.app_key, cluster: cached.cluster, at: cached.at });
   const chId = Number(q.channel) || 6692133;
   const body = { client: { id: 'kf' + crypto.randomBytes(6).toString('hex'), type: 'web' }, capabilities: { accepted_providers: [{ provider: 'pusher' }] } };
   try {
