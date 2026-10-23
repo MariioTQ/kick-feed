@@ -434,7 +434,7 @@ async function webhook(req, res) {
           se.prevEnd = se.lastEnd || 0;      // cuándo terminó el stream anterior
           se.start = st;
           newSess = true;                    // para la regla «Empieza el stream» (no cuenta si solo se cortó)
-          try { const pa = await getJSON('subAdj'); if (pa && pa.start === 0) await setJSON('subAdj', Object.assign(pa, { start: st })); } catch (e) {}
+          try { const pa = await getJSON('subAdj'); if (pa && (pa.start === 0 || pa.start === 'off')) await setJSON('subAdj', { start: st, n: 0, s: 0, at: Date.now() }); } catch (e) {}   // v68: cada stream empieza en 0
         }
         se.live = true;
       } else {
@@ -1083,7 +1083,7 @@ function sessFrom(se, hint) {
 let TOTC = { k: '', v: null, at: 0 };
 async function sessTotals(from, lastHook, adjS, fresh) {
   let adj = null; try { adj = adjS ? JSON.parse(adjS) : null; } catch (e) { adj = null; }
-  const an = adj && (adj.start === from || (adj.start === 0 && from)) ? Number(adj.n) || 0 : 0;   // 0 = pendiente: es de este stream
+  const an = adj && adj.start === from ? Number(adj.n) || 0 : 0;      // v68: solo el ajuste de ESTE stream (cada stream empieza en 0)
   const sh = adj && adj.start === from ? Number(adj.s) || 0 : 0;      // renovaciones de la madrugada que la persona compartió ya en vivo
   const k = from + '|' + (lastHook || 0) + '|' + an + '|' + sh;
   if (!fresh && TOTC.k === k && TOTC.v && Date.now() - TOTC.at < 120000) return TOTC.v;   // llegó algo nuevo: se recalcula sí o sí
@@ -1125,30 +1125,45 @@ async function events(req, res) {
   let totals = null;
   // Los totales: cuando llegó algo nuevo o el feed los pide (tot=1); si nada cambió, salen de lo ya calculado
   if (from && (evs.length || q.tot === '1' || !since)) totals = await sessTotals(from, Number(lhS) || 0, adjS, evs.length > 0);
+  else if (!from) { const a = pj(adjS); if (a && (a.start === 'off' || a.start === 0)) totals = offTotals(a); }   // v68: sin stream, lo que sumaste para probar
   const lastHook = Number(lhS) || 0;
   return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0, rat: Number(raS) || 0 });
 }
 
 /* ---- 🎯 la meta de subs: sumar o restar a mano (por si algo falló) ----
    Solo cuenta para el stream de ahora: el siguiente empieza sin ajuste. */
+// v68: con el stream apagado la meta también se mueve al momento (para probar el letrero):
+// ese ajuste es «fuera de vivo» y al empezar tu stream todo vuelve a 0.
+function offTotals(adj) {
+  const n = adj && (adj.start === 'off' || adj.start === 0) ? Number(adj.n) || 0 : 0;
+  return { from: 0, off: true, subs: Math.max(0, n), real: 0, kicks: 0, newSubs: 0, resubs: 0, gifted: 0, offFrom: 0, offSubs: 0, offKicks: 0, adj: n, shared: 0 };
+}
 async function goalAdjust(delta, reset, hint, share) {
   const se = await getJSON('session');
   const from = sessFrom(se, hint);
   const cur = (await getJSON('subAdj')) || {};
   if (!from) {
-    // v66: con el stream apagado queda PENDIENTE y se aplica al empezar tu próximo stream
     if (share) return { ok: false, error: 'Solo durante el stream' };
-    let pn = cur.start === 0 ? Number(cur.n) || 0 : 0;
+    let pn = cur.start === 'off' || cur.start === 0 ? Number(cur.n) || 0 : 0;
     pn = reset ? 0 : Math.max(-500, Math.min(500, pn + Math.round(Number(delta) || 0)));
-    await setJSON('subAdj', { start: 0, n: pn, s: 0, at: Date.now() });
-    return { ok: true, pending: true, n: pn, totals: null };
+    const adj = { start: 'off', n: pn, s: 0, at: Date.now() };
+    await setJSON('subAdj', adj);
+    return { ok: true, off: true, n: pn, totals: offTotals(adj) };
   }
-  let n = cur.start === from || cur.start === 0 ? Number(cur.n) || 0 : 0, sh = cur.start === from ? Number(cur.s) || 0 : 0;   // lo pendiente se suma a este stream
+  let n = cur.start === from ? Number(cur.n) || 0 : 0, sh = cur.start === from ? Number(cur.s) || 0 : 0;
   if (share) sh = Math.min(500, sh + 1);              // la renovación de la madrugada se cuenta ahora (no es «a mano»)
   else n = reset ? 0 : Math.max(-500, Math.min(500, n + Math.round(Number(delta) || 0)));
   const adj = { start: from, n, s: sh, at: Date.now() };
   await setJSON('subAdj', adj);
   return { ok: true, n, from, totals: await sessTotals(from, Number(await redis('GET', 'lastHook')) || 0, JSON.stringify(adj)) };
+}
+// Le avisa al letrero de la meta (subgoal.html, fuente de navegador en OBS) por la misma
+// conexión de OBS de tus atajos: OBS se lo pasa a sus fuentes de navegador (evento «kickfeedGoal»).
+async function goalPush(t) {
+  const oc = await obsCfg(); if (!oc || !oc.url) return;
+  let pass = ''; try { pass = obsOpen(oc.p); } catch (e) { return; }
+  const d = { subs: t.subs, adj: t.adj || 0, real: t.real || 0, newSubs: t.newSubs || 0, resubs: t.resubs || 0, gifted: t.gifted || 0, off: !!t.off };
+  await obsRun(oc.url, pass, [['CallVendorRequest', { vendorName: 'obs-browser', requestType: 'emit_event', requestData: { event_name: 'kickfeedGoal', event_data: d } }]], 6000);
 }
 async function goalApi(req, res) {
   cors(res);
@@ -1160,12 +1175,15 @@ async function goalApi(req, res) {
   if (b.once && !(await redis('SET', 'gonce:' + String(b.once).slice(0, 120), '1', 'NX', 'EX', 172800))) {
     const se = await getJSON('session'), from = sessFrom(se, b.from);
     const [lh, adjS] = (await redis('MGET', 'lastHook', 'subAdj')) || [];
-    return send(res, 200, { ok: true, dup: true, totals: from ? await sessTotals(from, Number(lh) || 0, adjS) : null });
+    let ad = null; try { ad = adjS ? JSON.parse(adjS) : null; } catch (e) {}
+    return send(res, 200, { ok: true, dup: true, totals: from ? await sessTotals(from, Number(lh) || 0, adjS) : offTotals(ad) });
   }
   const out = await goalAdjust(b.delta, !!b.reset, b.from, !!b.share);
+  // v68: el letrero de OBS se entera AL MOMENTO (con o sin stream), sin preguntarle más seguido al servidor
+  if (out.ok && out.totals) { const p = goalPush(out.totals).catch(() => {}); if (!later(p)) await p; }
   if (out.ok && !b.share) {
     const rt = Date.now();
-    await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'goal:' + rt, type: 'goal', ts: rt, rt, d: { kind: 'goal', delta: b.reset ? 0 : Math.round(Number(b.delta) || 0), reset: !!b.reset, n: out.n, subs: out.totals ? out.totals.subs : null, pending: !!out.pending, by: String(b.by || '').slice(0, 40) } }));
+    await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'goal:' + rt, type: 'goal', ts: rt, rt, d: { kind: 'goal', delta: b.reset ? 0 : Math.round(Number(b.delta) || 0), reset: !!b.reset, n: out.n, subs: out.totals ? out.totals.subs : null, off: !!out.off, by: String(b.by || '').slice(0, 40) } }));
   }
   return send(res, 200, out);
 }
