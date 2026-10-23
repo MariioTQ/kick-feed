@@ -8,6 +8,8 @@
      /api/status    página para revisar que todo esté funcionando
      /api/prefs     los mismos ajustes en tus dos celulares
      /api/obs       cambiar de escena en OBS desde el feed
+     /api/rules     reglas automáticas: «cuando pase esto, haz esto»
+     /api/goal      sumar o restar subs a la meta a mano
 
    Variables que se configuran en Vercel (Settings → Environment Variables):
      KICK_CLIENT_ID, KICK_CLIENT_SECRET   las dos claves de tu app de Kick
@@ -419,6 +421,7 @@ async function webhook(req, res) {
     if (!skip) await redis('ZADD', 'ev', rt, JSON.stringify(ev));
     await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
     await addToLists(ev);
+    let newSess = false;
     if (type === 'livestream.status.updated') {
       await setJSON('live', Object.assign({ at: rt }, ev.d));
       // "Sesión" = el stream del día. Si el stream se corta y vuelve en
@@ -430,6 +433,7 @@ async function webhook(req, res) {
         if (!se.start || !se.lastEnd || st - se.lastEnd > 30 * 60000) {
           se.prevEnd = se.lastEnd || 0;      // cuándo terminó el stream anterior
           se.start = st;
+          newSess = true;                    // para la regla «Empieza el stream» (no cuenta si solo se cortó)
         }
         se.live = true;
       } else {
@@ -439,6 +443,12 @@ async function webhook(req, res) {
     }
     await redis('SET', 'lastHook', String(Date.now()));
     await logPush('raw', { at: Date.now(), type, body: raw.slice(0, 1500) }, 40);
+    // ⚙️ reglas automáticas: si alguna le toca a este evento
+    const trig = ruleTriggers(ev.d, newSess);
+    if (trig.length) {
+      const p = Promise.all(trig.map(t => rulesOn(t[0], t[1]))).catch(() => {});
+      if (!later(p)) await p;
+    }
   }
   return send(res, 200, { ok: true });
 }
@@ -652,7 +662,7 @@ async function chatSend(req, res) {
    Tú eliges el comando (!brb), qué pasa en OBS (lo mismo que tus atajos) y
    qué mods lo pueden usar. Funciona aunque el feed esté cerrado: lo recibe
    tu servidor con el chat. Solo mods (o tú) que estén en tu lista. */
-const CMD_STEPS = { scene: 1, item: 1, filter: 1, mute: 1, refresh: 1, stream: 1, record: 1, replay: 1, text: 1, wait: 1, chat: 1 };
+const CMD_STEPS = { scene: 1, item: 1, filter: 1, mute: 1, refresh: 1, stream: 1, record: 1, replay: 1, text: 1, wait: 1, chat: 1, goal: 1 };
 const CMD_RX = /^![a-z0-9_ñáéíóúü]{1,24}$/;
 let MCC = { at: 0, cfg: null };
 async function modCfg(fresh) {
@@ -667,6 +677,7 @@ function cmdStep(s) {
   if (s.text != null) o.text = String(s.text).slice(0, 500);
   if (s.id != null && isFinite(Number(s.id))) o.id = Number(s.id);
   if (s.s != null && isFinite(Number(s.s))) o.s = Math.max(0.5, Math.min(10, Number(s.s)));
+  if (s.n != null && isFinite(Number(s.n))) o.n = Math.max(-50, Math.min(50, Math.round(Number(s.n))));   // 🎯 meta: +1, −1… (0 = quitar el ajuste)
   return o;
 }
 function cleanModCfg(c) {
@@ -698,7 +709,8 @@ async function modCmd(m) {
   // una sola vez por mensaje (Kick puede repetir el aviso) y no más de una vez cada 3 s
   if (!(await redis('SET', 'cmd:' + m.id, '1', 'NX', 'EX', 3600))) return;
   if (!(await redis('SET', 'cmdcd:' + word, '1', 'NX', 'EX', 3))) return;
-  const obsSteps = cmd.steps.filter(s => s.t !== 'chat'), chats = cmd.steps.filter(s => s.t === 'chat' && s.text);
+  const obsSteps = cmd.steps.filter(s => s.t !== 'chat' && s.t !== 'goal'), chats = cmd.steps.filter(s => s.t === 'chat' && s.text);
+  for (const g of cmd.steps.filter(s => s.t === 'goal')) { try { await goalAdjust(g.n || 0, !g.n); } catch (e) {} }
   let ok = true, err = '', scene = '';
   if (obsSteps.length) {
     const oc = await obsCfg();
@@ -743,6 +755,213 @@ async function modCmdApi(req, res) {
   return send(res, 200, { ok: true, cfg, log });
 }
 
+/* ---------------- reglas automáticas: «cuando pase esto, haz esto» ----------------
+   Tú eliges el evento (sub, Kicks, follow, que empiece el stream, que cambies
+   de categoría…) y qué pasa: los mismos pasos de tus atajos. Las que llegan a
+   tu servidor por Kick funcionan con la app cerrada; las de recompensas y
+   raids las avisa la app abierta (Kick no se las manda al servidor). Solo se
+   pregunta a la base cuando llega un evento (no con cada mensaje del chat). */
+const RULE_EV = { sub: 1, resub: 1, gift: 1, kicks: 1, follow: 1, live: 1, off: 1, cat: 1, catoff: 1, reward: 1, host: 1 };
+const RULE_APP = { reward: 1, host: 1 };
+let RLC = { at: 0, cfg: null };
+async function ruleCfg(fresh) {
+  if (!fresh && RLC.cfg && Date.now() - RLC.at < 15000) return RLC.cfg;
+  const c = (await getJSON('rules')) || { on: true, feed: true, list: [] };
+  RLC = { at: Date.now(), cfg: c };
+  return c;
+}
+function cleanRule(x, i) {
+  if (!x || typeof x !== 'object' || !RULE_EV[x.ev]) return null;
+  const steps = (Array.isArray(x.steps) ? x.steps : []).filter(s => s && typeof s === 'object' && CMD_STEPS[s.t]).slice(0, 10).map(s => {
+    const o = cmdStep(s);
+    if (o.t === 'wait') o.s = Math.max(0.5, Math.min(30, Number(s.s) || 1));      // en las reglas se puede esperar hasta 30 s
+    return o;
+  });
+  if (!steps.length) return null;
+  let tw = 0;
+  steps.forEach(s => { if (s.t === 'wait') { if (tw + s.s > 60) s.s = Math.max(0.5, 60 - tw); tw += s.s; } });  // 1 minuto en total, máximo
+  const id = /^[a-z0-9]{3,20}$/.test(String(x.id || '')) ? String(x.id) : 'r' + Date.now().toString(36) + (i || 0);
+  return { id, on: x.on !== false, ev: x.ev, min: Math.max(0, Math.min(1e6, Math.round(Number(x.min) || 0))),
+           name: String(x.name || '').trim().slice(0, 80), cd: Math.max(0, Math.min(3600, Math.round(Number(x.cd) || 0))), steps };
+}
+function cleanRuleCfg(c) {
+  c = c || {};
+  const seen = {};
+  const list = (Array.isArray(c.list) ? c.list : []).map(cleanRule).filter(r => r && !seen[r.id] && (seen[r.id] = 1)).slice(0, 30);
+  return { on: c.on !== false, feed: c.feed !== false, list, at: Date.now() };
+}
+const rlow = s => String(s == null ? '' : s).trim().toLowerCase();
+// lo que se puede poner en los mensajes: {nombre} {cantidad} {meses} {recompensa} {mensaje} {categoria} {titulo}
+function ruleVars(kind, d) {
+  d = d || {};
+  const v = { nombre: d.user || '', cantidad: '', meses: '', recompensa: '', mensaje: '', categoria: '', titulo: '' };
+  if (kind === 'gift') { v.nombre = d.user || 'Anónimo'; v.cantidad = String(d.count || 1); }
+  else if (kind === 'kicks') { v.cantidad = String(d.amount || 0); v.mensaje = d.message || ''; }
+  else if (kind === 'sub' || kind === 'resub') v.meses = String(d.months || 1);
+  else if (kind === 'reward') { v.recompensa = d.reward || ''; v.mensaje = d.input || ''; }
+  else if (kind === 'host') v.cantidad = String(d.viewers || 0);
+  else if (kind === 'cat' || kind === 'catoff') { v.categoria = d.cat || ''; v.titulo = d.title || ''; }
+  else if (kind === 'live') v.titulo = d.title || '';
+  return v;
+}
+function ruleHit(r, kind, d) {
+  if (!r || r.on === false || r.ev !== kind) return false;
+  d = d || {};
+  if (kind === 'gift') return (Number(d.count) || 1) >= (r.min || 1);
+  if (kind === 'kicks') return (Number(d.amount) || 0) >= (r.min || 1);
+  if (kind === 'host') return (Number(d.viewers) || 0) >= (r.min || 0);
+  if (kind === 'reward') return !r.name || rlow(r.name) === rlow(d.reward);
+  if (kind === 'cat') return !r.name || rlow(r.name) === rlow(d.cat);
+  if (kind === 'catoff') return !!r.name && rlow(r.name) === rlow(d.oldCat) && rlow(d.cat) !== rlow(r.name);
+  return true;
+}
+function fillVars(t, v, chat) {
+  return String(t == null ? '' : t).replace(/\{(nombre|cantidad|meses|recompensa|mensaje|categor[ií]a|t[ií]tulo)\}/gi, (m, k) => {
+    k = k.toLowerCase().replace('í', 'i');
+    if (chat && k === 'mensaje') return '';      // lo que escribe la gente nunca se repite con tu cuenta en el chat
+    return String(v[k] == null ? '' : v[k]).slice(0, 120);
+  });
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Hace los pasos en orden: los de OBS por una sola conexión, los mensajes en
+// su lugar y las esperas aquí mismo. Si OBS falla, los mensajes igual se mandan.
+// test: no manda nada al chat (solo dice qué mandaría).
+async function ruleExec(steps, v, test) {
+  const res = { ok: true, error: '', scene: '', chats: [] };
+  const fail = e => { if (res.ok) { res.ok = false; res.error = String(e || 'No se pudo'); } };
+  const S = steps.map(s => {
+    const o = Object.assign({}, s);
+    if (o.t === 'text') o.text = fillVars(o.text, v, false).slice(0, 500);
+    if (o.t === 'chat') o.text = fillVars(o.text, v, true).replace(/\s{2,}/g, ' ').trim().slice(0, 500);
+    return o;
+  });
+  const needObs = S.some(s => s.t !== 'chat' && s.t !== 'wait' && s.t !== 'goal');
+  const needChat = !test && S.some(s => s.t === 'chat' && s.text);
+  const tk = needChat ? await validToken() : null;
+  if (needChat && !tk) fail('Falta conectar tu cuenta de Kick');
+  let k = 0, gen = 0, oc = null;
+  const sendChat = async s => {
+    if (!s.text) return;
+    if (test) { res.chats.push(s.text); return; }
+    if (!tk) return;
+    const r = await kickCall('POST', '/chat', tk.access_token, { type: 'user', broadcaster_user_id: Number(tk.user_id), content: s.text });
+    if (!r.ok) fail(kickErr(r.status, r.j, 'Escribir en el feed del chat'));
+  };
+  const run = async batch => {
+    const my = ++gen;
+    let buf = [];
+    const flush = async () => {
+      if (!buf.length) return;
+      const g = buf; buf = [];
+      const out = await obsWork(batch, oc, 'run', g, [], false);
+      if (out.ok === false) fail(out.error || 'OBS no pudo');
+      if (out.current) res.scene = out.current;
+    };
+    while (k < S.length && my === gen) {
+      const s = S[k++];                            // se cuenta antes: si OBS se cae a medias, nada se manda dos veces
+      if (s.t === 'chat') { await flush(); if (my === gen) await sendChat(s); }
+      else if (s.t === 'goal') { await flush(); if (my === gen && !test) { try { await goalAdjust(s.n || 0, !s.n); } catch (e) {} } }
+      else if (s.t === 'wait') { await flush(); if (batch || (!needObs && !test)) await sleep(s.s * 1000); }
+      else if (batch) buf.push(s);
+    }
+    if (my === gen) await flush();
+  };
+  if (needObs) {
+    oc = await obsCfg();
+    let pass = null;
+    if (!oc) fail('OBS sin conectar');
+    else { try { pass = obsOpen(oc.p); } catch (e) { fail('Vuelve a escribir la contraseña de OBS'); } }
+    if (oc && pass != null) {
+      const waits = S.reduce((a, s) => a + (s.t === 'wait' ? s.s : 0), 0);
+      try { await obsSession(oc.url, pass, b => run(b), Math.round(waits * 1000) + 12000); }
+      catch (e) { fail(e.message); }
+    }
+  }
+  if (k < S.length) await run(null);           // lo que faltó (o todo, si no hubo OBS): solo los mensajes
+  return res;
+}
+// Llegó un evento: se hacen las reglas que le tocan (cada una con su espera entre una y otra)
+async function rulesOn(kind, d) {
+  let cfg;
+  try { cfg = await ruleCfg(); } catch (e) { return; }
+  if (!cfg || cfg.on === false) return;
+  const hits = (cfg.list || []).filter(r => ruleHit(r, kind, d));
+  if (!hits.length) return;
+  const v = ruleVars(kind, d);
+  await Promise.all(hits.map(async r => {
+    if (r.cd && !(await redis('SET', 'rcd:' + r.id, '1', 'NX', 'EX', r.cd))) return;   // todavía está en su espera
+    let out;
+    try { out = await ruleExec(r.steps, v, false); } catch (e) { out = { ok: false, error: e.message }; }
+    const rt = Date.now();
+    if (cfg.feed !== false || !out.ok) {
+      const ev = { id: 'rule:' + r.id + ':' + rt, type: 'rule', ts: rt, rt,
+        d: { kind: 'rule', ev: kind, rid: r.id, user: v.nombre, n: v.cantidad, rw: v.recompensa, cat: v.categoria, ok: out.ok, error: out.error || '', scene: out.scene || '' } };
+      await redis('ZADD', 'ev', rt, JSON.stringify(ev));
+    }
+    await logPush('rulelog', { at: rt, ev: kind, rid: r.id, u: v.nombre, ok: out.ok, e: out.error || '' }, 20);
+  }));
+}
+// qué reglas despierta cada aviso de Kick
+function ruleTriggers(d, newSess) {
+  switch ((d || {}).kind) {
+    case 'sub': case 'resub': case 'gift': case 'kicks': case 'follow': return [[d.kind, d]];
+    case 'live': return d.is_live ? (newSess ? [['live', d]] : []) : [['off', d]];
+    case 'meta':
+      if ((d.changed || []).indexOf('category') >= 0 && d.oldCat != null) {
+        const x = { cat: (d.cat || {}).name || '', oldCat: d.oldCat || '', title: d.title || '' };
+        return [['cat', x], ['catoff', x]];
+      }
+  }
+  return [];
+}
+// En Vercel, contesta a Kick al momento y la regla sigue trabajando (si tiene esperas).
+function later(p) {
+  try {
+    const c = globalThis[Symbol.for('@vercel/request-context')];
+    const ctx = c && typeof c.get === 'function' ? c.get() : null;
+    if (ctx && typeof ctx.waitUntil === 'function') { ctx.waitUntil(p); return true; }
+  } catch (e) {}
+  return false;
+}
+const RULE_SAMPLE = { nombre: 'Prueba', cantidad: '100', meses: '3', recompensa: 'CLIPS', mensaje: 'mensaje de prueba', categoria: 'Slots & Casino', titulo: 'Título de prueba' };
+async function rulesApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const b = req.method === 'POST' ? await readJSONBody(req) : {};
+  const key = (req.query && req.query.key) || b.key;
+  if (!(await checkKey(key))) return send(res, 403, { ok: false, error: 'clave' });
+  const act = req.method === 'POST' ? String(b.action || '') : '';
+  if (act === 'fire') {                             // una recompensa o un raid que vio la app
+    const kind = String(b.ev || '');
+    if (!RULE_APP[kind]) return send(res, 400, { ok: false, error: 'evento raro' });
+    const d = b.d || {};
+    const dd = kind === 'reward' ? { user: str(d.user).slice(0, 40), reward: str(d.reward).slice(0, 80), input: str(d.input) }
+                                 : { user: str(d.user).slice(0, 40), viewers: Math.max(0, Math.round(Number(d.viewers) || 0)) };
+    // si tus dos celulares lo vieron, solo cuenta una vez
+    const fp = crypto.createHash('sha1').update(kind + '|' + JSON.stringify(dd)).digest('hex').slice(0, 16);
+    if (!(await redis('SET', 'rf:' + fp, '1', 'NX', 'EX', 20))) return send(res, 200, { ok: true, dup: true });
+    const p = rulesOn(kind, dd).catch(() => {});
+    if (!later(p)) await p;
+    return send(res, 200, { ok: true });
+  }
+  if (act === 'test') {                             // ▶ Probar: hace lo de OBS y dice qué mensajes mandaría
+    const r = cleanRule(Object.assign({}, b.rule || {}, { on: true }), 0);
+    if (!r) return send(res, 200, { ok: false, error: 'La regla no tiene pasos' });
+    const v = Object.assign({}, RULE_SAMPLE);
+    if (r.min && /^(gift|kicks|host)$/.test(r.ev)) v.cantidad = String(r.min);
+    if (r.name && r.ev === 'reward') v.recompensa = r.name;
+    if (r.name && (r.ev === 'cat' || r.ev === 'catoff')) v.categoria = r.ev === 'cat' ? r.name : 'IRL';
+    let out;
+    try { out = await ruleExec(r.steps, v, true); } catch (e) { out = { ok: false, error: e.message, chats: [] }; }
+    return send(res, 200, out);
+  }
+  let cfg = await ruleCfg(true);
+  if (act === 'save') { cfg = cleanRuleCfg(b.cfg); await setJSON('rules', cfg); await redis('SET', 'rulesAt', String(cfg.at)); RLC = { at: Date.now(), cfg }; }
+  else if (act) return send(res, 400, { ok: false, error: 'acción rara' });
+  const log = ((await redis('LRANGE', 'rulelog', 0, 19)) || []).map(x => { try { return JSON.parse(x); } catch (e) { return null; } }).filter(Boolean);
+  return send(res, 200, { ok: true, cfg, log });
+}
+
 /* ---- antispam: ver y cambiar la lista (solo con la clave de tus celulares) ---- */
 async function spamApi(req, res) {
   cors(res);
@@ -782,6 +1001,39 @@ async function ensureSubs() {
   try { const r = await subscribeAll(t); await logPush('raw', { at: Date.now(), type: 'resubscribe', body: JSON.stringify(r).slice(0, 800) }, 40); }
   catch (e) { await redis('DEL', 'subsVer'); }
 }
+// La sesión del stream: desde que empezó (lo manda Kick) o, si el servidor todavía no lo sabe, desde ?from= del feed.
+function sessFrom(se, hint) {
+  if (se && se.start && (se.live || (se.lastEnd && Date.now() - se.lastEnd < 30 * 60000))) return se.start;
+  return Number(hint) || 0;
+}
+// Totales exactos de la sesión. v65: solo cuenta lo que pasó con el stream en vivo
+// (una renovación de madrugada ya no se suma al stream de la tarde) + lo que
+// sumaste o restaste a mano a la meta. Se calculan una sola vez por cambio:
+// si no llegó nada nuevo, se reusan (así revisar seguido casi no gasta).
+let TOTC = { k: '', v: null, at: 0 };
+async function sessTotals(from, lastHook, adjS, fresh) {
+  let adj = null; try { adj = adjS ? JSON.parse(adjS) : null; } catch (e) { adj = null; }
+  const an = adj && adj.start === from ? Number(adj.n) || 0 : 0;
+  const sh = adj && adj.start === from ? Number(adj.s) || 0 : 0;      // renovaciones de la madrugada que la persona compartió ya en vivo
+  const k = from + '|' + (lastHook || 0) + '|' + an + '|' + sh;
+  if (!fresh && TOTC.k === k && TOTC.v && Date.now() - TOTC.at < 120000) return TOTC.v;   // llegó algo nuevo: se recalcula sí o sí
+  const sess = await redis('ZRANGEBYSCORE', 'ev', from - 3600000, '+inf');
+  const totals = { from, subs: 0, kicks: 0, newSubs: 0, resubs: 0, gifted: 0, offFrom: 0, offSubs: 0, offKicks: 0, adj: an, shared: sh };
+  (sess || []).forEach(s => {
+    let e; try { e = fixEv(JSON.parse(s)); } catch (x) { return; }
+    const t = e.ts || 0, d = e.d || {};
+    if (t < from - 60000) return;
+    if (d.kind === 'sub') { totals.subs++; totals.newSubs++; }
+    else if (d.kind === 'resub') { totals.subs++; totals.resubs++; }
+    else if (d.kind === 'gift') { totals.subs += d.count || 1; totals.gifted += d.count || 1; }
+    else if (d.kind === 'kicks') totals.kicks += d.amount || 0;
+  });
+  totals.resubs += sh;
+  totals.real = totals.subs + sh;
+  totals.subs = Math.max(0, totals.real + an);
+  TOTC = { k, v: totals, at: Date.now() };
+  return totals;
+}
 async function events(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -790,43 +1042,55 @@ async function events(req, res) {
   const since = Number(q.since) || 0;                 // cursor: lo que el feed todavía no tiene
   const limit = Math.min(500, Number(q.limit) || 300);
   await repairTimes();
-  const list = await redis('ZRANGEBYSCORE', 'ev', '(' + since, '+inf', 'LIMIT', 0, limit);
+  // since en el futuro (el letrero de la meta solo quiere los totales): ni se busca
+  const list = since > Date.now() + 60000 ? [] : await redis('ZRANGEBYSCORE', 'ev', '(' + since, '+inf', 'LIMIT', 0, limit);
   const evs = (list || []).map(s => { try { return fixEv(JSON.parse(s)); } catch (e) { return null; } }).filter(Boolean);
   const cursor = evs.reduce((m, e) => Math.max(m, e.rt || e.ts || 0), since);
-  // tres datos en una sola consulta (antes eran tres)
-  // + la hora de los últimos ajustes compartidos: así cada celular sabe si el otro cambió algo, sin gastar otra consulta
-  const [liveS, seS, lhS, paS] = (await redis('MGET', 'live', 'session', 'lastHook', 'prefsAt')) || [];
+  // varios datos en una sola consulta: en vivo, sesión, último aviso, ajustes compartidos,
+  // reglas y lo que sumaste o restaste a mano a la meta
+  const [liveS, seS, lhS, paS, raS, adjS] = (await redis('MGET', 'live', 'session', 'lastHook', 'prefsAt', 'rulesAt', 'subAdj')) || [];
   const pj = v => { try { return v ? JSON.parse(v) : null; } catch (e) { return null; } };
   const live = pj(liveS), se = pj(seS);
-  // Totales exactos de la sesión: desde que empezó el stream del día (lo
-  // manda Kick) o, si el servidor todavía no lo sabe, desde ?from= del feed.
-  let from = Number(q.from) || 0;
-  if (se && se.start && (se.live || (se.lastEnd && Date.now() - se.lastEnd < 30 * 60000))) from = se.start;
+  const from = sessFrom(se, q.from);
   let totals = null;
-  // Los totales se recalculan cuando llegó algo nuevo o el feed los pide (tot=1)
-  if (from && (evs.length || q.tot === '1' || !since)) {
-    // Lo que llegó mientras no estabas en vivo (p. ej. una renovación en la
-    // madrugada) cuenta para el siguiente stream. Máximo las 24 h de antes.
-    const offFrom = (se && se.start === from && se.prevEnd) ? Math.max(se.prevEnd, from - 24 * 3600e3) : 0;
-    const sess = await redis('ZRANGEBYSCORE', 'ev', (offFrom ? Math.min(offFrom, from) : from) - 3600000, '+inf');
-    totals = { from, subs: 0, kicks: 0, newSubs: 0, resubs: 0, gifted: 0, offFrom, offSubs: 0, offKicks: 0 };
-    (sess || []).forEach(s => {
-      let e; try { e = fixEv(JSON.parse(s)); } catch (x) { return; }
-      const t = e.ts || 0, d = e.d || {};
-      let off = false;
-      if (t < from - 60000) {
-        if (!(offFrom && t >= offFrom && /^(sub|resub|gift|kicks)$/.test(d.kind || ''))) return;
-        off = true;
-      }
-      if (off) { if (d.kind === 'kicks') totals.offKicks += d.amount || 0; else totals.offSubs += d.kind === 'gift' ? (d.count || 1) : 1; }
-      if (d.kind === 'sub') { totals.subs++; totals.newSubs++; }
-      else if (d.kind === 'resub') { totals.subs++; totals.resubs++; }
-      else if (d.kind === 'gift') { totals.subs += d.count || 1; totals.gifted += d.count || 1; }
-      else if (d.kind === 'kicks') totals.kicks += d.amount || 0;
-    });
-  }
+  // Los totales: cuando llegó algo nuevo o el feed los pide (tot=1); si nada cambió, salen de lo ya calculado
+  if (from && (evs.length || q.tot === '1' || !since)) totals = await sessTotals(from, Number(lhS) || 0, adjS, evs.length > 0);
   const lastHook = Number(lhS) || 0;
-  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0 });
+  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0, rat: Number(raS) || 0 });
+}
+
+/* ---- 🎯 la meta de subs: sumar o restar a mano (por si algo falló) ----
+   Solo cuenta para el stream de ahora: el siguiente empieza sin ajuste. */
+async function goalAdjust(delta, reset, hint, share) {
+  const se = await getJSON('session');
+  const from = sessFrom(se, hint);
+  if (!from) return { ok: false, error: 'Solo se puede durante el stream' };
+  const cur = (await getJSON('subAdj')) || {};
+  let n = cur.start === from ? Number(cur.n) || 0 : 0, sh = cur.start === from ? Number(cur.s) || 0 : 0;
+  if (share) sh = Math.min(500, sh + 1);              // la renovación de la madrugada se cuenta ahora (no es «a mano»)
+  else n = reset ? 0 : Math.max(-500, Math.min(500, n + Math.round(Number(delta) || 0)));
+  const adj = { start: from, n, s: sh, at: Date.now() };
+  await setJSON('subAdj', adj);
+  return { ok: true, n, from, totals: await sessTotals(from, Number(await redis('GET', 'lastHook')) || 0, JSON.stringify(adj)) };
+}
+async function goalApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
+  const b = await readJSONBody(req);
+  if (!(await checkKey(b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  // una renovación compartida en vivo la avisan tus dos celulares: solo cuenta una vez
+  if (b.once && !(await redis('SET', 'gonce:' + String(b.once).slice(0, 120), '1', 'NX', 'EX', 172800))) {
+    const se = await getJSON('session'), from = sessFrom(se, b.from);
+    const [lh, adjS] = (await redis('MGET', 'lastHook', 'subAdj')) || [];
+    return send(res, 200, { ok: true, dup: true, totals: from ? await sessTotals(from, Number(lh) || 0, adjS) : null });
+  }
+  const out = await goalAdjust(b.delta, !!b.reset, b.from, !!b.share);
+  if (out.ok && !b.share) {
+    const rt = Date.now();
+    await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'goal:' + rt, type: 'goal', ts: rt, rt, d: { kind: 'goal', delta: b.reset ? 0 : Math.round(Number(b.delta) || 0), reset: !!b.reset, n: out.n, subs: out.totals.subs, by: String(b.by || '').slice(0, 40) } }));
+  }
+  return send(res, 200, out);
 }
 
 /* ---- los mismos ajustes en tus dos celulares ----
@@ -1241,6 +1505,8 @@ module.exports = async function handler(req, res) {
     if (route === 'realtime') return await realtimeKey(req, res);
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'modcmd') return await modCmdApi(req, res);
+    if (route === 'rules') return await rulesApi(req, res);
+    if (route === 'goal') return await goalApi(req, res);
     if (route === 'chatters') return await chatters(req, res);
     if (route === 'prefs') return await prefsApi(req, res);
     if (route === 'obs') return await obsApi(req, res);
