@@ -434,6 +434,7 @@ async function webhook(req, res) {
           se.prevEnd = se.lastEnd || 0;      // cuándo terminó el stream anterior
           se.start = st;
           newSess = true;                    // para la regla «Empieza el stream» (no cuenta si solo se cortó)
+          try { const pa = await getJSON('subAdj'); if (pa && pa.start === 0) await setJSON('subAdj', Object.assign(pa, { start: st })); } catch (e) {}
         }
         se.live = true;
       } else {
@@ -650,6 +651,11 @@ async function chatSend(req, res) {
   if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
   const content = String(b.content || '').trim().slice(0, 500);
   if (!content) return send(res, 400, { ok: false, error: 'mensaje vacío' });
+  // v67: avisos automáticos (p. ej. «TTS activado»): si tus dos celulares lo mandan, sale una sola vez
+  if (b.once) {
+    const ok1 = await redis('SET', 'conce:' + crypto.createHash('sha1').update(String(b.once)).digest('hex').slice(0, 20), '1', 'NX', 'EX', Math.max(10, Math.min(600, Number(b.ttl) || 60)));
+    if (!ok1) return send(res, 200, { ok: true, dup: true });
+  }
   const body = { type: 'user', broadcaster_user_id: Number(t.user_id), content };
   if (b.reply_to) body.reply_to_message_id = String(b.reply_to);
   const r = await kickCall('POST', '/chat', t.access_token, body);
@@ -693,7 +699,13 @@ function cleanModCfg(c) {
     seen[cc] = 1;
     return { c: cc, steps, name: String(x.name || '').slice(0, 40) };
   }).filter(Boolean).slice(0, 40);
-  return { on: c.on !== false, users, cmds, del: !!c.del, at: Date.now() };
+  return { on: c.on !== false, users, cmds, del: !!c.del, bi: { mom: biMom(c) }, at: Date.now() };
+}
+// v67: comandos que ya trae la app. !momento (mods y tú): tú le cambias el nombre
+const MOM_DEF = '!momento';
+function biMom(cfg) {
+  const b = (cfg && cfg.bi && cfg.bi.mom) || {}, c = String(b.c || '').trim().toLowerCase();
+  return { c: CMD_RX.test(c) ? c : MOM_DEF, on: b.on !== false, reply: b.reply !== false };
 }
 const isModOrMe = b => (b || []).some(x => /^(moderator|broadcaster)$/i.test(String((x && (x.type || x.text)) || '')));
 const isMe = b => (b || []).some(x => /^broadcaster$/i.test(String((x && (x.type || x.text)) || '')));
@@ -701,6 +713,8 @@ async function modCmd(m) {
   const word = String(m.t).trim().split(/\s+/)[0].toLowerCase();
   if (!CMD_RX.test(word) || !isModOrMe(m.badges)) return;       // de los demás ni se pregunta a la base
   const cfg = await modCfg();
+  const mom = biMom(cfg);
+  if (mom.on && word === mom.c) return momentCmd(m, mom);        // 📍 cualquier mod (o tú), aunque los otros comandos estén apagados
   if (!cfg.on) return;
   const cmd = (cfg.cmds || []).find(c => c.c === word);
   if (!cmd) return;
@@ -738,6 +752,62 @@ async function modCmd(m) {
   await redis('ZADD', 'ev', rt, JSON.stringify(ev));
   await logPush('cmdlog', { at: rt, u: m.u, c: word, ok, e: err }, 20);
 }
+/* ---- 📍 momentos: «!momento nota» guarda el minuto del stream para encontrarlo después ----
+   Se guardan los últimos 500 (cada uno es un renglón chiquito). Solo se toca la base cuando
+   alguien marca uno o cuando abres la lista. */
+function hms(ms) { const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), mi = Math.floor(s % 3600 / 60), se = s % 60;
+  return (h ? h + ':' + String(mi).padStart(2, '0') : String(mi)) + ':' + String(se).padStart(2, '0'); }
+async function momentAdd(u, note, src, hint) {
+  const at = Date.now();
+  const lv = (await getJSON('live')) || {};
+  let vs = lv.is_live ? (Date.parse(lv.started_at) || 0) : 0;      // cuándo empezó ESTE stream (lo mismo que el VOD)
+  const h = Number(hint) || 0;
+  if (!vs && h > at - 36 * 3600e3 && h <= at) vs = h;                // lo que ve la app, por si Kick no avisó
+  const it = { id: at.toString(36) + crypto.randomBytes(3).toString('hex'), at, vs, t: vs ? Math.max(0, at - vs) : null,
+    u: String(u || '').slice(0, 40), note: String(note || '').replace(/\s+/g, ' ').trim().slice(0, 140), src };
+  await redis('ZADD', 'moms', at, JSON.stringify(it));
+  await redis('ZREMRANGEBYRANK', 'moms', 0, -501);
+  const ev = { id: 'mom:' + it.id, type: 'moment', ts: at, rt: at, d: { kind: 'moment', user: it.u, mid: it.id, t: it.t, note: it.note, src } };
+  await redis('ZADD', 'ev', at, JSON.stringify(ev));
+  return it;
+}
+async function momentCmd(m, mom) {
+  if (!(await redis('SET', 'cmd:' + m.id, '1', 'NX', 'EX', 3600))) return;              // Kick puede repetir el aviso
+  if (!(await redis('SET', 'momcd:' + String(m.u).toLowerCase(), '1', 'NX', 'EX', 5))) return;   // uno cada 5 s por persona
+  const it = await momentAdd(m.u, String(m.t).trim().replace(/^\S+\s*/, ''), 'chat');
+  let ok = true, err = '';
+  if (mom.reply) {
+    const tk = await validToken();
+    if (tk) {
+      const txt = '📍 Momento guardado' + (it.t != null ? ' en el ' + hms(it.t) : '') + (it.note ? ': ' + it.note : '');
+      const r = await kickCall('POST', '/chat', tk.access_token, { type: 'user', broadcaster_user_id: Number(tk.user_id), content: txt.slice(0, 500) });
+      if (!r.ok) { ok = false; err = kickErr(r.status, r.j, 'Escribir en el feed del chat'); }
+    }
+  }
+  await logPush('cmdlog', { at: it.at, u: m.u, c: mom.c, ok, e: err }, 20);
+}
+async function momentsApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const b = req.method === 'POST' ? await readJSONBody(req) : {};
+  if (!(await checkKey((req.query && req.query.key) || b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  if (req.method === 'POST') {
+    if (b.action === 'add') return send(res, 200, { ok: true, item: await momentAdd(String(b.by || CHANNEL), b.note, 'app', b.from) });
+    if (b.action === 'del' || b.action === 'note') {
+      const all = (await redis('ZRANGE', 'moms', 0, -1)) || [];
+      const raw = all.find(x => { try { return JSON.parse(x).id === String(b.id || ''); } catch (e) { return false; } });
+      if (!raw) return send(res, 200, { ok: false, error: 'Ese momento ya no está' });
+      await redis('ZREM', 'moms', raw);
+      let it = null;
+      if (b.action === 'note') { it = JSON.parse(raw); it.note = String(b.note || '').replace(/\s+/g, ' ').trim().slice(0, 140); await redis('ZADD', 'moms', it.at, JSON.stringify(it)); }
+      return send(res, 200, { ok: true, item: it });
+    }
+    return send(res, 400, { ok: false, error: 'acción desconocida' });
+  }
+  const list = ((await redis('ZREVRANGE', 'moms', 0, 299)) || []).map(x => { try { return JSON.parse(x); } catch (e) { return null; } }).filter(Boolean);
+  return send(res, 200, { ok: true, list });
+}
+
 // ver y cambiar los comandos (solo con la clave de tus celulares)
 async function modCmdApi(req, res) {
   cors(res);
@@ -1013,7 +1083,7 @@ function sessFrom(se, hint) {
 let TOTC = { k: '', v: null, at: 0 };
 async function sessTotals(from, lastHook, adjS, fresh) {
   let adj = null; try { adj = adjS ? JSON.parse(adjS) : null; } catch (e) { adj = null; }
-  const an = adj && adj.start === from ? Number(adj.n) || 0 : 0;
+  const an = adj && (adj.start === from || (adj.start === 0 && from)) ? Number(adj.n) || 0 : 0;   // 0 = pendiente: es de este stream
   const sh = adj && adj.start === from ? Number(adj.s) || 0 : 0;      // renovaciones de la madrugada que la persona compartió ya en vivo
   const k = from + '|' + (lastHook || 0) + '|' + an + '|' + sh;
   if (!fresh && TOTC.k === k && TOTC.v && Date.now() - TOTC.at < 120000) return TOTC.v;   // llegó algo nuevo: se recalcula sí o sí
@@ -1064,9 +1134,16 @@ async function events(req, res) {
 async function goalAdjust(delta, reset, hint, share) {
   const se = await getJSON('session');
   const from = sessFrom(se, hint);
-  if (!from) return { ok: false, error: 'Solo se puede durante el stream' };
   const cur = (await getJSON('subAdj')) || {};
-  let n = cur.start === from ? Number(cur.n) || 0 : 0, sh = cur.start === from ? Number(cur.s) || 0 : 0;
+  if (!from) {
+    // v66: con el stream apagado queda PENDIENTE y se aplica al empezar tu próximo stream
+    if (share) return { ok: false, error: 'Solo durante el stream' };
+    let pn = cur.start === 0 ? Number(cur.n) || 0 : 0;
+    pn = reset ? 0 : Math.max(-500, Math.min(500, pn + Math.round(Number(delta) || 0)));
+    await setJSON('subAdj', { start: 0, n: pn, s: 0, at: Date.now() });
+    return { ok: true, pending: true, n: pn, totals: null };
+  }
+  let n = cur.start === from || cur.start === 0 ? Number(cur.n) || 0 : 0, sh = cur.start === from ? Number(cur.s) || 0 : 0;   // lo pendiente se suma a este stream
   if (share) sh = Math.min(500, sh + 1);              // la renovación de la madrugada se cuenta ahora (no es «a mano»)
   else n = reset ? 0 : Math.max(-500, Math.min(500, n + Math.round(Number(delta) || 0)));
   const adj = { start: from, n, s: sh, at: Date.now() };
@@ -1088,7 +1165,7 @@ async function goalApi(req, res) {
   const out = await goalAdjust(b.delta, !!b.reset, b.from, !!b.share);
   if (out.ok && !b.share) {
     const rt = Date.now();
-    await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'goal:' + rt, type: 'goal', ts: rt, rt, d: { kind: 'goal', delta: b.reset ? 0 : Math.round(Number(b.delta) || 0), reset: !!b.reset, n: out.n, subs: out.totals.subs, by: String(b.by || '').slice(0, 40) } }));
+    await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'goal:' + rt, type: 'goal', ts: rt, rt, d: { kind: 'goal', delta: b.reset ? 0 : Math.round(Number(b.delta) || 0), reset: !!b.reset, n: out.n, subs: out.totals ? out.totals.subs : null, pending: !!out.pending, by: String(b.by || '').slice(0, 40) } }));
   }
   return send(res, 200, out);
 }
@@ -1505,6 +1582,7 @@ module.exports = async function handler(req, res) {
     if (route === 'realtime') return await realtimeKey(req, res);
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'modcmd') return await modCmdApi(req, res);
+    if (route === 'moments') return await momentsApi(req, res);
     if (route === 'rules') return await rulesApi(req, res);
     if (route === 'goal') return await goalApi(req, res);
     if (route === 'chatters') return await chatters(req, res);
