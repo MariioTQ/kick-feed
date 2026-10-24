@@ -281,17 +281,27 @@ function spamHit(text) {
   for (const [e, ne] of SPAMC.norm) if (n.indexOf(ne) !== -1) return e;
   return null;
 }
-async function spamDelete(m, rule, manual) {
+// v69: además de borrar, timeout (1 min por defecto; tú eliges en ⚙ → Antispam). Kick lo pide en minutos.
+const SPAM_TO = [0, 1, 5, 10, 60, 1440];
+function spamTo(cfg) { const n = Number(cfg && cfg.to); return SPAM_TO.indexOf(n) >= 0 ? n : 1; }
+async function spamDelete(m, rule, manual, cfg) {
   const t = await validToken();
   let r = { ok: false, status: 0, j: {} };
   if (t) r = await kickCall('DELETE', '/chat/' + encodeURIComponent(m.id), t.access_token);
   const ok = r.ok || r.status === 404;                // 404: ya lo había borrado alguien
+  const to = spamTo(cfg || SPAMC.cfg);
+  let toOk = false, toErr = '';
+  if (t && to && m.uid && Number(m.uid) !== Number(t.user_id)) {
+    try { await redis('SET', 'spamto:' + m.uid, '1', 'EX', 180); } catch (e) {}   // para que el aviso de Kick no salga repetido
+    const b = await kickCall('POST', '/moderation/bans', t.access_token, { broadcaster_user_id: Number(t.user_id), user_id: Number(m.uid), duration: to, reason: 'Spam (antispam automático)' });
+    toOk = !!b.ok; if (!b.ok) toErr = kickErr(b.status, b.j, 'Ejecuta acciones de moderación para moderadores');
+  }
   const rt = Date.now();
   const ev = { id: 'spam:' + m.id, type: 'antispam', ts: rt, rt,
-    d: { kind: 'spam', user: m.u, uid: m.uid || 0, mid: m.id, text: String(m.t || '').slice(0, 300), rule, manual: !!manual, ok,
+    d: { kind: 'spam', user: m.u, uid: m.uid || 0, mid: m.id, text: String(m.t || '').slice(0, 300), rule, manual: !!manual, ok, to: toOk ? to : 0, toErr,
          error: ok ? '' : kickErr(r.status, r.j, 'Ejecuta acciones de moderador en mensajes de chat') } };
   await redis('ZADD', 'ev', rt, JSON.stringify(ev));
-  await logPush('spamlog', { at: rt, u: m.u, t: ev.d.text.slice(0, 200), rule, ok, manual: !!manual }, 30);
+  await logPush('spamlog', { at: rt, u: m.u, t: ev.d.text.slice(0, 200), rule, ok, manual: !!manual, to: ev.d.to }, 30);
   return ev.d;
 }
 
@@ -378,7 +388,7 @@ async function webhook(req, res) {
       try {
         const cfg = await spamCfg();
         const rule = cfg.on ? spamHit(m.t) : null;
-        if (rule) { m.spam = 1; await spamDelete(m, rule); }
+        if (rule) { m.spam = 1; await spamDelete(m, rule, false, cfg); }
       } catch (e) { /* si algo falla, el mensaje sigue su camino */ }
     }
     // ⌨️ Comandos para tus mods (!brb…): cambian OBS desde el chat. Solo se
@@ -405,6 +415,7 @@ async function webhook(req, res) {
     const ts = evTime(type, p, rt);              // cuándo pasó (lo que dice Kick)
     const ev = fixEv({ id: msgId, type, ts, rt, d: normalize(type, p) });
     let skip = false;
+    if (ev.d.kind === 'ban' && ev.d.uid) { try { if (await redis('GET', 'spamto:' + ev.d.uid)) ev.d.spam = 1; } catch (e) {} }
     if (type === 'livestream.metadata.updated') {
       // Kick manda todo junto (título, categoría, idioma…): se compara con lo
       // anterior para decir qué cambió de verdad.
@@ -1044,20 +1055,21 @@ async function spamApi(req, res) {
   if (req.method === 'POST') {
     const act = String(b.action || '');
     if (act === 'on') cfg.on = !!b.on;
+    else if (act === 'to') cfg.to = SPAM_TO.indexOf(Number(b.to)) >= 0 ? Number(b.to) : 1;
     else if (act === 'add' || act === 'mark') {
       const txt = cleanEntry(b.text);
       if (spamNorm(txt).length < 5) return send(res, 200, { ok: false, error: 'Muy corto: pon al menos 5 letras' });
       if (!cfg.list.some(e => spamNorm(e) === spamNorm(txt))) cfg.list.unshift(txt);
       cfg.list = cfg.list.slice(0, 200);
       if (act === 'mark' && b.message_id)
-        done = await spamDelete({ id: String(b.message_id), u: String(b.username || ''), uid: Number(b.user_id) || 0, t: String(b.text || '') }, txt, true);
+        done = await spamDelete({ id: String(b.message_id), u: String(b.username || ''), uid: Number(b.user_id) || 0, t: String(b.text || '') }, txt, true, cfg);
     } else if (act === 'remove') cfg.list = cfg.list.filter(e => e !== String(b.text || ''));
     else return send(res, 400, { ok: false, error: 'acción rara' });
     await setJSON('spam', cfg);
     setSpamCache(cfg);
   }
   const log = ((await redis('LRANGE', 'spamlog', 0, 19)) || []).map(x => { try { return JSON.parse(x); } catch (e) { return null; } }).filter(Boolean);
-  const out = { ok: true, on: cfg.on !== false, list: cfg.list, log };
+  const out = { ok: true, on: cfg.on !== false, to: spamTo(cfg), list: cfg.list, log };
   if (done) { out.deleted = done.ok; if (!done.ok) out.error = done.error; }
   return send(res, 200, out);
 }
@@ -1110,6 +1122,8 @@ async function events(req, res) {
   try { await ensureSubs(); } catch (e) {}
   const q = req.query || {};
   const since = Number(q.since) || 0;                 // cursor: lo que el feed todavía no tiene
+  // v69: 👁 un punto por minuto para la gráfica de viewers (lo mandan tus celulares con esta misma revisión)
+  if (q.vw != null && q.vf) { try { await vwSave(q); } catch (e) {} }
   const limit = Math.min(500, Number(q.limit) || 300);
   await repairTimes();
   // since en el futuro (el letrero de la meta solo quiere los totales): ni se busca
@@ -1128,6 +1142,31 @@ async function events(req, res) {
   else if (!from) { const a = pj(adjS); if (a && (a.start === 'off' || a.start === 0)) totals = offTotals(a); }   // v68: sin stream, lo que sumaste para probar
   const lastHook = Number(lhS) || 0;
   return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0, rat: Number(raS) || 0 });
+}
+
+/* ---- 👁 gráfica de viewers ----
+   Kick no guarda el historial de viewers: tus celulares, mientras estás en vivo, mandan
+   el número una vez por minuto junto con la revisión que ya hacen (no es una consulta
+   aparte). Si los dos lo mandan, se queda el primero. Cada stream se borra solo a los 3 días. */
+async function vwSave(q) {
+  const now = Date.now(), vf = Math.floor(Number(q.vf)) || 0, vm = Math.floor(Number(q.vm)), vw = Math.floor(Number(q.vw));
+  if (!(vf > now - 2 * 864e5 && vf <= now + 60000) || !(vm >= 0 && vm <= 2880) || !(vw >= 0 && vw < 1e7)) return;
+  if (!(await checkKey(q.key))) return;
+  await redis('HSETNX', 'vw:' + vf, String(vm), String(vw));
+  if (vm % 10 === 0) await redis('EXPIRE', 'vw:' + vf, 3 * 86400);
+}
+async function viewersApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const q = req.query || {};
+  if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const vf = Math.floor(Number(q.from)) || 0;
+  if (!vf) return send(res, 200, { ok: true, from: 0, pts: {} });
+  const a = (await redis('HGETALL', 'vw:' + vf)) || [];
+  const pts = {};
+  if (Array.isArray(a)) for (let i = 0; i + 1 < a.length; i += 2) pts[a[i]] = Number(a[i + 1]) || 0;
+  else Object.keys(a).forEach(k => { pts[k] = Number(a[k]) || 0; });
+  return send(res, 200, { ok: true, from: vf, pts });
 }
 
 /* ---- 🎯 la meta de subs: sumar o restar a mano (por si algo falló) ----
@@ -1601,6 +1640,7 @@ module.exports = async function handler(req, res) {
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'modcmd') return await modCmdApi(req, res);
     if (route === 'moments') return await momentsApi(req, res);
+    if (route === 'viewers') return await viewersApi(req, res);
     if (route === 'rules') return await rulesApi(req, res);
     if (route === 'goal') return await goalApi(req, res);
     if (route === 'chatters') return await chatters(req, res);
