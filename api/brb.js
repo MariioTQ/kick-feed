@@ -25,6 +25,8 @@
      state  qué está sonando (para el estudio y el feed) (con clave)
      obs    crear la escena y la fuente en tu OBS       (con clave)
      newscreen  cambiar el link del player si se filtró (con clave)
+     trim   recortar un clip (desde dónde y hasta dónde) (con clave)
+     cfg    nombres sin «clip de» y avisos de subs/Kicks (con clave)
    ================================================================== */
 'use strict';
 const crypto = require('crypto');
@@ -34,6 +36,10 @@ const LIB_MAX = 3000;          // clips en la biblioteca
 const PL_MAX = 20;             // playlists
 const PL_CLIPS = 500;          // clips por playlist
 const MSG_MAX = 80;            // letras del mensaje en pantalla
+const HIDE_MAX = 50;           // nombres sin «clip de»
+// Como en tu BRB viejo (offline-escene): cuando el clip lo sacaste tú, un bot
+// o alguien de esta lista, en pantalla no sale «clip de …».
+const HIDE_DEF = ['mariotq', 'aizulimx', 'instantclipsbot'];
 
 /* ---------------- Redis (Upstash, por su API web) ---------------- */
 function envEnding(suffix, alt) {
@@ -134,7 +140,18 @@ function cleanClip(c) {
     f: c.f ? 1 : 0
   };
   if (p === 'kick') out.u = httpsUrl(c.u, ['kick.com']);   // el .m3u8 de Kick
+  const tr = cleanTrim(c.a, c.b);
+  if (tr.a) out.a = tr.a;
+  if (tr.b) out.b = tr.b;
   return out;
+}
+// Recorte: no se toca el video, solo se guarda desde qué segundo empieza y en
+// cuál termina (b = 0 es «hasta el final»). Mínimo 1 segundo de clip.
+function cleanTrim(a, b) {
+  a = Math.round(num(a, 0, 3600, 0) * 10) / 10;
+  b = Math.round(num(b, 0, 3600, 0) * 10) / 10;
+  if (b && b < a + 1) b = 0;
+  return { a, b };
 }
 const ckey = c => c.p + ':' + c.id;
 
@@ -192,7 +209,14 @@ async function screen(write) {
   scr.ctl = newCtl(scr.ctl); scr.revs = scr.revs || {};
   return scr;
 }
-function pubScr(scr) { return { id: scr.id, pl: scr.pl, ctl: scr.ctl }; }
+function cleanCfg(c) {
+  c = c && typeof c === 'object' ? c : {};
+  const names = Array.isArray(c.hideBy) ? c.hideBy : HIDE_DEF;
+  const hideBy = [];
+  names.forEach(n => { n = String(n || '').trim().replace(/^@/, '').toLowerCase(); if (/^[a-z0-9_.-]{1,40}$/.test(n) && hideBy.indexOf(n) < 0 && hideBy.length < HIDE_MAX) hideBy.push(n); });
+  return { hideBy, alerts: bool(c.alerts, true) };
+}
+function pubScr(scr) { return { id: scr.id, pl: scr.pl, ctl: scr.ctl, cfg: cleanCfg(scr.cfg) }; }
 function syncRevs(scr, list) {
   const revs = {};
   list.forEach(p => { revs[p.id] = p.rev; });
@@ -211,13 +235,14 @@ async function play(req, res, q) {
   const by = new Map(((lib && lib.clips) || []).map(c => [ckey(c), c]));
   const clips = pl ? pl.clips.map(k => by.get(k)).filter(Boolean) : [];
   return send(res, 200, { ok: true, pl: pl ? { id: pl.id, name: pl.name, rev: pl.rev, set: cleanSet(pl.set) } : null,
-                          clips, ctl: newCtl(scr.ctl), active: scr.pl });
+                          clips, ctl: newCtl(scr.ctl), cfg: cleanCfg(scr.cfg), active: scr.pl });
 }
-// Cada 3 s mientras la escena está al aire: una sola lectura de la base.
+// Cada 3 s mientras la escena está al aire: una sola lectura de la base
+// (MGET cuenta como una). Trae la pantalla y el último sub/regalo/Kicks.
 // De paso el player cuenta qué está sonando (solo se escribe cuando cambia).
 let NOWC = { c: null, at: 0 };
 async function tick(req, res, q) {
-  const scr = parse(await redis('GET', 'brb:scr'));
+  const [scr, last] = await getMany('brb:scr', 'brb:last');
   if (!scr || !scr.id || String(q.s || '') !== scr.id) return send(res, 404, { ok: false, error: 'Este link del BRB ya no sirve' });
   const c = str(q.c, 140), st = pick(q.st, ['play', 'pause', 'idle', 'load'], 'idle');
   const sig = c + '|' + st;
@@ -225,16 +250,20 @@ async function tick(req, res, q) {
     NOWC = { c: sig, at: Date.now() };
     try { await setJSON('brb:now', { c, st, pl: str(q.pl, 20), t: str(q.t, 200), at: Date.now() }); } catch (e) {}
   }
-  return send(res, 200, { ok: true, pl: scr.pl || '', rev: (scr.revs || {})[scr.pl] || 0, ctl: newCtl(scr.ctl) });
+  const cfg = cleanCfg(scr.cfg);
+  const ev = cfg.alerts && last && last.id && Date.now() - (last.at || 0) < 10 * 60000 ? last : null;
+  return send(res, 200, { ok: true, pl: scr.pl || '', rev: (scr.revs || {})[scr.pl] || 0, ctl: newCtl(scr.ctl), cfg, ev });
 }
 
 /* ---------------- lo que pide el estudio ---------------- */
 async function lib(req, res) {
-  const [l, pls, scr0, now] = await getMany('brb:lib', 'brb:pls', 'brb:scr', 'brb:now');
+  const [l, pls, scr0, now, se] = await getMany('brb:lib', 'brb:pls', 'brb:scr', 'brb:now', 'session');
   const scr = scr0 && scr0.id ? scr0 : await screen();
+  // el stream de hoy (lo guarda el feed con los avisos oficiales de Kick): para «Clips del último stream»
+  const session = se ? { start: num(se.start, 0, 4102444800000, 0), end: se.live ? 0 : num(se.lastEnd, 0, 4102444800000, 0), live: !!se.live } : null;
   return send(res, 200, { ok: true, clips: (l && l.clips) || [], pls: ((pls && pls.list) || []).map(p => Object.assign({}, p, { set: cleanSet(p.set) })),
-                          scr: pubScr(Object.assign({ ctl: newCtl() }, scr, { ctl: newCtl(scr.ctl) })), now: now || null,
-                          limits: { lib: LIB_MAX, pls: PL_MAX, clips: PL_CLIPS, msg: MSG_MAX } });
+                          scr: pubScr(Object.assign({ ctl: newCtl() }, scr, { ctl: newCtl(scr.ctl) })), now: now || null, session,
+                          limits: { lib: LIB_MAX, pls: PL_MAX, clips: PL_CLIPS, msg: MSG_MAX, hide: HIDE_MAX } });
 }
 async function add(req, res, b) {
   const incoming = (Array.isArray(b.clips) ? b.clips : []).slice(0, 1000).map(cleanClip).filter(Boolean);
@@ -333,6 +362,25 @@ async function state(req, res) {
   const fresh = now && Date.now() - (now.at || 0) < 15000;   // el player avisa cada 3 s mientras está al aire
   return send(res, 200, { ok: true, scr: pubScr(Object.assign({}, scr, { ctl: newCtl(scr.ctl) })), now: now || null, onAir: !!fresh,
                           pls: ((pls && pls.list) || []).map(p => ({ id: p.id, name: p.name, n: p.clips.length })) });
+}
+async function trim(req, res, b) {
+  const [l] = await getMany('brb:lib');
+  const clips = (l && l.clips) || [];
+  const k = String(b.k || ''), c = clips.find(x => ckey(x) === k);
+  if (!c) return send(res, 404, { ok: false, error: 'Ese clip ya no está en tu biblioteca' });
+  const tr = b.clear ? { a: 0, b: 0 } : cleanTrim(b.a, b.b);
+  if (c.d && tr.b && tr.b >= c.d - 0.2) tr.b = 0;           // hasta el final = sin corte
+  if (tr.a) c.a = tr.a; else delete c.a;
+  if (tr.b) c.b = tr.b; else delete c.b;
+  await setJSON('brb:lib', { v: 1, clips });
+  return send(res, 200, { ok: true, clip: c });
+}
+async function cfg(req, res, b) {
+  const scr = await screen(false);
+  const cur = cleanCfg(scr.cfg);
+  scr.cfg = cleanCfg({ hideBy: Array.isArray(b.hideBy) ? b.hideBy : cur.hideBy, alerts: typeof b.alerts === 'boolean' ? b.alerts : cur.alerts });
+  await setJSON('brb:scr', scr);
+  return send(res, 200, { ok: true, cfg: scr.cfg });
 }
 async function newScreen(req, res) {
   const scr = await screen(false);
@@ -487,6 +535,8 @@ module.exports = async function handler(req, res) {
     if (a === 'state') return await state(req, res);
     if (a === 'obs') return await obs(req, res, b);
     if (a === 'newscreen') return await newScreen(req, res);
+    if (a === 'trim') return await trim(req, res, b);
+    if (a === 'cfg') return await cfg(req, res, b);
     return send(res, 404, { ok: false, error: 'ruta desconocida' });
   } catch (e) {
     return send(res, 500, { ok: false, error: e.message });
