@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BRB Clips TQ</title>
+<!-- Solo puede hablar con tu servidor, con Kick y con Twitch. Los videos llegan directo de Kick y Twitch. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; connect-src 'self' https://kick-feed-mariotq.vercel.app https://kick.com https://*.kick.com https://gql.twitch.tv; media-src https: blob:; img-src https: data:; frame-src https://clips.twitch.tv; worker-src blob:">
+<style>
+/* ==================================================================
+   BRB · PLAYER PARA OBS (fuente de navegador 1920 × 1080)
+   - Dos capas: mientras suena un clip ya se está cargando el siguiente,
+     y el cambio es con un fundido corto (imagen y sonido).
+   - Al azar sin repetir hasta pasar todos, y vuelve a empezar.
+   - Volumen parejo: los clips bajitos suben y los ruidosos bajan.
+   - Recuadro con el título, la plataforma, el canal y quién lo sacó.
+   - Lo controlas desde el estudio o desde los Atajos del feed
+     (siguiente, pausa, silencio, mensaje y playlist): lo ve en ≤ 3 s.
+   ================================================================== */
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;color:#fff;
+  font-family:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+#stage{position:absolute;inset:0}
+.layer{position:absolute;inset:0;width:100%;height:100%;border:0;margin:0;background:#000;opacity:0;transition:opacity .45s ease}
+.layer.on{opacity:1}
+
+/* el recuadro del clip */
+#card{position:absolute;z-index:30;max-width:62%;padding:15px 24px 16px;border-radius:12px;background:rgba(14,14,18,.64);
+  box-shadow:0 6px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(10px);transition:opacity .45s ease,transform .45s ease;
+  pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.55)}
+#card.on{opacity:1;transform:none}
+#card.bl{left:48px;bottom:48px}#card.br{right:48px;bottom:48px;text-align:right}
+#card.tl{left:48px;top:48px}#card.tr{right:48px;top:48px;text-align:right}
+#card .t{font-size:36px;font-weight:800;line-height:1.18;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#card .m{margin-top:6px;font-size:23px;line-height:1.3;display:flex;align-items:center;gap:.45em;white-space:nowrap;color:rgba(255,255,255,.88)}
+#card.br .m,#card.tr .m{justify-content:flex-end}
+#card .m span{overflow:hidden;text-overflow:ellipsis}
+#card .tag{flex:none;font-size:15px;font-weight:800;letter-spacing:.09em;padding:4px 11px 3px;border-radius:999px;text-shadow:none}
+#card .tag.tw{background:#772ce8;color:#fff}#card .tag.kk{background:#53fc18;color:#0b0e0f}
+#card [hidden]{display:none!important}
+
+/* el mensaje de arriba («¡Ahorita regreso!») */
+#msg{position:absolute;z-index:31;left:50%;top:44px;max-width:calc(100% - 96px);transform:translateX(-50%);padding:.16em .7em .2em;
+  border-radius:22px;background:rgba(10,10,14,.52);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  font-size:62px;font-weight:800;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  text-shadow:0 2px 14px rgba(0,0,0,.55);opacity:0;transition:opacity .5s ease;pointer-events:none}
+#msg.on{opacity:1}
+#msg.low{top:auto;bottom:44px}
+
+#bar{position:absolute;z-index:29;left:0;right:0;bottom:0;height:5px;background:rgba(255,255,255,.18);opacity:0;transition:opacity .4s}
+#bar.on{opacity:1}
+#bar i{display:block;height:100%;width:100%;background:rgba(255,255,255,.88);transform:scaleX(0);transform-origin:0 50%}
+
+#tap{position:absolute;z-index:40;left:50%;top:50%;transform:translate(-50%,-50%);padding:16px 28px;border-radius:12px;
+  border:1px solid rgba(255,255,255,.5);background:rgba(0,0,0,.72);color:#fff;font:700 24px system-ui,sans-serif;cursor:pointer}
+#note{position:absolute;z-index:40;left:24px;bottom:20px;font:600 18px system-ui,sans-serif;color:#cfd3da;
+  background:rgba(0,0,0,.6);padding:8px 14px;border-radius:10px;display:none}
+#note.on{display:block}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="msg"></div>
+<div id="card" class="br"><div class="t"></div><div class="m"><span class="tag"></span><span class="ch"></span><span class="dot">·</span><span class="by"></span></div></div>
+<div id="bar"><i></i></div>
+<button id="tap" hidden>▶ Toca para iniciar</button>
+<div id="note"></div>
+<script>
+(function(){
+'use strict';
+var Q=new URLSearchParams(location.search);
+var SAME=/\.vercel\.app$/.test(location.hostname)||location.hostname==='localhost'||location.hostname==='127.0.0.1';
+var API=(Q.get('api')||(SAME?location.origin:'https://kick-feed-mariotq.vercel.app')).replace(/\/+$/,'');
+var SCR=Q.get('s')||'', PREVIEW=Q.get('preview')==='1', PL_FORCE=Q.get('pl')||'', DEBUG=Q.get('debug')==='1';
+var HLS_URL='https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js';
+var HLS_SRI='sha384-xLhS5rbIdhv65H3GLX+caQgMSiEK/Hkw8Z6HITolgRxvXs0omcbeYD639tkJ2Wu6';   // si el CDN cambia el archivo, el navegador no lo usa
+var TW_CLIENT='kimne78kx3ncx6brgo4mv6wki5h1ko';      // el mismo que usa la página de Twitch (y tu offline-escene)
+var LOAD_MS=15000, STALL_MS=20000, FADE_MS=450, TICK_MS=3000, RETRY_MS=60000, CARD_OUT=1.2;
+
+var $=function(id){ return document.getElementById(id); };
+var stage=$('stage'), card=$('card'), msgEl=$('msg'), bar=$('bar'), barFill=bar.firstChild, tapBtn=$('tap'), note=$('note');
+
+/* ---------------- estado ---------------- */
+var man=null;                 // lo que mandó el servidor: {pl, clips, ctl, active}
+var set=null, setPreview=null; // ajustes de la playlist (la vista previa del estudio puede mandar otros)
+var ctl={seq:-1, paused:false, muted:false, msg:null};
+var byKey={}, keys=[], bag=[], passes=0, lastKey='', failed={};
+var cur=null, nxt=null, dying=[];
+var stopped=false, gone=false, retryT=0, tickT=0, ticking=false, seqSeen=null;
+var audio=null, audioBad=false, previewSound=false;
+
+function key(c){ return c.p+':'+c.id; }
+function say(t){ if (!DEBUG && !PREVIEW){ note.classList.remove('on'); return; } note.textContent=t||''; note.classList.toggle('on', !!t); }
+function log(){ if (DEBUG) try{ console.log.apply(console, ['[BRB]'].concat([].slice.call(arguments))); }catch(e){} }
+function S(){ return setPreview||set||{}; }
+
+/* ---------------- servidor ---------------- */
+function getJSON(url, ms){
+  var ac=new AbortController(), t=setTimeout(function(){ ac.abort(); }, ms||10000);
+  return fetch(url,{cache:'no-store', credentials:'omit', signal:ac.signal})
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){ j._st=r.status; return j; }); })
+    .finally(function(){ clearTimeout(t); });
+}
+function loadManifest(){
+  var u=API+'/api/brb?a=play&s='+encodeURIComponent(SCR)+(PL_FORCE?'&pl='+encodeURIComponent(PL_FORCE):'');
+  return getJSON(u).then(function(j){
+    if (j._st===404){ shutdown('Este link del BRB ya no sirve. Cópialo otra vez desde el estudio.'); return; }
+    if (!j.ok) throw new Error(j.error||'sin respuesta');
+    applyManifest(j);
+  });
+}
+function applyManifest(j){
+  var first=!man, plChanged=!man || !j.pl || !man.pl || j.pl.id!==man.pl.id;
+  man=j; set=(j.pl && j.pl.set) || {};
+  byKey={}; keys=[];
+  (j.clips||[]).forEach(function(c){ var k=key(c); if (!byKey[k]){ byKey[k]=c; keys.push(k); } });
+  failed={};
+  if (first) { applyCtl(j.ctl||{}, true); }
+  paintMsg(); paintCard(); applyAudio();
+  if (plChanged){ bag=[]; passes=0; if (nxt){ kill(nxt); nxt=null; } }
+  else { bag=bag.filter(function(k){ return byKey[k]; }); }   // la misma playlist: sigue la vuelta con lo nuevo
+  if (nxt && !byKey[nxt.key]){ kill(nxt); nxt=null; }
+  if (cur && plChanged && !first){ stopped=false; finish(cur, true); }   // otra playlist: se cambia ya
+  else if (!cur){ stopped=false; advance(false); }
+  else preload();
+  say(keys.length ? '' : 'Esta playlist no tiene clips todavía.');
+}
+
+/* cada 3 s, solo mientras la escena está al aire (OBS apaga la fuente cuando no se ve) */
+function tick(){
+  if (PREVIEW || gone || !SCR || ticking) return;
+  ticking=true;
+  var c=cur && cur.clip;
+  var u=API+'/api/brb?a=tick&s='+encodeURIComponent(SCR)+
+    '&c='+encodeURIComponent(c ? key(c) : '')+'&st='+(c ? (ctl.paused ? 'pause' : cur.playing ? 'play' : 'load') : 'idle')+
+    '&pl='+encodeURIComponent(man && man.pl ? man.pl.id : '')+'&t='+encodeURIComponent(c ? String(c.t||'').slice(0,100) : '');
+  getJSON(u, 8000).then(function(j){
+    if (j._st===404) return shutdown('Este link del BRB ya no sirve.');
+    if (!j.ok) return;
+    var active=man && man.active, rev=man && man.pl ? man.pl.rev : -1;
+    var needReload=!man || j.pl!==active || (j.pl===(man.pl&&man.pl.id) && j.rev!==rev);
+    applyCtl(j.ctl||{}, false);
+    if (needReload) return loadManifest();
+  }).catch(function(){ /* sin internet un ratito: el clip sigue */ }).finally(function(){ ticking=false; });
+}
+
+/* ---------------- controles ---------------- */
+function applyCtl(c, first){
+  var seqNew=typeof c.seq==='number' ? c.seq : 0;
+  var cmdNew=seqSeen!==null && seqNew!==seqSeen ? c.cmd : '';
+  seqSeen=seqNew;
+  var wasPaused=ctl.paused;
+  ctl={seq:seqNew, paused:!!c.paused, muted:!!c.muted, msg:(c.msg===undefined ? null : c.msg)};
+  paintMsg(); applyAudio();
+  if (ctl.paused!==wasPaused){ if (ctl.paused) pauseCur(); else resumeCur(); }
+  if (first) return;
+  if (cmdNew==='next') skip();
+  else if (cmdNew==='reset'){ bag=[]; passes=0; failed={}; writePlayed({}); skip(); }
+}
+function skip(){ if (cur){ var c=cur; c.finishing=true; finish(c, true); } else advance(false); }
+function pauseCur(){ if (cur && cur.kind==='video' && cur.el){ try{ cur.el.pause(); }catch(e){} } paintBar(); }
+function resumeCur(){ if (cur && cur.kind==='video' && cur.el && !document.hidden){ cur.lastMove=Date.now(); cur.el.play().catch(function(){}); } }
+
+/* ---------------- la fila: al azar sin repetir ---------------- */
+function shuffle(a){ for (var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)), t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
+// Lo que ya pasó en esta vuelta se guarda en OBS: si ocultas la escena y la vuelves a mostrar,
+// sigue con los que faltan en vez de empezar de cero (y repetir los mismos).
+function playedKey(){ return 'brb.played.'+SCR+'.'+((man && man.pl && man.pl.id)||''); }
+function readPlayed(){ if (PREVIEW) return {}; try{ var a=JSON.parse(localStorage.getItem(playedKey())||'[]'), o={}; (Array.isArray(a)?a:[]).forEach(function(k){ o[k]=1; }); return o; }catch(e){ return {}; } }
+function writePlayed(o){ if (PREVIEW) return; try{ var a=Object.keys(o).filter(function(k){ return byKey[k]; }); if (a.length) localStorage.setItem(playedKey(), JSON.stringify(a)); else localStorage.removeItem(playedKey()); }catch(e){} }
+function markPlayed(k){ if (PREVIEW || !k) return; var o=readPlayed(); if (!o[k]){ o[k]=1; writePlayed(o); } }
+function takeKey(avoid){
+  var ok=keys.filter(function(k){ return !failed[k]; });
+  if (!ok.length) return '';
+  for (var round=0; round<2; round++){
+    while (bag.length){ var k=bag.shift(); if (byKey[k] && !failed[k] && k!==avoid) return k; }
+    if (passes>0 && S().loop===false) return '';
+    passes++;
+    var seen=readPlayed(), rest=ok.filter(function(k){ return !seen[k]; });
+    if (!rest.length || rest.length===ok.length){ writePlayed({}); rest=ok; }   // vuelta nueva
+    bag=S().shuffle===false ? rest.slice() : shuffle(rest.slice());
+    if (bag.length>1 && bag[0]===lastKey){ var j=1+Math.floor(Math.random()*(bag.length-1)), t=bag[0]; bag[0]=bag[j]; bag[j]=t; }
+  }
+  return ok.length===1 ? ok[0] : '';
+}
+
+/* ---------------- de dónde sale cada clip ---------------- */
+// Kick: el .m3u8 que se guardó al importar → si falla, se le pregunta a Kick otra vez.
+// Twitch: el .mp4 directo de Twitch → si Twitch no contesta, su reproductor oficial.
+function sourcesOf(c){
+  if (c.p==='kick'){
+    var L=[]; if (c.u) L.push(function(){ return Promise.resolve({type:'hls', url:c.u}); });
+    L.push(function(){ return getJSON('https://kick.com/api/v2/clips/'+encodeURIComponent(c.id), 9000).then(function(j){
+      var u=j && j.clip && (j.clip.clip_url || j.clip.video_url);
+      if (!u) { var e=new Error('el clip ya no existe en Kick'); e.dead=true; throw e; }
+      if (u!==c.u){ c.u=u; c.fixed=1; }               // la próxima vez va directo al link bueno
+      return {type:'hls', url:u}; }); });
+    return L;
+  }
+  return [twitchMp4, function(){ return Promise.resolve({type:'embed', clip:c.id}); }].map(function(f){ return function(){ return f(c); }; });
+}
+function twitchMp4(c){
+  var ac=new AbortController(), t=setTimeout(function(){ ac.abort(); }, 9000);
+  return fetch('https://gql.twitch.tv/gql',{method:'POST', signal:ac.signal, credentials:'omit',
+    headers:{'Client-Id':TW_CLIENT,'Content-Type':'application/json'},
+    body:JSON.stringify({operationName:'VideoAccessToken_Clip', variables:{slug:c.id},
+      query:'query VideoAccessToken_Clip($slug: ID!){clip(slug:$slug){playbackAccessToken(params:{platform:"web",playerBackend:"mediaplayer",playerType:"site"}){signature value} videoQualities{quality sourceURL}}}'})})
+  .then(function(r){ return r.json(); })
+  .then(function(j){
+    var clip=j && j.data && j.data.clip;
+    if (j && j.data && clip===null){ var e=new Error('el clip ya no existe en Twitch'); e.dead=true; throw e; }
+    var q=(clip && clip.videoQualities)||[], tok=clip && clip.playbackAccessToken;
+    if (!q.length || !tok) throw new Error('Twitch no dio el video');
+    q=q.slice().sort(function(a,b){ return (parseInt(b.quality,10)||0)-(parseInt(a.quality,10)||0); });
+    var best=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=1080; })[0]||q[0];
+    var u=new URL(best.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value);
+    return {type:'mp4', url:u.toString()};
+  }).finally(function(){ clearTimeout(t); });
+}
+
+/* ---------------- hls.js (solo se carga si hay clips de Kick) ---------------- */
+var hlsP=null;
+function loadHls(){
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (!hlsP) hlsP=new Promise(function(ok, bad){
+    var s=document.createElement('script'); s.src=HLS_URL; s.integrity=HLS_SRI; s.crossOrigin='anonymous'; s.async=true;
+    s.onload=function(){ window.Hls ? ok(window.Hls) : bad(new Error('hls.js')); };
+    s.onerror=function(){ hlsP=null; s.remove(); bad(new Error('hls.js')); };
+    document.head.appendChild(s);
+  });
+  return hlsP;
+}
+
+/* ---------------- volumen parejo (Web Audio) ---------------- */
+function ensureAudio(){
+  if (audio || audioBad) return audio;
+  try{
+    var C=window.AudioContext||window.webkitAudioContext; if (!C) throw 0;
+    var ctx=new C(), comp=ctx.createDynamicsCompressor(), makeup=ctx.createGain(), master=ctx.createGain();
+    comp.threshold.value=-22; comp.knee.value=18; comp.ratio.value=5; comp.attack.value=0.004; comp.release.value=0.3;
+    makeup.gain.value=Math.pow(10, 3.5/20);
+    comp.connect(makeup); makeup.connect(master); master.connect(ctx.destination);
+    audio={ctx:ctx, comp:comp, master:master};
+  }catch(e){ audioBad=true; audio=null; }
+  return audio;
+}
+function wantMuted(){ return ctl.muted || S().sound===false || (PREVIEW && !previewSound); }
+function applyAudio(){
+  var vol=Math.max(0, Math.min(100, S().volume==null ? 100 : S().volume))/100;
+  if (audio){ try{ audio.master.gain.value=wantMuted() ? 0 : vol; }catch(e){} }
+  [cur, nxt].forEach(function(s){
+    if (!s || s.kind!=='video' || !s.el || s.fading) return;
+    if (s.node){ s.el.muted=false; s.el.volume=1; }
+    else if (s===cur){ s.el.muted=wantMuted(); s.el.volume=vol; }
+  });
+  if (cur && cur.el) cur.el.style.objectFit=S().fit==='cover' ? 'cover' : 'contain';
+}
+// Cada video pasa por el compresor solo si el audio ya está corriendo (en OBS siempre).
+function routeAudio(s){
+  if (s.routed) return; s.routed=true;
+  if (S().normalize===false || s.kind!=='video') return;
+  var a=ensureAudio(); if (!a) return;
+  if (a.ctx.state!=='running'){ try{ a.ctx.resume(); }catch(e){} return; }   // sin audio corriendo no se arriesga: suena normal
+  try{
+    var src=a.ctx.createMediaElementSource(s.el), g=a.ctx.createGain();
+    g.gain.value=1; src.connect(g); g.connect(a.comp); s.node={src:src, g:g};
+  }catch(e){ s.node=null; }
+}
+
+/* ---------------- un clip ---------------- */
+function newSlot(k){ return {key:k, clip:byKey[k], i:-1, el:null, hls:null, kind:'', ready:false, dead:false, timers:{}, playing:false, lastT:0, lastMove:0}; }
+function later(s, name, fn, ms){ clearTimeout(s.timers[name]); s.timers[name]=setTimeout(function(){ if (!s.dead) fn(); }, ms); }
+function clearTimers(s){ for (var n in s.timers) clearTimeout(s.timers[n]); s.timers={}; }
+function dropMedia(s){
+  if (s.hls){ try{ s.hls.destroy(); }catch(e){} s.hls=null; }
+  if (s.node){ try{ s.node.src.disconnect(); s.node.g.disconnect(); }catch(e){} s.node=null; }
+  var el=s.el; s.el=null; s.ready=false; s.playing=false; s.routed=false; s.shown=false;
+  if (el){ if (el.tagName==='VIDEO'){ try{ el.pause(); el.removeAttribute('src'); el.load(); }catch(e){} } el.remove(); }
+}
+function kill(s){ if (!s || s.dead) return; s.dead=true; clearTimers(s); dropMedia(s); }
+function prepare(s){
+  if (s.dead) return;
+  clearTimers(s); dropMedia(s);
+  var list=sourcesOf(s.clip), i=++s.i;
+  if (i>=list.length){ return failSlot(s); }
+  var token=i;
+  later(s, 'load', function(){ log('tardó demasiado', s.key); prepare(s); }, LOAD_MS);
+  list[i]().then(function(src){
+    if (s.dead || s.i!==token) return;
+    if (src.type==='embed'){ s.kind='embed'; s.embed=src.clip; s.ready=true; clearTimeout(s.timers.load); onReady(s); return; }
+    s.kind='video';
+    var v=document.createElement('video');
+    v.className='layer'; v.playsInline=true; v.preload='auto'; v.muted=true; v.crossOrigin='anonymous';
+    v.style.objectFit=S().fit==='cover' ? 'cover' : 'contain';
+    v.addEventListener('canplay', function(){ if (s.el!==v || s.ready) return; s.ready=true; clearTimeout(s.timers.load); onReady(s); });
+    v.addEventListener('error', function(){ if (s.el===v){ log('error de video', s.key); prepare(s); } });
+    v.addEventListener('ended', function(){ if (s.el===v && s===cur) finish(s, false); });
+    v.addEventListener('timeupdate', function(){ if (s.el===v && s===cur) progress(s); });
+    s.el=v; stage.appendChild(v);
+    if (src.type==='mp4'){ v.src=src.url; v.load(); }
+    else return loadHls().then(function(Hls){
+      if (s.dead || s.el!==v) return;
+      if (Hls.isSupported()){
+        var h=new Hls({enableWorker:false, maxBufferLength:30, maxMaxBufferLength:60, backBufferLength:10});
+        s.hls=h;
+        h.on(Hls.Events.ERROR, function(_e, d){ if (d && d.fatal && s.el===v){ log('hls', d.details); prepare(s); } });
+        h.loadSource(src.url); h.attachMedia(v);
+      } else if (v.canPlayType('application/vnd.apple.mpegurl')){ v.src=src.url; v.load(); }
+      else prepare(s);
+    });
+  }).catch(function(e){
+    if (s.dead || s.i!==token) return;
+    log('fuente falló', s.key, e && e.message);
+    if (e && e.dead) return failSlot(s);
+    prepare(s);
+  });
+}
+function failSlot(s){
+  failed[s.key]=1; var wasCur=s===cur, wasNxt=s===nxt;
+  kill(s);
+  if (wasNxt){ nxt=null; preload(); }
+  if (wasCur){ cur=null; advance(false); }
+}
+function onReady(s){
+  if (s===cur && !s.playing) start(s);
+}
+function preload(){
+  if (stopped || nxt || !cur || !cur.playing || !keys.length) return;
+  var k=takeKey(cur.key); if (!k) return;
+  nxt=newSlot(k); prepare(nxt);
+}
+
+/* ---------------- tocar y cambiar ---------------- */
+var layerZ=1;
+function start(s){
+  if (s.dead || s!==cur || s.playing) return;
+  if (document.hidden && !PREVIEW) return;
+  if (s.kind==='embed') return startEmbed(s);
+  var v=s.el;
+  routeAudio(s); applyAudio();
+  if (s.node){ v.muted=false; v.volume=1; } else { v.muted=wantMuted(); }
+  s.lastMove=Date.now(); s.lastT=v.currentTime||0;
+  if (ctl.paused){ show(s); return; }                    // en pausa: se ve el primer cuadro
+  var p; try{ p=v.play(); }catch(e){ p=Promise.reject(e); }
+  Promise.resolve(p).then(function(){ if (s.dead || s!==cur) return; tapBtn.hidden=true; show(s); }, function(e){
+    if (s.dead || s!==cur) return;
+    if (e && e.name==='NotAllowedError'){
+      if (!v.muted){ v.muted=true; v.play().then(function(){ if (s===cur && !s.dead) show(s); }, function(){}); if (!PREVIEW) tapBtn.hidden=false; }
+      else if (!PREVIEW) tapBtn.hidden=false;
+    } else if (!e || e.name!=='AbortError') prepare(s);
+  });
+}
+function startEmbed(s){
+  var f=document.createElement('iframe');
+  f.className='layer'; f.setAttribute('allow','autoplay; encrypted-media'); f.setAttribute('scrolling','no'); f.title='Clip de Twitch';
+  f.src='https://clips.twitch.tv/embed?clip='+encodeURIComponent(s.embed)+'&parent='+encodeURIComponent(location.hostname)+
+        '&autoplay=true&muted='+(wantMuted()?'true':'false');
+  s.el=f; stage.appendChild(f);
+  var shown=false, go=function(){ if (!shown && !s.dead && s===cur){ shown=true; show(s); } };
+  f.addEventListener('load', function(){ later(s, 'emb', go, 900); });
+  later(s, 'show', go, 3500);
+  var secs=lengthOf(s.clip, NaN);
+  later(s, 'end', function(){ if (s===cur) finish(s, false); }, (secs+1.5)*1000);
+  later(s, 'cardout', function(){ if (s===cur) cardOff(); }, Math.max(0, secs-CARD_OUT)*1000);
+}
+function show(s){
+  if (s.shown){ return; }
+  s.shown=true; s.playing=true; s.t0=Date.now();
+  s.el.style.zIndex=String(++layerZ); s.el.classList.add('on');
+  lastKey=s.key; markPlayed(s.key);
+  cardOn(s.clip); paintBar();
+  if (s.kind==='video'){ s.lastMove=Date.now(); watch(s); }
+  // el anterior se va con fundido (imagen y sonido)
+  dying.forEach(function(d){ fadeOut(d); }); dying=[];
+  preload();
+  if (!PREVIEW) setTimeout(tick, 200);                  // avisa luego luego qué está sonando
+}
+function lengthOf(c, media){
+  var d=isFinite(media) && media>0 ? media : (c.d||0);
+  if (!(d>0)) d=S().maxSec||60;
+  return S().maxSec>0 ? Math.min(d, S().maxSec) : d;
+}
+function progress(s){
+  var v=s.el, t=v.currentTime||0;
+  if (t!==s.lastT){ s.lastT=t; s.lastMove=Date.now(); }
+  var end=lengthOf(s.clip, v.duration);
+  if (t>=end-CARD_OUT) cardOff();
+  if (S().maxSec>0 && t>=S().maxSec) finish(s, true);
+  paintBar();
+}
+// Si se congela 20 s, se prueba la otra fuente o se salta.
+function watch(s){
+  later(s, 'watch', function(){
+    if (s!==cur || s.dead) return;
+    if (s.kind==='video' && !ctl.paused && !document.hidden && Date.now()-s.lastMove>STALL_MS){ log('se congeló', s.key); s.shown=false; s.playing=false; prepare(s); return; }
+    watch(s);
+  }, 1000);
+}
+function finish(s, cut){
+  if (s!==cur || s.finished) return;
+  s.finished=true; clearTimeout(s.timers.watch); clearTimeout(s.timers.end);
+  cardOff();
+  dying.push(s);
+  cur=null;
+  advance(cut);
+}
+function fadeOut(s){
+  if (!s || s.dead) return;
+  s.fading=true;
+  if (s.el) s.el.classList.remove('on');
+  var g=s.node ? s.node.g.gain : null, v=s.el && s.el.tagName==='VIDEO' ? s.el : null;
+  var from=g ? g.value : v ? v.volume : 0, n=6, k=0;
+  (function step(){
+    if (s.dead) return;
+    k++; var x=Math.max(0, from*(1-k/n));
+    try{ if (g) g.value=x; else if (v) v.volume=x; }catch(e){}
+    if (k<n) setTimeout(step, FADE_MS/n); else kill(s);
+  })();
+}
+function advance(now){
+  clearTimeout(retryT);
+  if (stopped || gone) return;
+  var s=nxt; nxt=null;
+  if (!s){ var k=takeKey(lastKey); if (k) s=newSlot(k); }
+  if (!s){
+    // nada que tocar: si todos fallaron, se reintenta en un minuto
+    dying.forEach(function(d){ fadeOut(d); }); dying=[];
+    paintBar();
+    var allBad=keys.length && keys.every(function(k){ return failed[k]; });
+    if (allBad){ say('No se pudo reproducir ningún clip. Reintento en 1 minuto.'); retryT=setTimeout(function(){ failed={}; bag=[]; passes=0; advance(false); }, RETRY_MS); }
+    else if (keys.length && S().loop===false){ stopped=true; say('Terminó la playlist.'); }
+    return;
+  }
+  cur=s;
+  if (s.i<0) prepare(s);
+  else if (s.ready) start(s);
+  if (now && dying.length && !s.ready){ /* se queda el anterior hasta que el nuevo esté listo */ }
+}
+
+/* ---------------- recuadro, mensaje y barra ---------------- */
+var cardC=null;
+function cardOn(c){ cardC=c; card.classList.add('on'); paintCard(); }
+function cardOff(){ card.classList.remove('on'); }
+function paintCard(){
+  var o=(S().card)||{}, c=cardC;
+  card.className=({'bottom-left':'bl','bottom-right':'br','top-left':'tl','top-right':'tr'})[o.pos||'bottom-right']+(card.classList.contains('on') ? ' on' : '');
+  if (!c) return;
+  var t=card.querySelector('.t'), tag=card.querySelector('.tag'), ch=card.querySelector('.ch'), dot=card.querySelector('.dot'), by=card.querySelector('.by');
+  var showT=o.title!==false && c.t, showTag=o.platform!==false, showCh=o.channel!==false && (c.chd||c.ch), showBy=o.creator!==false && c.cr;
+  t.textContent=showT ? c.t : ''; t.hidden=!showT;
+  tag.textContent=c.p==='kick' ? 'KICK' : 'TWITCH'; tag.className='tag '+(c.p==='kick' ? 'kk' : 'tw'); tag.hidden=!showTag;
+  ch.textContent=showCh ? (c.chd||c.ch) : ''; ch.hidden=!showCh;
+  by.textContent=showBy ? (o.by==='es' ? 'clip de ' : 'clipped by ')+c.cr : ''; by.hidden=!showBy;
+  dot.hidden=!(showCh && showBy);
+  card.querySelector('.m').hidden=!(showTag || showCh || showBy);
+  if (!showT && !(showTag || showCh || showBy)) card.classList.remove('on');
+}
+function paintMsg(){
+  var m=ctl.msg!=null ? ctl.msg : (S().msg||'');
+  var pos=(S().card||{}).pos||'bottom-right';
+  if (m && msgEl.textContent!==m) msgEl.textContent=m;
+  msgEl.className=(pos.indexOf('top-')===0 ? 'low' : '')+(m ? ' on' : '');
+}
+var barT=0;
+function paintBar(){
+  clearTimeout(barT);
+  var s=cur, on=!!(S().progress && s && s.shown && s.el);
+  bar.className=on ? 'on' : '';
+  if (!on) return;
+  var total=s.kind==='embed' ? lengthOf(s.clip, NaN) : lengthOf(s.clip, s.el.duration);
+  var el=s.kind==='embed' ? (Date.now()-s.t0)/1000 : (s.el.currentTime||0);
+  barFill.style.transform='scaleX('+Math.max(0, Math.min(1, total>0 ? el/total : 0)).toFixed(4)+')';
+  if (s.kind==='embed') barT=setTimeout(paintBar, 250);
+}
+
+/* ---------------- arranque, pestaña oculta, apagado ---------------- */
+function shutdown(why){
+  gone=true; clearInterval(tickT); clearTimeout(retryT);
+  [cur, nxt].concat(dying).forEach(kill); cur=nxt=null; dying=[];
+  cardOff(); msgEl.className=''; bar.className='';
+  say(why||'');
+  if (audio){ try{ audio.ctx.close(); }catch(e){} audio=null; }
+}
+tapBtn.addEventListener('click', function(){
+  tapBtn.hidden=true;
+  if (audio && audio.ctx.state!=='running') try{ audio.ctx.resume(); }catch(e){}
+  if (cur && cur.el && cur.kind==='video'){ cur.el.muted=wantMuted() && !cur.node; cur.el.play().then(function(){ show(cur); }, function(){}); }
+});
+document.addEventListener('visibilitychange', function(){
+  if (gone || PREVIEW) return;
+  if (document.hidden){ pauseCur(); }
+  else if (cur){ if (!cur.playing && cur.ready) start(cur); else if (!ctl.paused) resumeCur(); }
+});
+window.addEventListener('pagehide', function(){ shutdown(''); });
+window.addEventListener('online', function(){ if (!gone && !man) boot(); });
+
+// Vista previa del estudio: le manda los ajustes sin guardar y si quieres oír el sonido.
+if (PREVIEW) window.addEventListener('message', function(ev){
+  if (ev.source!==window.parent) return;
+  var d=ev.data||{};
+  if (d.type==='brb-set' && d.set && typeof d.set==='object'){ setPreview=d.set; paintMsg(); paintCard(); applyAudio(); paintBar(); }
+  if (d.type==='brb-sound'){ previewSound=!!d.on; if (previewSound){ var a=ensureAudio(); if (a && a.ctx.state!=='running') try{ a.ctx.resume(); }catch(e){} } applyAudio(); }
+  if (d.type==='brb-next') skip();
+  if (d.type==='brb-reload') loadManifest().catch(function(){});
+});
+
+// ?debug=1: para revisar desde la consola qué está pasando
+if (DEBUG) window.BRB_DEBUG=function(){ return {cur:cur&&cur.key, kind:cur&&cur.kind, playing:!!(cur&&cur.playing), paused:ctl.paused, muted:wantMuted(),
+  gain:audio ? audio.master.gain.value : null, ctx:audio ? audio.ctx.state : null, routed:!!(cur&&cur.node), keys:keys.slice(), failed:Object.keys(failed),
+  pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className, played:Object.keys(readPlayed()), bag:bag.slice()}; };
+
+function boot(){
+  if (!SCR){ say('Falta el id de la pantalla (s=…). Copia el link desde el estudio.'); return; }
+  loadManifest().catch(function(e){ say('No pude cargar la playlist ('+(e&&e.message||'sin conexión')+'). Reintento…'); setTimeout(boot, 15000); });
+}
+boot();
+if (!PREVIEW){ tickT=setInterval(tick, TICK_MS); }
+else try{ window.parent.postMessage({type:'brb-ready'}, '*'); }catch(e){}
+})();
+</script>
+</body>
+</html>
