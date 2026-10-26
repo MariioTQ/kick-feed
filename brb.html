@@ -309,6 +309,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--sky)}
 .libc div small{color:var(--mute)}
 .libc button{width:34px;height:34px;border-radius:50%;border:0;background:transparent;color:var(--mute);display:flex;align-items:center;justify-content:center}
 .hnames{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.mrow{display:flex;align-items:center;gap:6px;padding:6px 6px 6px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:12px}
+.mrow span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mrow button{width:34px;height:36px;border:0;border-radius:9px;background:transparent;color:var(--mute);display:flex;align-items:center;justify-content:center}
+.mrow button:hover{background:var(--panel3);color:var(--ink)}
+.mrow button:disabled{opacity:.25}
+.mrow svg{width:18px;height:18px}
 .hnames .chip{display:inline-flex;align-items:center;gap:6px}
 code.link{display:block;word-break:break-all;background:var(--night);border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--mute)}
 .lib-n{font-family:var(--disp);font-size:40px;line-height:1;letter-spacing:.02em}
@@ -410,9 +416,10 @@ dialog.cv{width:min(920px,calc(100% - 24px));padding:16px}
       <div>
         <div class="block">
           <h2>Mensaje en pantalla</h2>
-          <div class="row"><input type="text" id="cMsgIn" class="grow" maxlength="80" placeholder="Escribe un mensaje…" autocomplete="off" style="width:auto"><button class="btn" id="cMsgGo">Poner</button></div>
+          <div class="row"><input type="text" id="cMsgIn" class="grow" maxlength="80" placeholder="Escribe un mensaje…" autocomplete="off" style="width:auto"><button class="btn" id="cMsgGo">Poner</button><button class="btn ghost" id="cMsgSave" hidden title="Guardarlo en tus mensajes">☆ Guardar</button></div>
           <div class="chips" id="cMsgChips" style="margin-top:10px"></div>
           <p class="note" id="cMsgNote"></p>
+          <button class="btn sm ghost" id="cMsgEdit" style="margin-top:6px;padding-left:0">✎ Editar mis mensajes</button>
         </div>
         <div class="block">
           <h2>Playlist al aire</h2>
@@ -655,6 +662,13 @@ dialog.cv{width:min(920px,calc(100% - 24px));padding:16px}
         <div class="row"><input type="text" id="gHideIn" class="grow" placeholder="nombre de usuario" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" style="width:auto"><button class="btn sm" id="gHideAdd">Agregar</button></div>
       </div>
 
+      <p class="mh" id="msgsH">Mensajes guardados</p>
+      <div class="card" id="msgsCard">
+        <p class="sub" style="margin-bottom:10px">Los que salen para ponerlos con un toque en «En vivo», en «Cómo se ve» y en los Atajos de tu feed. Hasta 20.</p>
+        <div class="list" id="gMsgs"></div>
+        <div class="row" style="margin-top:10px"><input type="text" id="gMsgIn" class="grow" maxlength="80" placeholder="Nuevo mensaje, ej. Cargando la batería 🔋" autocomplete="off" style="width:auto"><button class="btn sm pri" id="gMsgAdd">Agregar</button></div>
+      </div>
+
       <div class="mobonly">
         <p class="mh">En la computadora</p>
         <div class="card">
@@ -696,7 +710,8 @@ var CH_KICK=(Q.get('kick')||'mariotq').toLowerCase(), CH_TW=(Q.get('twitch')||'m
 var TW_CLIENT='kimne78kx3ncx6brgo4mv6wki5h1ko';
 var KEY=(function(){ var v=(Q.get('key')||'').trim(); try{ if (v) localStorage.setItem('kickfeed.key', v); else v=localStorage.getItem('kickfeed.key')||''; }catch(e){} return v; })();
 if (Q.get('key')) try{ history.replaceState(null, '', location.pathname+location.hash); }catch(e){}   // la clave no se queda en la barra
-var MSGS=['¡Ahorita regreso!','Vuelvo en unos minutos','Sin señal, ya vuelvo 📶','Comiendo algo, ya regreso 🍔'];
+var MSGS_DEF=['¡Ahorita regreso!','Vuelvo en unos minutos','Sin señal, ya vuelvo 📶','Comiendo algo, ya regreso 🍔'];
+function msgsOf(){ var m=(D.scr && D.scr.cfg && D.scr.cfg.msgs); return Array.isArray(m) ? m : MSGS_DEF; }   // tus mensajes guardados
 
 var $=function(id){ return document.getElementById(id); };
 var esc=function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
@@ -1822,7 +1837,7 @@ function S(){ return (P && P.set) || {}; }
 function paintSet(){
   var s=S(), c=s.card||{};
   $('sMsg').value=s.msg||'';
-  $('sMsgChips').innerHTML=MSGS.map(function(m){ return '<button class="chip'+(s.msg===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+'</button>'; }).join('');
+  $('sMsgChips').innerHTML=msgsOf().map(function(m){ return '<button class="chip'+(s.msg===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+'</button>'; }).join('');
   document.querySelectorAll('[data-s]').forEach(function(b){ var k=b.getAttribute('data-s'); b.classList.toggle('on', s[k]!==false && (k!=='progress' || !!s.progress)); });
   document.querySelectorAll('[data-c]').forEach(function(b){ b.classList.toggle('on', c[b.getAttribute('data-c')]!==false); });
   $('sVol').value=s.volume==null ? 100 : s.volume; $('sVolN').textContent=$('sVol').value+'%';
@@ -1878,20 +1893,56 @@ $('pvSound').onclick=function(){ PV.sound=!PV.sound; this.textContent=PV.sound ?
 $('pvNext').onclick=function(){ pvPost({type:'brb-next'}); };
 
 /* para todas tus playlists: nombres sin «clip de» y avisos de subs/Kicks */
-function cfgOf(){ var c=(D.scr && D.scr.cfg)||{}; return {hideBy:Array.isArray(c.hideBy) ? c.hideBy : ['mariotq','aizulimx','instantclipsbot'], alerts:c.alerts!==false}; }
+function cfgOf(){ var c=(D.scr && D.scr.cfg)||{}; return {hideBy:Array.isArray(c.hideBy) ? c.hideBy : ['mariotq','aizulimx','instantclipsbot'], alerts:c.alerts!==false, msgs:msgsOf()}; }
 function paintCfg(){
   var c=cfgOf();
+  paintMsgs();
   $('gAlerts').classList.toggle('on', c.alerts);
   $('gHide').innerHTML=c.hideBy.length ? c.hideBy.map(function(n){ return '<span class="chip">'+esc(n)+'<button class="btn sm ghost" data-n="'+esc(n)+'" aria-label="Quitar a '+esc(n)+'" style="min-height:26px;padding:0 6px">✕</button></span>'; }).join('')
     : '<span class="note" style="margin:0">Nadie: siempre sale quién lo sacó (menos en tus propios clips).</span>';
 }
-function saveCfg(patch){
+function saveCfg(patch, msg){
   D.scr.cfg=Object.assign(cfgOf(), patch); paintCfg();
   return api('cfg', patch).then(function(j){
     if (!j.ok){ toast(j.error||'No se guardó', true); return load().then(paintCfg); }
-    D.scr.cfg=j.cfg; paintCfg(); pvReload(true); toast('✓ Guardado para todas tus playlists');
+    D.scr.cfg=j.cfg; paintCfg(); if (!patch.msgs) pvReload(true); toast(msg||'✓ Guardado para todas tus playlists');
   });
 }
+/* tus mensajes guardados */
+function paintMsgs(){
+  var ms=msgsOf(), n=ms.length;
+  $('gMsgs').innerHTML=n ? ms.map(function(m, i){
+    return '<div class="mrow" data-i="'+i+'"><span>'+esc(m)+'</span><button data-a="up" aria-label="Subir"'+(i===0?' disabled':'')+'>'+ICON.up+'</button><button data-a="down" aria-label="Bajar"'+(i===n-1?' disabled':'')+'>'+ICON.down+'</button><button data-a="rm" aria-label="Quitar «'+esc(m)+'»">'+ICON.x+'</button></div>';
+  }).join('') : '<p class="note" style="margin:0">No tienes mensajes guardados. Escribe uno abajo.</p>';
+  $('gMsgAdd').disabled=n>=20; $('gMsgIn').disabled=n>=20;
+  paintMsgSave();
+  if (TAB==='live') paintCtl();
+  var s=S(); $('sMsgChips').innerHTML=ms.map(function(m){ return '<button class="chip'+(s.msg===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+'</button>'; }).join('');
+}
+function msgAdd(v){
+  v=String(v||'').replace(/\s+/g, ' ').trim().slice(0, 80);
+  var ms=msgsOf();
+  if (!v) return Promise.resolve(false);
+  if (ms.indexOf(v)>=0){ toast('Ese ya está en tus mensajes'); return Promise.resolve(false); }
+  if (ms.length>=20){ toast('Ya tienes 20 mensajes, el máximo. Quita uno.', true); return Promise.resolve(false); }
+  return saveCfg({msgs:ms.concat([v])}, '✓ Mensaje guardado').then(function(){ return true; });
+}
+$('gMsgs').addEventListener('click', function(ev){
+  var b=ev.target.closest('button[data-a]'); if (!b) return;
+  var i=Number(b.closest('.mrow').getAttribute('data-i')), ms=msgsOf().slice(), a=b.getAttribute('data-a');
+  if (a==='up' && i>0){ var t=ms[i-1]; ms[i-1]=ms[i]; ms[i]=t; }
+  else if (a==='down' && i<ms.length-1){ var t2=ms[i+1]; ms[i+1]=ms[i]; ms[i]=t2; }
+  else if (a==='rm') ms.splice(i, 1);
+  else return;
+  saveCfg({msgs:ms}, a==='rm' ? 'Mensaje quitado' : '✓ Orden guardado');
+});
+$('gMsgAdd').onclick=function(){ msgAdd($('gMsgIn').value).then(function(ok){ if (ok) $('gMsgIn').value=''; }); };
+$('gMsgIn').addEventListener('keydown', function(ev){ if (ev.key==='Enter'){ ev.preventDefault(); $('gMsgAdd').click(); } });
+// En vivo: «☆ Guardar» aparece cuando escribes uno que no tienes guardado
+function paintMsgSave(){ var v=$('cMsgIn').value.trim(); $('cMsgSave').hidden=!v || msgsOf().indexOf(v)>=0; }
+$('cMsgIn').addEventListener('input', paintMsgSave);
+$('cMsgSave').onclick=function(){ msgAdd($('cMsgIn').value).then(paintMsgSave); };
+$('cMsgEdit').onclick=function(){ goTab('mas'); setTimeout(function(){ try{ $('msgsH').scrollIntoView({block:'start', behavior:'smooth'}); }catch(e){} $('gMsgIn').focus({preventScroll:true}); }, 60); };
 $('gAlerts').onclick=function(){ saveCfg({alerts:!cfgOf().alerts}); };
 $('gHide').addEventListener('click', function(ev){ var b=ev.target.closest('[data-n]'); if (!b) return; var n=b.getAttribute('data-n'); saveCfg({hideBy:cfgOf().hideBy.filter(function(x){ return x!==n; })}); });
 function hideAdd(){
@@ -1952,7 +2003,7 @@ function paintCtl(){
   var mb=$('cMute'); mb.classList.toggle('act', !!ctl.muted); mb.querySelector('span').textContent=ctl.muted ? 'Con sonido' : 'Silenciar';
   var pm=(P && P.id===D.scr.pl ? P.set.msg : (plById(D.scr.pl)||{set:{}}).set.msg)||'';
   var curMsg=ctl.msg!=null ? ctl.msg : pm;
-  $('cMsgChips').innerHTML=MSGS.map(function(m){ return '<button class="chip'+(curMsg===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+'</button>'; }).join('')+
+  $('cMsgChips').innerHTML=msgsOf().map(function(m){ return '<button class="chip'+(curMsg===m?' on':'')+'" data-m="'+esc(m)+'">'+esc(m)+'</button>'; }).join('')+
     '<button class="chip'+(ctl.msg===''?' on':'')+'" data-m="">Sin mensaje</button>'+(ctl.msg!=null ? '<button class="chip" data-reset="1">Usar el de la playlist</button>' : '');
   $('cMsgNote').textContent=ctl.msg!=null ? 'Ahorita: «'+(ctl.msg||'sin mensaje')+'» (cambiado desde aquí o los atajos)' : pm ? 'Ahorita: «'+pm+'» (el de la playlist)' : 'Ahorita no hay mensaje';
   paintPlHeader();
@@ -1964,7 +2015,8 @@ $('cMute').onclick=function(){ sendCtl({cmd:'mutetoggle'}); };
 $('cMsgChips').addEventListener('click', function(ev){ var b=ev.target.closest('.chip'); if (!b) return;
   if (b.getAttribute('data-reset')) return sendCtl({cmd:'msg', msg:null});
   sendCtl({cmd:'msg', msg:b.getAttribute('data-m')}); });
-$('cMsgGo').onclick=function(){ var v=$('cMsgIn').value.trim(); sendCtl({cmd:'msg', msg:v}).then(function(j){ if (j){ $('cMsgIn').value=''; toast('✓ Mensaje puesto'); } }); };
+$('cMsgGo').onclick=function(){ var v=$('cMsgIn').value.trim(); sendCtl({cmd:'msg', msg:v}).then(function(j){ if (j){ $('cMsgIn').value=''; paintMsgSave(); toast('✓ Mensaje puesto'); } }); };
+$('cMsgIn').addEventListener('keydown', function(ev){ if (ev.key==='Enter'){ ev.preventDefault(); $('cMsgGo').click(); } });
 $('cPls').addEventListener('click', function(ev){ var b=ev.target.closest('.pc[data-id]'); if (!b) return; var id=b.getAttribute('data-id');
   if (id===D.scr.pl) return toast('«'+((plById(id)||{}).name||'')+'» ya está al aire');
   save().then(function(){ return sendCtl({cmd:'pl', pl:id}); }).then(function(j){ if (j){ toast('✓ Al aire: '+((plById(id)||{}).name||'')); paintPlHeader(); } }); });
