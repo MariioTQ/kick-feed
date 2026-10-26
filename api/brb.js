@@ -173,9 +173,12 @@ function cleanSet(s) {
     fit: pick(s.fit, ['contain', 'cover'], 'contain'),
     progress: bool(s.progress, false),
     msg: str(s.msg, MSG_MAX),
+    msgStyle: pick(s.msgStyle, ['pill', 'sign'], 'pill'),          // cápsula o el letrero de tu BRB viejo
     card: {
       title: bool(c.title, true), channel: bool(c.channel, true), platform: bool(c.platform, true),
-      creator: bool(c.creator, true), pos: pick(c.pos, POS, 'bottom-right'), by: pick(c.by, ['en', 'es'], 'en')
+      creator: bool(c.creator, true), pos: pick(c.pos, POS, 'bottom-right'), by: pick(c.by, ['en', 'es'], 'en'),
+      style: pick(c.style, ['classic', 'tq', 'mini'], 'classic'),   // clásico, TQ (letra de tu BRB viejo) o mínimo
+      time: pick(c.time, ['all', 'start'], 'all')                    // todo el clip o solo al empezar
     }
   };
 }

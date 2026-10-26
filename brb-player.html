@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BRB Clips TQ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap">
 <!-- Solo puede hablar con tu servidor, con Kick y con Twitch. Los videos llegan directo de Kick y Twitch. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; connect-src 'self' https://kick-feed-mariotq.vercel.app https://kick.com https://*.kick.com https://gql.twitch.tv; media-src 'self' https: blob:; img-src https: data:; frame-src https://clips.twitch.tv; worker-src blob:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://kick-feed-mariotq.vercel.app https://kick.com https://*.kick.com https://gql.twitch.tv; media-src 'self' https: blob:; img-src https: data:; frame-src https://clips.twitch.tv; worker-src blob:">
 <style>
 /* ==================================================================
    BRB · PLAYER PARA OBS (fuente de navegador 1920 × 1080)
@@ -42,6 +43,23 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent
 #card .tag{flex:none;font-size:15px;font-weight:800;letter-spacing:.09em;padding:4px 11px 3px;border-radius:999px;text-shadow:none}
 #card .tag.tw{background:#772ce8;color:#fff}#card .tag.kk{background:#53fc18;color:#0b0e0f}
 #card [hidden]{display:none!important}
+/* estilo TQ: sin caja, con la letra de tu BRB viejo y una sombra abajo */
+#card.s-tq{background:none;box-shadow:none;padding:0;max-width:72%;text-shadow:0 3px 22px rgba(0,0,0,.8),0 1px 3px rgba(0,0,0,.6)}
+#card.s-tq.bl,#card.s-tq.tl{left:64px}#card.s-tq.br,#card.s-tq.tr{right:64px}
+#card.s-tq.bl,#card.s-tq.br{bottom:58px}#card.s-tq.tl,#card.s-tq.tr{top:58px}
+#card.s-tq .t{font-family:"Bebas Neue",Impact,"Arial Narrow",sans-serif;font-weight:400;font-size:86px;line-height:.95;letter-spacing:.015em}
+#card.s-tq .m{margin-top:10px;font-size:24px;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.82)}
+#card.s-tq .tag{letter-spacing:.12em}
+#shade{position:absolute;left:0;right:0;height:46%;z-index:29;pointer-events:none;opacity:0;transition:opacity .5s ease}
+#shade.bot{bottom:0;background:linear-gradient(to top,rgba(0,0,0,.66),transparent)}
+#shade.top{top:0;background:linear-gradient(to bottom,rgba(0,0,0,.6),transparent)}
+#shade.on{opacity:1}
+/* estilo mínimo: una cápsula chiquita en un solo renglón */
+#card.s-mini{display:flex;align-items:center;gap:14px;padding:10px 22px;border-radius:999px;background:rgba(10,10,14,.62);max-width:70%}
+#card.s-mini .t{font-size:27px;font-weight:700;flex:0 1 auto;min-width:0}
+#card.s-mini .t{flex:0 1 auto}
+#card.s-mini .m{margin:0;font-size:21px;flex:none;max-width:none}
+#card.s-mini .ch,#card.s-mini .dot{display:none!important}   /* en un renglón: solo la etiqueta y quién lo sacó */
 
 /* el mensaje de arriba («¡Ahorita regreso!») */
 #msg{position:absolute;z-index:31;left:50%;top:44px;max-width:calc(100% - 96px);transform:translateX(-50%);padding:.16em .7em .2em;
@@ -50,6 +68,19 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent
   text-shadow:0 2px 14px rgba(0,0,0,.55);opacity:0;transition:opacity .5s ease;pointer-events:none}
 #msg.on{opacity:1}
 #msg.low{top:auto;bottom:44px}
+#msg .sig{display:none}
+/* letrero de tu BRB viejo: foquitos de señal en rojo, rayita y letra grande */
+#msg.sign{top:auto;bottom:60px;background:none;-webkit-backdrop-filter:none;backdrop-filter:none;padding:0;border-radius:0;display:flex;align-items:center;gap:26px;
+  font-family:"Bebas Neue",Impact,"Arial Narrow",sans-serif;font-weight:400;font-size:96px;letter-spacing:.06em;line-height:1;text-shadow:0 4px 26px rgba(0,0,0,.7)}
+#msg.sign.hi{top:56px;bottom:auto}
+#msg.sign .sig{display:block;width:96px;height:78px;flex:none;filter:drop-shadow(0 2px 10px rgba(0,0,0,.6))}
+#msg.sign .mt{position:relative;padding-left:26px;border-left:2px solid rgba(255,255,255,.4);overflow:hidden;text-overflow:ellipsis}
+#msg .sig path,#msg .sig circle{fill:none;stroke:#e63946;stroke-width:6;stroke-linecap:round;opacity:.15;animation:arc 3.5s infinite}
+#msg .sig circle{fill:#e63946;stroke:none}
+#msg .sig .a2{animation-delay:.45s}#msg .sig .a3{animation-delay:.9s}
+@keyframes arc{0%,100%{opacity:.15}30%,70%{opacity:1}50%{opacity:.5}}
+#msg.sign .mt{animation:glitch 5s infinite}
+@keyframes glitch{0%,90%,100%{transform:none}91%{transform:translateX(-4px)}92%{transform:translateX(4px)}93%{transform:translateX(-1px)}94%{transform:none}}
 
 /* aviso de sub, regalo o Kicks (como el de tu BRB viejo) */
 #ev{position:absolute;z-index:32;top:48px;right:56px;max-width:46%;text-align:right;opacity:0;transform:translateY(-12px);
@@ -74,7 +105,8 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent
 </head>
 <body>
 <div id="stage"></div>
-<div id="msg"></div>
+<div id="msg"><svg class="sig" viewBox="0 0 110 90" aria-hidden="true"><circle cx="55" cy="76" r="6"/><path class="a1" d="M38 62 Q55 50 72 62"/><path class="a2" d="M24 48 Q55 28 86 48"/><path class="a3" d="M10 34 Q55 6 100 34"/></svg><span class="mt"></span></div>
+<div id="shade"></div>
 <div id="card" class="br"><div class="t"></div><div class="m"><span class="tag"></span><span class="ch"></span><span class="dot">·</span><span class="by"></span></div></div>
 <div id="bar"><i></i></div>
 <div id="ev"><div class="l"></div><div class="n"></div><div class="s"></div></div>
@@ -504,12 +536,18 @@ function advance(now){
 }
 
 /* ---------------- recuadro, mensaje y barra ---------------- */
-var cardC=null;
-function cardOn(c){ cardC=c; card.classList.add('on'); paintCard(); }
-function cardOff(){ card.classList.remove('on'); }
+var cardC=null, cardT=0, shade=$('shade');
+// «Solo al empezar»: el recuadro sale 8 segundos, como el de tu BRB viejo
+function cardOn(c){ cardC=c; card.classList.add('on'); paintCard(); clearTimeout(cardT); if (((S().card)||{}).time==='start') cardT=setTimeout(cardOff, 8000); }
+function cardOff(){ clearTimeout(cardT); card.classList.remove('on'); paintShade(); }
+function paintShade(){
+  var o=(S().card)||{}, on=card.classList.contains('on') && o.style==='tq';
+  shade.className=(String(o.pos||'bottom-right').indexOf('top')===0 ? 'top' : 'bot')+(on ? ' on' : '');
+}
 function paintCard(){
   var o=(S().card)||{}, c=cardC;
-  card.className=({'bottom-left':'bl','bottom-right':'br','top-left':'tl','top-right':'tr'})[o.pos||'bottom-right']+(card.classList.contains('on') ? ' on' : '');
+  card.className=({'bottom-left':'bl','bottom-right':'br','top-left':'tl','top-right':'tr'})[o.pos||'bottom-right']+' s-'+(o.style||'classic')+(card.classList.contains('on') ? ' on' : '');
+  paintShade();
   if (!c) return;
   var t=card.querySelector('.t'), tag=card.querySelector('.tag'), ch=card.querySelector('.ch'), dot=card.querySelector('.dot'), by=card.querySelector('.by');
   var showT=o.title!==false && c.t, showTag=o.platform!==false, showCh=o.channel!==false && (c.chd||c.ch), showBy=o.creator!==false && c.cr && !hiddenBy(c);
@@ -519,7 +557,7 @@ function paintCard(){
   by.textContent=showBy ? (o.by==='es' ? 'clip de ' : 'clipped by ')+c.cr : ''; by.hidden=!showBy;
   dot.hidden=!(showCh && showBy);
   card.querySelector('.m').hidden=!(showTag || showCh || showBy);
-  if (!showT && !(showTag || showCh || showBy)) card.classList.remove('on');
+  if (!showT && !(showTag || showCh || showBy)){ card.classList.remove('on'); paintShade(); }
 }
 // Sin «clip de» cuando lo sacaste tú (el dueño del canal), un bot o alguien de tu lista.
 function hiddenBy(c){
@@ -543,11 +581,13 @@ function showEv(e){
   void evEl.offsetWidth; evEl.classList.add('on');
   clearTimeout(evT); evT=setTimeout(function(){ evEl.classList.remove('on'); }, 7000);
 }
+// Cápsula: arriba (abajo si el recuadro está arriba). Letrero: abajo (arriba si el recuadro está abajo).
+var msgT=msgEl.querySelector('.mt');
 function paintMsg(){
   var m=ctl.msg!=null ? ctl.msg : (S().msg||'');
-  var pos=(S().card||{}).pos||'bottom-right';
-  if (m && msgEl.textContent!==m) msgEl.textContent=m;
-  msgEl.className=(pos.indexOf('top-')===0 ? 'low' : '')+(m ? ' on' : '');
+  var pos=(S().card||{}).pos||'bottom-right', top=pos.indexOf('top-')===0, sign=S().msgStyle==='sign';
+  if (m && msgT.textContent!==m) msgT.textContent=m;
+  msgEl.className=(sign ? 'sign'+(top ? '' : ' hi') : (top ? 'low' : ''))+(m ? ' on' : '');
 }
 var barT=0;
 function paintBar(){
