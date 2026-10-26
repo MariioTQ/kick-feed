@@ -156,7 +156,7 @@ function applyCtl(c, first){
   if (ctl.paused!==wasPaused){ if (ctl.paused) pauseCur(); else resumeCur(); }
   if (first) return;
   if (cmdNew==='next') skip();
-  else if (cmdNew==='reset'){ bag=[]; passes=0; failed={}; skip(); }
+  else if (cmdNew==='reset'){ bag=[]; passes=0; failed={}; writePlayed({}); skip(); }
 }
 function skip(){ if (cur){ var c=cur; c.finishing=true; finish(c, true); } else advance(false); }
 function pauseCur(){ if (cur && cur.kind==='video' && cur.el){ try{ cur.el.pause(); }catch(e){} } paintBar(); }
@@ -164,6 +164,12 @@ function resumeCur(){ if (cur && cur.kind==='video' && cur.el && !document.hidde
 
 /* ---------------- la fila: al azar sin repetir ---------------- */
 function shuffle(a){ for (var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)), t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
+// Lo que ya pasó en esta vuelta se guarda en OBS: si ocultas la escena y la vuelves a mostrar,
+// sigue con los que faltan en vez de empezar de cero (y repetir los mismos).
+function playedKey(){ return 'brb.played.'+SCR+'.'+((man && man.pl && man.pl.id)||''); }
+function readPlayed(){ if (PREVIEW) return {}; try{ var a=JSON.parse(localStorage.getItem(playedKey())||'[]'), o={}; (Array.isArray(a)?a:[]).forEach(function(k){ o[k]=1; }); return o; }catch(e){ return {}; } }
+function writePlayed(o){ if (PREVIEW) return; try{ var a=Object.keys(o).filter(function(k){ return byKey[k]; }); if (a.length) localStorage.setItem(playedKey(), JSON.stringify(a)); else localStorage.removeItem(playedKey()); }catch(e){} }
+function markPlayed(k){ if (PREVIEW || !k) return; var o=readPlayed(); if (!o[k]){ o[k]=1; writePlayed(o); } }
 function takeKey(avoid){
   var ok=keys.filter(function(k){ return !failed[k]; });
   if (!ok.length) return '';
@@ -171,7 +177,9 @@ function takeKey(avoid){
     while (bag.length){ var k=bag.shift(); if (byKey[k] && !failed[k] && k!==avoid) return k; }
     if (passes>0 && S().loop===false) return '';
     passes++;
-    bag=S().shuffle===false ? ok.slice() : shuffle(ok.slice());
+    var seen=readPlayed(), rest=ok.filter(function(k){ return !seen[k]; });
+    if (!rest.length || rest.length===ok.length){ writePlayed({}); rest=ok; }   // vuelta nueva
+    bag=S().shuffle===false ? rest.slice() : shuffle(rest.slice());
     if (bag.length>1 && bag[0]===lastKey){ var j=1+Math.floor(Math.random()*(bag.length-1)), t=bag[0]; bag[0]=bag[j]; bag[j]=t; }
   }
   return ok.length===1 ? ok[0] : '';
@@ -360,7 +368,7 @@ function show(s){
   if (s.shown){ return; }
   s.shown=true; s.playing=true; s.t0=Date.now();
   s.el.style.zIndex=String(++layerZ); s.el.classList.add('on');
-  lastKey=s.key;
+  lastKey=s.key; markPlayed(s.key);
   cardOn(s.clip); paintBar();
   if (s.kind==='video'){ s.lastMove=Date.now(); watch(s); }
   // el anterior se va con fundido (imagen y sonido)
@@ -500,7 +508,7 @@ if (PREVIEW) window.addEventListener('message', function(ev){
 // ?debug=1: para revisar desde la consola qué está pasando
 if (DEBUG) window.BRB_DEBUG=function(){ return {cur:cur&&cur.key, kind:cur&&cur.kind, playing:!!(cur&&cur.playing), paused:ctl.paused, muted:wantMuted(),
   gain:audio ? audio.master.gain.value : null, ctx:audio ? audio.ctx.state : null, routed:!!(cur&&cur.node), keys:keys.slice(), failed:Object.keys(failed),
-  pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className}; };
+  pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className, played:Object.keys(readPlayed()), bag:bag.slice()}; };
 
 function boot(){
   if (!SCR){ say('Falta el id de la pantalla (s=…). Copia el link desde el estudio.'); return; }
