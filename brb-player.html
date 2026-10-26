@@ -204,7 +204,10 @@ function takeKey(avoid){
 
 /* ---------------- de dónde sale cada clip ---------------- */
 // Kick: el .m3u8 que se guardó al importar → si falla, se le pregunta a Kick otra vez.
-// Twitch: el .mp4 directo de Twitch → si Twitch no contesta, su reproductor oficial.
+// Twitch: el .mp4 directo de Twitch. Su servidor de videos a veces no manda el permiso
+// que se necesita para emparejar el volumen (cambia según el clip y la calidad), así que:
+// 1) la mejor calidad con permiso, 2) otra calidad con permiso, 3) sin permiso (suena a su
+// volumen original) y 4) solo si todo eso falla, el reproductor oficial de Twitch.
 function sourcesOf(c){
   if (c.p==='kick'){
     var L=[]; if (c.u) L.push(function(){ return Promise.resolve({type:'hls', url:c.u}); });
@@ -215,7 +218,18 @@ function sourcesOf(c){
       return {type:'hls', url:u}; }); });
     return L;
   }
-  return [twitchMp4, function(){ return Promise.resolve({type:'embed', clip:c.id}); }].map(function(f){ return function(){ return f(c); }; });
+  var skip=function(){ var e=new Error('sin otra calidad'); e.skip=true; throw e; };
+  return [
+    function(){ return twLinks(c).then(function(u){ return {type:'mp4', url:u[0], cors:true}; }); },
+    function(){ return twLinks(c).then(function(u){ return u[1] ? {type:'mp4', url:u[1], cors:true} : skip(); }); },
+    function(){ return twLinks(c).then(function(u){ return {type:'mp4', url:u[0], cors:false}; }); },
+    function(){ return Promise.resolve({type:'embed', clip:c.id}); }
+  ];
+}
+// El link firmado de Twitch dura horas: se pide una vez y se reusa un rato.
+function twLinks(c){
+  if (c._tw && Date.now()-c._tw.at<10*60000) return Promise.resolve(c._tw.urls);
+  return twitchMp4(c).then(function(urls){ c._tw={at:Date.now(), urls:urls}; return urls; });
 }
 function twitchMp4(c){
   var ac=new AbortController(), t=setTimeout(function(){ ac.abort(); }, 9000);
@@ -230,9 +244,8 @@ function twitchMp4(c){
     var q=(clip && clip.videoQualities)||[], tok=clip && clip.playbackAccessToken;
     if (!q.length || !tok) throw new Error('Twitch no dio el video');
     q=q.slice().sort(function(a,b){ return (parseInt(b.quality,10)||0)-(parseInt(a.quality,10)||0); });
-    var best=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=1080; })[0]||q[0];
-    var u=new URL(best.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value);
-    return {type:'mp4', url:u.toString()};
+    var ok=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=1080; }); if (!ok.length) ok=q;
+    return ok.slice(0, 2).map(function(x){ var u=new URL(x.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value); return u.toString(); });
   }).finally(function(){ clearTimeout(t); });
 }
 
@@ -276,7 +289,7 @@ function applyAudio(){
 // Cada video pasa por el compresor solo si el audio ya está corriendo (en OBS siempre).
 function routeAudio(s){
   if (s.routed) return; s.routed=true;
-  if (S().normalize===false || s.kind!=='video') return;
+  if (S().normalize===false || s.kind!=='video' || !s.cors) return;   // sin permiso, el volumen se maneja con el propio video
   var a=ensureAudio(); if (!a) return;
   if (a.ctx.state!=='running'){ try{ a.ctx.resume(); }catch(e){} return; }   // sin audio corriendo no se arriesga: suena normal
   try{
@@ -306,9 +319,9 @@ function prepare(s){
   list[i]().then(function(src){
     if (s.dead || s.i!==token) return;
     if (src.type==='embed'){ s.kind='embed'; s.embed=src.clip; s.ready=true; clearTimeout(s.timers.load); onReady(s); return; }
-    s.kind='video';
+    s.kind='video'; s.cors=src.cors!==false; s.src=token;
     var v=document.createElement('video');
-    v.className='layer'; v.playsInline=true; v.preload='auto'; v.muted=true; v.crossOrigin='anonymous';
+    v.className='layer'; v.playsInline=true; v.preload='auto'; v.muted=true; if (s.cors) v.crossOrigin='anonymous';
     v.style.objectFit=S().fit==='cover' ? 'cover' : 'contain';
     var tA=trimOf(s.clip).a;                         // recorte: brinca al inicio que elegiste
     v.addEventListener('loadedmetadata', function(){ if (s.el===v && tA>0 && !s.hls && (v.currentTime||0)<tA-0.3){ try{ v.currentTime=tA; }catch(e){} } });
@@ -333,7 +346,7 @@ function prepare(s){
     if (s.dead || s.i!==token) return;
     log('fuente falló', s.key, e && e.message);
     if (e && e.dead) return failSlot(s);
-    prepare(s);
+    prepare(s);                                       // la siguiente forma de cargarlo
   });
 }
 function failSlot(s){
@@ -371,10 +384,18 @@ function start(s){
     } else if (!e || e.name!=='AbortError') prepare(s);
   });
 }
+// Twitch pide el nombre de cada página donde va su reproductor (también la del estudio,
+// cuando es la vista previa), y solo arranca solo si se ve: por eso sale encima de una vez.
+function twParents(){
+  var h=[location.hostname];
+  try{ var a=location.ancestorOrigins; if (a) for (var i=0;i<a.length;i++){ var x=new URL(a[i]).hostname; if (x && h.indexOf(x)<0) h.push(x); } }catch(e){}
+  try{ if (window.parent!==window && document.referrer){ var r=new URL(document.referrer).hostname; if (r && h.indexOf(r)<0) h.push(r); } }catch(e){}
+  return h.map(function(x){ return '&parent='+encodeURIComponent(x); }).join('');
+}
 function startEmbed(s){
   var f=document.createElement('iframe');
-  f.className='layer'; f.setAttribute('allow','autoplay; encrypted-media'); f.setAttribute('scrolling','no'); f.title='Clip de Twitch';
-  f.src='https://clips.twitch.tv/embed?clip='+encodeURIComponent(s.embed)+'&parent='+encodeURIComponent(location.hostname)+
+  f.className='layer on'; f.style.zIndex=String(++layerZ); f.setAttribute('allow','autoplay; encrypted-media'); f.setAttribute('scrolling','no'); f.title='Clip de Twitch';
+  f.src='https://clips.twitch.tv/embed?clip='+encodeURIComponent(s.embed)+twParents()+
         '&autoplay=true&muted='+(wantMuted()?'true':'false');
   s.el=f; stage.appendChild(f);
   var shown=false, go=function(){ if (!shown && !s.dead && s===cur){ shown=true; show(s); } };
@@ -558,7 +579,7 @@ if (PREVIEW) window.addEventListener('message', function(ev){
 if (DEBUG) window.BRB_DEBUG=function(){ return {cur:cur&&cur.key, kind:cur&&cur.kind, playing:!!(cur&&cur.playing), paused:ctl.paused, muted:wantMuted(),
   gain:audio ? audio.master.gain.value : null, ctx:audio ? audio.ctx.state : null, routed:!!(cur&&cur.node), keys:keys.slice(), failed:Object.keys(failed),
   pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className, played:Object.keys(readPlayed()), bag:bag.slice(),
-  t:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentTime : null, by:card.querySelector('.by').hidden ? '' : card.querySelector('.by').textContent, cfg:CFG, ev:evEl.className+'|'+evEl.textContent}; };
+  t:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentTime : null, cors:!!(cur&&cur.cors), src:cur ? cur.src : null, by:card.querySelector('.by').hidden ? '' : card.querySelector('.by').textContent, cfg:CFG, ev:evEl.className+'|'+evEl.textContent}; };
 
 function boot(){
   if (!SCR){ say('Falta el id de la pantalla (s=…). Copia el link desde el estudio.'); return; }
