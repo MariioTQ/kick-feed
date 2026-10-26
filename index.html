@@ -1262,7 +1262,8 @@
 (function(){
   "use strict";
 
-  var VERSION = '70 · 24 oct 2026';   // se muestra abajo en el engrane ⚙
+  var VERSION = '71 · 25 oct 2026';   // se muestra abajo en el engrane ⚙
+  // v71 · 🎞 BRB en los Atajos: siguiente clip, pausa, sonido, mensaje y playlist de tu BRB Studio (brb.html)
 
   /* ============================================================
      CONFIGURACIÓN  (todo se cambia por la URL)
@@ -5839,7 +5840,7 @@
   function secAuto(t){
     var n=(t.steps||[]).length, k=((t.steps||[])[0]||{}).t;
     if (n>1) return 'combo';
-    return (k==='scene' || k==='sceneback') ? 'esc' : (k==='item' || k==='filter' || k==='refresh' || k==='text') ? 'src'
+    return (k==='scene' || k==='sceneback') ? 'esc' : (k==='item' || k==='filter' || k==='refresh' || k==='text' || k==='brb') ? 'src'
          : (k==='mute' || k==='vol') ? 'aud' : (k==='chat' || k==='title' || k==='mix') ? 'kick' : (k==='stream' || k==='record' || k==='replay') ? 'live' : 'combo';
   }
   function tSec(t){
@@ -5921,6 +5922,9 @@
       case 'goal': return s.n===0 ? 'Meta: conteo real' : 'Meta '+((s.n==null?1:s.n)>0?'+':'−')+Math.abs(s.n==null?1:s.n);
       case 'tts': return (s.who||'all')==='off' || s.who==='mods' ? 'Callar lector' : 'Lector: '+ttsWhoName(s.who||'all');
       case 'moment': return s.text ? '📍 '+String(s.text).slice(0,18) : '📍 Momento';
+      case 'brb': var ba=s.act||'next';
+        return ba==='next' ? 'BRB ⏭ Siguiente' : ba==='pause' ? 'BRB ⏯ Pausa' : ba==='mute' ? 'BRB 🔇 Sonido'
+             : ba==='msg' ? (s.text ? String(s.text).slice(0,22) : 'BRB sin mensaje') : ba==='msgreset' ? 'BRB mensaje normal' : 'BRB: '+String(s.plName||'Playlist').slice(0,16);
     }
     return 'Atajo';
   }
@@ -6160,6 +6164,8 @@
       if (s.t==='mix') return flush().then(function(){
         if (!slugClean(CC.mixCh)){ errs.push('Primero elige el canal en ⚙ → Chat compartido'); return; }
         var v=s.mode==='on' ? true : s.mode==='off' ? false : !CC.mix; mixSet(v); mixMsg=v ? '✓ Chat compartido con '+mixName() : '✓ Solo tu chat'; }).then(next);
+      if (s.t==='brb') return flush().then(function(){
+        return brbRun(s).then(function(m){ mixMsg=m; }, function(e){ errs.push(e && e.message || 'El BRB no contestó'); }); }).then(next);
       if (s.t==='sceneback'){
         if (!AP.prevScene){ errs.push('Todavía no sé cuál era la escena anterior'); return next(); }
         group.push({t:'scene', scene:AP.prevScene}); return next();
@@ -6403,8 +6409,32 @@
     ['Audio',[['mute','🔇 Silenciar o activar un audio'],['vol','🔊 Volumen de un audio (− y +)']]],
     ['Transmisión',[['stream','🔴 Iniciar o detener la transmisión'],['record','⏺ Grabar, pausar o detener'],['replay','⏪ Guardar repetición (replay buffer)']]],
     ['Kick',[['chat','💬 Mandar un mensaje al chat'],['title','✏️ Cambiar título o categoría'],['mix','🔀 Chat compartido (prender o apagar)'],['goal','🎯 Sumar o restar subs a la meta'],['tts','🔊 Lector de voz: qué lee'],['moment','📍 Marcar un momento']]],
+    ['BRB',[['brb','🎞 BRB: controlar tus clips']]],
     ['Otros',[['wait','⏱ Esperar unos segundos']]]];
   var TE=null, teDelT=0;
+  // v71 · 🎞 BRB: tu pantalla de clips (se arma en BRB Studio). El player de OBS ve el cambio en ≤ 3 s.
+  var BRB_ACT=[['next','⏭ Siguiente clip'],['pause','⏯ Pausar o seguir'],['mute','🔇 Quitar o poner el sonido'],['msg','💬 Poner un mensaje'],['msgreset','↩️ Volver al mensaje de la playlist'],['pl','🎞 Cambiar de playlist']];
+  var BRBL={pls:null, busy:false, err:''};
+  function brbLoad(force){
+    if (BRBL.busy || (BRBL.pls && !force)) return;
+    BRBL.busy=true;
+    apiPost('/api/brb?a=state', {}).then(function(j){
+      BRBL.busy=false;
+      if (j && j.ok){ BRBL.pls=j.pls||[]; BRBL.err=''; } else BRBL.err=(j&&j.error)||'No pude leer tus playlists';
+      if (TE) tePaint();
+    });
+  }
+  function brbRun(s){
+    var a=s.act||'next';
+    var b=a==='next' ? {cmd:'next'} : a==='pause' ? {cmd:'pausetoggle'} : a==='mute' ? {cmd:'mutetoggle'}
+        : a==='msg' ? {cmd:'msg', msg:String(s.text||'')} : a==='msgreset' ? {cmd:'msg', msg:null} : {cmd:'pl', pl:s.pl};
+    return apiPost('/api/brb?a=ctl', b).then(function(j){
+      if (!j || !j.ok) throw new Error((j&&j.error)||'El BRB no contestó');
+      var c=(j.scr&&j.scr.ctl)||{};
+      return a==='next' ? '⏭ BRB: siguiente clip' : a==='pause' ? (c.paused ? '⏸ BRB en pausa' : '▶ BRB sigue') : a==='mute' ? (c.muted ? '🔇 BRB sin sonido' : '🔊 BRB con sonido')
+           : a==='msg' ? (s.text ? '💬 BRB: «'+s.text+'»' : '💬 BRB sin mensaje') : a==='msgreset' ? '💬 BRB: el mensaje de la playlist' : '🎞 BRB: '+(s.plName||'otra playlist');
+    });
+  }
   var GOAL_N=[[1,'Sumar 1 sub'],[2,'Sumar 2'],[5,'Sumar 5'],[-1,'Restar 1 sub'],[-2,'Restar 2'],[-5,'Restar 5'],[0,'Quitar lo que sumé o resté (volver al conteo real)']];
   function catLoad(force){
     if (OB.catBusy || (OB.cat && !force)) return;
@@ -6529,6 +6559,17 @@
       h+='<div class="fld"><label>Nota (opcional)</label><input data-f="text" maxlength="140" autocomplete="off" placeholder="Ej. Chopo saludando" value="'+esc(s.text||'')+'"></div>';
       h+=note('Guarda el minuto del stream para encontrarlo después (★ → 📍 Momentos). Tus mods lo hacen con '+esc(biGet('mom').c)+'.');
     }
+    else if (s.t==='brb'){
+      var ba=s.act||'next';
+      h+=fsel('Acción del BRB','act', BRB_ACT, ba);
+      if (ba==='msg') h+='<div class="fld"><label>Mensaje (vacío = sin mensaje)</label><input data-f="text" maxlength="80" autocomplete="off" placeholder="Ej. Sin señal, ya vuelvo 📶" value="'+esc(s.text||'')+'"></div>';
+      if (ba==='pl'){
+        brbLoad(false);
+        var bpl=(BRBL.pls||[]).map(function(p){ return [p.id, p.name+' · '+p.n+' clips']; });
+        h+=fsel('Playlist','pl', bpl, s.pl, BRBL.pls ? (bpl.length ? 'Elige la playlist' : 'Todavía no tienes playlists') : (BRBL.err||'Cargando tus playlists…'));
+      }
+      h+=note('Controla la escena de tus clips (BRB). Tus clips y playlists se arman en <a href="brb.html" target="_blank" rel="noopener" style="color:var(--kick)">BRB Studio</a>.');
+    }
     else if (s.t==='goal'){
       h+=fsel('Cuánto','n', GOAL_N, s.n==null ? 1 : s.n);
       h+=note('Para cuando algo falló: corrige la meta de subs (★ y el letrero de OBS) solo en este stream. El siguiente empieza sin ajuste.');
@@ -6539,7 +6580,7 @@
   }
   function tePaint(){
     if (!TE || !$cpanel.classList.contains('tilem')) return;
-    var t=TE.t, needObs=t.steps.some(function(s){ return ['chat','wait','title','sceneback','mix'].indexOf(s.t)<0; });
+    var t=TE.t, needObs=t.steps.some(function(s){ return ['chat','wait','title','sceneback','mix','brb'].indexOf(s.t)<0; });
     var note = !needObs ? '' : OB.catBusy ? '<div class="nt">Leyendo lo que hay en tu OBS…</div>'
              : OB.catErr ? '<div class="nt" style="color:#ff8a80">⚠ '+esc(OB.catErr)+' <b class="q" id="teCat" style="color:var(--txt)">↻ Otra vez</b></div>'
              : OB.cat ? '<div class="nt">¿Agregaste algo en OBS y no sale? <b class="q" id="teCat" style="color:var(--txt)">↻ Leer mi OBS otra vez</b></div>' : '';
@@ -6584,6 +6625,7 @@
           else if (f==='cat'){ var c=recentCats().filter(function(x){ return String(x.id)===v; })[0]; if (c) s.cat={id:c.id, name:c.name}; else delete s.cat; }
           else {
             s[f]=v;
+            if (s.t==='brb' && f==='pl'){ var bp=(BRBL.pls||[]).filter(function(x){ return x.id===v; })[0]; s.plName=bp ? bp.name : ''; }
             if (s.t==='item' && f==='scene'){ delete s.source; delete s.id; }
             if (s.t==='item' && f==='source'){ var it=(((OB.cat||{}).items||{})[s.scene]||[]).find(function(x){ return x.name===v; }); s.id=it ? it.id : undefined;
               // en las reglas «mostrar… esperar… ocultar»: el otro paso toma la misma fuente
@@ -6637,12 +6679,14 @@
       else if (s.t==='text' && !s.input) bad=p+'elige la fuente de texto';
       else if (s.t==='chat' && !String(s.text||'').trim()) bad=p+'escribe el mensaje';
       else if (s.t==='title' && !String(s.text||'').trim() && !s.cat) bad=p+'escribe el título o elige la categoría';
+      else if (s.t==='brb' && s.act==='pl' && !s.pl) bad=p+'elige la playlist';
     });
     if (bad){ TE.err=bad; tePaint(); return; }
     t.name=String(t.name||'').trim();
     t.steps.forEach(function(s){ if (s.t==='chat' || s.t==='title' || s.t==='moment') s.text=String(s.text||'').trim();
       if ((s.t==='item'||s.t==='filter'||s.t==='mute'||s.t==='stream'||s.t==='record'||s.t==='mix') && !s.mode) s.mode='toggle'; if (s.t==='wait' && !s.s) s.s=1;
-      if (s.t==='goal' && s.n==null) s.n=1; if (s.t==='tts' && !s.who) s.who='all'; });
+      if (s.t==='goal' && s.n==null) s.n=1; if (s.t==='tts' && !s.who) s.who='all';
+      if (s.t==='brb'){ if (!s.act) s.act='next'; if (s.act==='msg') s.text=String(s.text||'').trim().slice(0,80); } });
     if (TE.kind==='cmd'){
       var cc=JSON.parse(JSON.stringify(mcCfg())), it={c:t.c, steps:t.steps};
       if (TE.i==null) cc.cmds=(cc.cmds||[]).concat([it]); else cc.cmds[TE.i]=it;
