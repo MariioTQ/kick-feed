@@ -1262,7 +1262,7 @@
 (function(){
   "use strict";
 
-  var VERSION = '71 · 25 oct 2026';   // se muestra abajo en el engrane ⚙
+  var VERSION = '72 · 26 oct 2026';   // se muestra abajo en el engrane ⚙
   // v71 · 🎞 BRB en los Atajos: siguiente clip, pausa, sonido, mensaje y playlist de tu BRB Studio (brb.html)
 
   /* ============================================================
@@ -5924,7 +5924,7 @@
       case 'moment': return s.text ? '📍 '+String(s.text).slice(0,18) : '📍 Momento';
       case 'brb': var ba=s.act||'next';
         return ba==='next' ? 'BRB ⏭ Siguiente' : ba==='pause' ? 'BRB ⏯ Pausa' : ba==='mute' ? 'BRB 🔇 Sonido'
-             : ba==='msg' ? (s.text ? String(s.text).slice(0,22) : 'BRB sin mensaje') : ba==='msgreset' ? 'BRB mensaje normal' : 'BRB: '+String(s.plName||'Playlist').slice(0,16);
+             : ba==='msg' ? (s.text ? String(s.text).slice(0,22) : 'BRB sin mensaje') : ba==='msgnext' ? 'BRB 🔁 Mensaje' : ba==='msgreset' ? 'BRB mensaje normal' : 'BRB: '+String(s.plName||'Playlist').slice(0,16);
     }
     return 'Atajo';
   }
@@ -6413,26 +6413,27 @@
     ['Otros',[['wait','⏱ Esperar unos segundos']]]];
   var TE=null, teDelT=0;
   // v71 · 🎞 BRB: tu pantalla de clips (se arma en BRB Studio). El player de OBS ve el cambio en ≤ 3 s.
-  var BRB_ACT=[['next','⏭ Siguiente clip'],['pause','⏯ Pausar o seguir'],['mute','🔇 Quitar o poner el sonido'],['msg','💬 Poner un mensaje'],['msgreset','↩️ Volver al mensaje de la playlist'],['pl','🎞 Cambiar de playlist']];
-  var BRBL={pls:null, busy:false, err:''};
+  // v72: «Siguiente mensaje guardado» y elegir de tus mensajes guardados (se editan en BRB Studio → Más)
+  var BRB_ACT=[['next','⏭ Siguiente clip'],['pause','⏯ Pausar o seguir'],['mute','🔇 Quitar o poner el sonido'],['msg','💬 Poner un mensaje'],['msgnext','🔁 Siguiente mensaje guardado'],['msgreset','↩️ Volver al mensaje de la playlist'],['pl','🎞 Cambiar de playlist']];
+  var BRBL={pls:null, msgs:null, busy:false, err:''};
   function brbLoad(force){
     if (BRBL.busy || (BRBL.pls && !force)) return;
     BRBL.busy=true;
     apiPost('/api/brb?a=state', {}).then(function(j){
       BRBL.busy=false;
-      if (j && j.ok){ BRBL.pls=j.pls||[]; BRBL.err=''; } else BRBL.err=(j&&j.error)||'No pude leer tus playlists';
+      if (j && j.ok){ BRBL.pls=j.pls||[]; BRBL.msgs=(j.scr && j.scr.cfg && j.scr.cfg.msgs)||[]; BRBL.err=''; } else BRBL.err=(j&&j.error)||'No pude leer tus playlists';
       if (TE) tePaint();
     });
   }
   function brbRun(s){
     var a=s.act||'next';
     var b=a==='next' ? {cmd:'next'} : a==='pause' ? {cmd:'pausetoggle'} : a==='mute' ? {cmd:'mutetoggle'}
-        : a==='msg' ? {cmd:'msg', msg:String(s.text||'')} : a==='msgreset' ? {cmd:'msg', msg:null} : {cmd:'pl', pl:s.pl};
+        : a==='msg' ? {cmd:'msg', msg:String(s.text||'')} : a==='msgnext' ? {cmd:'msgnext'} : a==='msgreset' ? {cmd:'msg', msg:null} : {cmd:'pl', pl:s.pl};
     return apiPost('/api/brb?a=ctl', b).then(function(j){
       if (!j || !j.ok) throw new Error((j&&j.error)||'El BRB no contestó');
       var c=(j.scr&&j.scr.ctl)||{};
       return a==='next' ? '⏭ BRB: siguiente clip' : a==='pause' ? (c.paused ? '⏸ BRB en pausa' : '▶ BRB sigue') : a==='mute' ? (c.muted ? '🔇 BRB sin sonido' : '🔊 BRB con sonido')
-           : a==='msg' ? (s.text ? '💬 BRB: «'+s.text+'»' : '💬 BRB sin mensaje') : a==='msgreset' ? '💬 BRB: el mensaje de la playlist' : '🎞 BRB: '+(s.plName||'otra playlist');
+           : a==='msg' ? (s.text ? '💬 BRB: «'+s.text+'»' : '💬 BRB sin mensaje') : a==='msgnext' ? '💬 BRB: «'+(c.msg||'')+'»' : a==='msgreset' ? '💬 BRB: el mensaje de la playlist' : '🎞 BRB: '+(s.plName||'otra playlist');
     });
   }
   var GOAL_N=[[1,'Sumar 1 sub'],[2,'Sumar 2'],[5,'Sumar 5'],[-1,'Restar 1 sub'],[-2,'Restar 2'],[-5,'Restar 5'],[0,'Quitar lo que sumé o resté (volver al conteo real)']];
@@ -6562,7 +6563,13 @@
     else if (s.t==='brb'){
       var ba=s.act||'next';
       h+=fsel('Acción del BRB','act', BRB_ACT, ba);
-      if (ba==='msg') h+='<div class="fld"><label>Mensaje (vacío = sin mensaje)</label><input data-f="text" maxlength="80" autocomplete="off" placeholder="Ej. Sin señal, ya vuelvo 📶" value="'+esc(s.text||'')+'"></div>';
+      if (ba==='msg'){
+        brbLoad(false);
+        var bms=BRBL.msgs||[], inList=!s.custom && bms.indexOf(s.text||'')>=0;
+        if (bms.length) h+=fsel('Mensaje','pick', [['','✏️ Escribir otro…']].concat(bms.map(function(m){ return [m, m]; })), inList ? s.text : '');
+        if (!inList || !bms.length) h+='<div class="fld"><label>'+(bms.length ? 'Tu mensaje' : 'Mensaje')+' (vacío = sin mensaje)</label><input data-f="text" maxlength="80" autocomplete="off" placeholder="Ej. Sin señal, ya vuelvo 📶" value="'+esc(s.text||'')+'"></div>';
+      }
+      if (ba==='msgnext'){ brbLoad(false); h+=note('Cada toque pone el siguiente de tus mensajes guardados'+(BRBL.msgs ? ' ('+BRBL.msgs.length+')' : '')+'. Se editan en BRB Studio → Más → Mensajes guardados.'); }
       if (ba==='pl'){
         brbLoad(false);
         var bpl=(BRBL.pls||[]).map(function(p){ return [p.id, p.name+' · '+p.n+' clips']; });
@@ -6622,6 +6629,7 @@
           else if (f==='s') s.s=Number(v);
           else if (f==='n') s.n=Number(v);
           else if (f==='who') s.who=v;
+          else if (f==='pick' && s.t==='brb'){ s.text=v; s.custom=!v; }         // v72: de tus mensajes guardados
           else if (f==='cat'){ var c=recentCats().filter(function(x){ return String(x.id)===v; })[0]; if (c) s.cat={id:c.id, name:c.name}; else delete s.cat; }
           else {
             s[f]=v;

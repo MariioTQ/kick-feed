@@ -42,6 +42,9 @@ const HIDE_MAX = 50;           // nombres sin «clip de»
 // Como en tu BRB viejo (offline-escene): cuando el clip lo sacaste tú, un bot
 // o alguien de esta lista, en pantalla no sale «clip de …».
 const HIDE_DEF = ['mariotq', 'aizulimx', 'instantclipsbot'];
+// Tus mensajes guardados (los editas en el estudio; salen en «En vivo» y en los Atajos del feed)
+const MSGS_MAX = 20;
+const MSGS_DEF = ['¡Ahorita regreso!', 'Vuelvo en unos minutos', 'Sin señal, ya vuelvo 📶', 'Comiendo algo, ya regreso 🍔'];
 
 /* ---------------- Redis (Upstash, por su API web) ---------------- */
 function envEnding(suffix, alt) {
@@ -173,9 +176,12 @@ function cleanSet(s) {
     fit: pick(s.fit, ['contain', 'cover'], 'contain'),
     progress: bool(s.progress, false),
     msg: str(s.msg, MSG_MAX),
+    msgStyle: pick(s.msgStyle, ['pill', 'sign'], 'pill'),          // cápsula o el letrero de tu BRB viejo
     card: {
       title: bool(c.title, true), channel: bool(c.channel, true), platform: bool(c.platform, true),
-      creator: bool(c.creator, true), pos: pick(c.pos, POS, 'bottom-right'), by: pick(c.by, ['en', 'es'], 'en')
+      creator: bool(c.creator, true), pos: pick(c.pos, POS, 'bottom-right'), by: pick(c.by, ['en', 'es'], 'en'),
+      style: pick(c.style, ['classic', 'tq', 'mini'], 'classic'),   // clásico, TQ (letra de tu BRB viejo) o mínimo
+      time: pick(c.time, ['all', 'start'], 'all')                    // todo el clip o solo al empezar
     }
   };
 }
@@ -216,8 +222,12 @@ function cleanCfg(c) {
   const names = Array.isArray(c.hideBy) ? c.hideBy : HIDE_DEF;
   const hideBy = [];
   names.forEach(n => { n = String(n || '').trim().replace(/^@/, '').toLowerCase(); if (/^[a-z0-9_.-]{1,40}$/.test(n) && hideBy.indexOf(n) < 0 && hideBy.length < HIDE_MAX) hideBy.push(n); });
-  return { hideBy, alerts: bool(c.alerts, true) };
+  const msgs = [];
+  (Array.isArray(c.msgs) ? c.msgs : MSGS_DEF).forEach(m => { m = str(String(m || ''), MSG_MAX); if (m && msgs.indexOf(m) < 0 && msgs.length < MSGS_MAX) msgs.push(m); });
+  return { hideBy, alerts: bool(c.alerts, true), msgs };
 }
+// al player solo le sirve esto (se manda cada 3 s, mejor chiquito)
+function cfgPlayer(c) { c = cleanCfg(c); return { hideBy: c.hideBy, alerts: c.alerts }; }
 function pubScr(scr) { return { id: scr.id, pl: scr.pl, ctl: scr.ctl, cfg: cleanCfg(scr.cfg) }; }
 function syncRevs(scr, list) {
   const revs = {};
@@ -237,7 +247,7 @@ async function play(req, res, q) {
   const by = new Map(((lib && lib.clips) || []).map(c => [ckey(c), c]));
   const clips = pl ? pl.clips.map(k => by.get(k)).filter(Boolean) : [];
   return send(res, 200, { ok: true, pl: pl ? { id: pl.id, name: pl.name, rev: pl.rev, set: cleanSet(pl.set) } : null,
-                          clips, ctl: newCtl(scr.ctl), cfg: cleanCfg(scr.cfg), active: scr.pl });
+                          clips, ctl: newCtl(scr.ctl), cfg: cfgPlayer(scr.cfg), active: scr.pl });
 }
 // Cada 3 s mientras la escena está al aire: una sola lectura de la base
 // (MGET cuenta como una). Trae la pantalla y el último sub/regalo/Kicks.
@@ -252,7 +262,7 @@ async function tick(req, res, q) {
     NOWC = { c: sig, at: Date.now() };
     try { await setJSON('brb:now', { c, st, pl: str(q.pl, 20), t: str(q.t, 200), e, at: Date.now() }); } catch (err) {}
   }
-  const cfg = cleanCfg(scr.cfg);
+  const cfg = cfgPlayer(scr.cfg);
   const ev = cfg.alerts && last && last.id && Date.now() - (last.at || 0) < 10 * 60000 ? last : null;
   return send(res, 200, { ok: true, pl: scr.pl || '', rev: (scr.revs || {})[scr.pl] || 0, ctl: newCtl(scr.ctl), cfg, ev });
 }
@@ -382,6 +392,11 @@ async function ctl(req, res, b) {
   else if (cmd === 'unmute') { c.muted = false; bump('unmute'); }
   else if (cmd === 'mutetoggle') { c.muted = !c.muted; bump(c.muted ? 'mute' : 'unmute'); }
   else if (cmd === 'msg') { c.msg = b.msg == null ? null : str(String(b.msg), MSG_MAX); bump('msg'); }
+  else if (cmd === 'msgnext') {                       // atajo: el siguiente de tus mensajes guardados
+    const ms = cleanCfg(scr.cfg).msgs;
+    if (!ms.length) return send(res, 400, { ok: false, error: 'No tienes mensajes guardados' });
+    c.msg = ms[(ms.indexOf(c.msg) + 1) % ms.length]; bump('msg');
+  }
   else if (cmd === 'pl') {
     const [pls] = await getMany('brb:pls');
     const list = (pls && pls.list) || [];
@@ -415,7 +430,8 @@ async function trim(req, res, b) {
 async function cfg(req, res, b) {
   const scr = await screen(false);
   const cur = cleanCfg(scr.cfg);
-  scr.cfg = cleanCfg({ hideBy: Array.isArray(b.hideBy) ? b.hideBy : cur.hideBy, alerts: typeof b.alerts === 'boolean' ? b.alerts : cur.alerts });
+  scr.cfg = cleanCfg({ hideBy: Array.isArray(b.hideBy) ? b.hideBy : cur.hideBy, alerts: typeof b.alerts === 'boolean' ? b.alerts : cur.alerts,
+                       msgs: Array.isArray(b.msgs) ? b.msgs : cur.msgs });
   await setJSON('brb:scr', scr);
   return send(res, 200, { ok: true, cfg: scr.cfg });
 }
