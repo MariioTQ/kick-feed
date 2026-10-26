@@ -27,6 +27,8 @@
      newscreen  cambiar el link del player si se filtró (con clave)
      trim   recortar un clip (desde dónde y hasta dónde) (con clave)
      cfg    nombres sin «clip de» y avisos de subs/Kicks (con clave)
+     tw     respaldo del player: le pide a Twitch el video de un clip de tu biblioteca
+            y lo manda directo ahí (público, con el id de pantalla; el video no pasa por aquí)
    ================================================================== */
 'use strict';
 const crypto = require('crypto');
@@ -244,15 +246,50 @@ let NOWC = { c: null, at: 0 };
 async function tick(req, res, q) {
   const [scr, last] = await getMany('brb:scr', 'brb:last');
   if (!scr || !scr.id || String(q.s || '') !== scr.id) return send(res, 404, { ok: false, error: 'Este link del BRB ya no sirve' });
-  const c = str(q.c, 140), st = pick(q.st, ['play', 'pause', 'idle', 'load'], 'idle');
-  const sig = c + '|' + st;
+  const c = str(q.c, 140), st = pick(q.st, ['play', 'pause', 'idle', 'load'], 'idle'), e = str(q.e, 160);
+  const sig = c + '|' + st + '|' + e;
   if (sig !== NOWC.c || Date.now() - NOWC.at > 60000) {
     NOWC = { c: sig, at: Date.now() };
-    try { await setJSON('brb:now', { c, st, pl: str(q.pl, 20), t: str(q.t, 200), at: Date.now() }); } catch (e) {}
+    try { await setJSON('brb:now', { c, st, pl: str(q.pl, 20), t: str(q.t, 200), e, at: Date.now() }); } catch (err) {}
   }
   const cfg = cleanCfg(scr.cfg);
   const ev = cfg.alerts && last && last.id && Date.now() - (last.at || 0) < 10 * 60000 ? last : null;
   return send(res, 200, { ok: true, pl: scr.pl || '', rev: (scr.revs || {})[scr.pl] || 0, ctl: newCtl(scr.ctl), cfg, ev });
+}
+
+// Respaldo para clips de Twitch: si el player no consigue el video, tu servidor se lo pide a
+// Twitch y lo redirige al .mp4 (1080). Solo para clips de tu biblioteca y con el id de pantalla,
+// para que nadie más use tu servidor. Una lectura de la base (MGET) por clip.
+const TWC = new Map();
+const TW_CLIENT = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
+async function twLink(slug) {
+  const hit = TWC.get(slug);
+  if (hit && Date.now() - hit.at < 10 * 60000) return hit.url;
+  const r = await fetch('https://gql.twitch.tv/gql', { method: 'POST', headers: { 'Client-Id': TW_CLIENT, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operationName: 'VideoAccessToken_Clip', variables: { slug },
+      query: 'query VideoAccessToken_Clip($slug: ID!){clip(slug:$slug){playbackAccessToken(params:{platform:"web",playerBackend:"mediaplayer",playerType:"site"}){signature value} videoQualities{quality sourceURL}}}' }) });
+  const j = await r.json().catch(() => ({}));
+  const clip = j && j.data && j.data.clip;
+  if (j && j.data && clip === null) { const e = new Error('ese clip ya no existe en Twitch'); e.code = 404; throw e; }
+  const q = ((clip && clip.videoQualities) || []).slice().sort((a, b) => (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0));
+  const tok = clip && clip.playbackAccessToken;
+  if (!q.length || !tok) throw new Error('Twitch no dio el video');
+  const best = q.filter(x => (parseInt(x.quality, 10) || 0) <= 1080)[0] || q[0];
+  const u = new URL(best.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value);
+  if (TWC.size > 300) TWC.clear();
+  TWC.set(slug, { url: u.toString(), at: Date.now() });
+  return u.toString();
+}
+async function tw(req, res, q) {
+  const id = String(q.id || '');
+  if (!TW_ID.test(id)) return send(res, 400, { ok: false, error: 'clip raro' });
+  const [scr, l] = await getMany('brb:scr', 'brb:lib');
+  if (!scr || !scr.id || String(q.s || '') !== scr.id) return send(res, 404, { ok: false, error: 'Este link del BRB ya no sirve' });
+  if (!((l && l.clips) || []).some(c => c.p === 'twitch' && c.id === id)) return send(res, 404, { ok: false, error: 'Ese clip no está en tu biblioteca' });
+  try {
+    const url = await twLink(id);
+    res.statusCode = 302; res.setHeader('Location', url); res.setHeader('Cache-Control', 'no-store'); return res.end();
+  } catch (e) { return send(res, e.code === 404 ? 404 : 502, { ok: false, error: e.message }); }
 }
 
 /* ---------------- lo que pide el estudio ---------------- */
@@ -523,6 +560,7 @@ module.exports = async function handler(req, res) {
   try {
     if (a === 'play') return await play(req, res, q);
     if (a === 'tick') return await tick(req, res, q);
+    if (a === 'tw') return await tw(req, res, q);
     if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
     const b = await readJSONBody(req);
     if (!(await checkKey(b.key || q.key))) return send(res, 403, { ok: false, error: 'La clave 🔑 no coincide' });
