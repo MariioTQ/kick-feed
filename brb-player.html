@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>BRB Clips TQ</title>
 <!-- Solo puede hablar con tu servidor, con Kick y con Twitch. Los videos llegan directo de Kick y Twitch. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; connect-src 'self' https://kick-feed-mariotq.vercel.app https://kick.com https://*.kick.com https://gql.twitch.tv; media-src https: blob:; img-src https: data:; frame-src https://clips.twitch.tv; worker-src blob:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; connect-src 'self' https://kick-feed-mariotq.vercel.app https://kick.com https://*.kick.com https://gql.twitch.tv; media-src 'self' https: blob:; img-src https: data:; frame-src https://clips.twitch.tv; worker-src blob:">
 <style>
 /* ==================================================================
    BRB · PLAYER PARA OBS (fuente de navegador 1920 × 1080)
@@ -105,6 +105,14 @@ var audio=null, audioBad=false, previewSound=false;
 var CFG={hideBy:[], alerts:true}, BOOT_AT=Date.now(), evLast='';
 
 function key(c){ return c.p+':'+c.id; }
+// Lo último que falló: se manda al servidor con la pregunta de cada 3 s y sale en el estudio (Control).
+var lastErr='';
+// Cada intento que falla queda en el registro de OBS; al estudio solo se le avisa si el clip se brincó.
+function oops(s, why){
+  var c=s && s.clip, t=(c ? (c.p==='kick' ? 'Kick' : 'Twitch')+' «'+String(c.t||c.id).slice(0,40)+'»: ' : '')+why;
+  if (s) s.why=t.slice(0,160);
+  try{ console.error('[BRB] '+t); }catch(e){}
+}
 function say(t){ if (!DEBUG && !PREVIEW){ note.classList.remove('on'); return; } note.textContent=t||''; note.classList.toggle('on', !!t); }
 function log(){ if (DEBUG) try{ console.log.apply(console, ['[BRB]'].concat([].slice.call(arguments))); }catch(e){} }
 function S(){ return setPreview||set||{}; }
@@ -149,7 +157,8 @@ function tick(){
   var c=cur && cur.clip;
   var u=API+'/api/brb?a=tick&s='+encodeURIComponent(SCR)+
     '&c='+encodeURIComponent(c ? key(c) : '')+'&st='+(c ? (ctl.paused ? 'pause' : cur.playing ? 'play' : 'load') : 'idle')+
-    '&pl='+encodeURIComponent(man && man.pl ? man.pl.id : '')+'&t='+encodeURIComponent(c ? String(c.t||'').slice(0,100) : '');
+    '&pl='+encodeURIComponent(man && man.pl ? man.pl.id : '')+'&t='+encodeURIComponent(c ? String(c.t||'').slice(0,100) : '')+
+    (lastErr ? '&e='+encodeURIComponent(lastErr) : '');
   getJSON(u, 8000).then(function(j){
     if (j._st===404) return shutdown('Este link del BRB ya no sirve.');
     if (!j.ok) return;
@@ -204,10 +213,10 @@ function takeKey(avoid){
 
 /* ---------------- de dónde sale cada clip ---------------- */
 // Kick: el .m3u8 que se guardó al importar → si falla, se le pregunta a Kick otra vez.
-// Twitch: el .mp4 directo de Twitch. Su servidor de videos a veces no manda el permiso
-// que se necesita para emparejar el volumen (cambia según el clip y la calidad), así que:
-// 1) la mejor calidad con permiso, 2) otra calidad con permiso, 3) sin permiso (suena a su
-// volumen original) y 4) solo si todo eso falla, el reproductor oficial de Twitch.
+// Twitch: igual que tu BRB viejo (offline-escene): el .mp4 directo en 1080, sin pedirle
+// permisos extra a su servidor de videos (ahí fallaba). Si Twitch no le contesta al player,
+// tu servidor le pregunta y lo manda directo al mismo video (como lo hace IRLhosting).
+// El reproductor de Twitch ya no se usa: si un clip no carga, se brinca al siguiente.
 function sourcesOf(c){
   if (c.p==='kick'){
     var L=[]; if (c.u) L.push(function(){ return Promise.resolve({type:'hls', url:c.u}); });
@@ -218,18 +227,16 @@ function sourcesOf(c){
       return {type:'hls', url:u}; }); });
     return L;
   }
-  var skip=function(){ var e=new Error('sin otra calidad'); e.skip=true; throw e; };
   return [
-    function(){ return twLinks(c).then(function(u){ return {type:'mp4', url:u[0], cors:true}; }); },
-    function(){ return twLinks(c).then(function(u){ return u[1] ? {type:'mp4', url:u[1], cors:true} : skip(); }); },
-    function(){ return twLinks(c).then(function(u){ return {type:'mp4', url:u[0], cors:false}; }); },
-    function(){ return Promise.resolve({type:'embed', clip:c.id}); }
+    function(){ return twLinks(c).then(function(u){ return {type:'mp4', url:u, cors:false, how:'twitch'}; }); },
+    function(){ if (!SCR) throw new Error('sin pantalla');
+      return Promise.resolve({type:'mp4', url:API+'/api/brb?a=tw&s='+encodeURIComponent(SCR)+'&id='+encodeURIComponent(c.id), cors:false, how:'servidor'}); }
   ];
 }
 // El link firmado de Twitch dura horas: se pide una vez y se reusa un rato.
 function twLinks(c){
-  if (c._tw && Date.now()-c._tw.at<10*60000) return Promise.resolve(c._tw.urls);
-  return twitchMp4(c).then(function(urls){ c._tw={at:Date.now(), urls:urls}; return urls; });
+  if (c._tw && Date.now()-c._tw.at<10*60000) return Promise.resolve(c._tw.url);
+  return twitchMp4(c).then(function(url){ c._tw={at:Date.now(), url:url}; return url; });
 }
 function twitchMp4(c){
   var ac=new AbortController(), t=setTimeout(function(){ ac.abort(); }, 9000);
@@ -237,15 +244,16 @@ function twitchMp4(c){
     headers:{'Client-Id':TW_CLIENT,'Content-Type':'application/json'},
     body:JSON.stringify({operationName:'VideoAccessToken_Clip', variables:{slug:c.id},
       query:'query VideoAccessToken_Clip($slug: ID!){clip(slug:$slug){playbackAccessToken(params:{platform:"web",playerBackend:"mediaplayer",playerType:"site"}){signature value} videoQualities{quality sourceURL}}}'})})
-  .then(function(r){ return r.json(); })
+  .then(function(r){ if (!r.ok) throw new Error('Twitch no le contestó al player ('+r.status+')'); return r.json(); })
   .then(function(j){
     var clip=j && j.data && j.data.clip;
     if (j && j.data && clip===null){ var e=new Error('el clip ya no existe en Twitch'); e.dead=true; throw e; }
     var q=(clip && clip.videoQualities)||[], tok=clip && clip.playbackAccessToken;
     if (!q.length || !tok) throw new Error('Twitch no dio el video');
     q=q.slice().sort(function(a,b){ return (parseInt(b.quality,10)||0)-(parseInt(a.quality,10)||0); });
-    var ok=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=1080; }); if (!ok.length) ok=q;
-    return ok.slice(0, 2).map(function(x){ var u=new URL(x.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value); return u.toString(); });
+    var best=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=1080; })[0]||q[0];   // la más alta: 1080
+    var u=new URL(best.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value);
+    return u.toString();
   }).finally(function(){ clearTimeout(t); });
 }
 
@@ -315,7 +323,7 @@ function prepare(s){
   var list=sourcesOf(s.clip), i=++s.i;
   if (i>=list.length){ return failSlot(s); }
   var token=i;
-  later(s, 'load', function(){ log('tardó demasiado', s.key); prepare(s); }, LOAD_MS);
+  later(s, 'load', function(){ oops(s, 'tardó más de '+(LOAD_MS/1000)+' s en cargar'); prepare(s); }, LOAD_MS);
   list[i]().then(function(src){
     if (s.dead || s.i!==token) return;
     if (src.type==='embed'){ s.kind='embed'; s.embed=src.clip; s.ready=true; clearTimeout(s.timers.load); onReady(s); return; }
@@ -325,9 +333,13 @@ function prepare(s){
     v.style.objectFit=S().fit==='cover' ? 'cover' : 'contain';
     var tA=trimOf(s.clip).a;                         // recorte: brinca al inicio que elegiste
     v.addEventListener('loadedmetadata', function(){ if (s.el===v && tA>0 && !s.hls && (v.currentTime||0)<tA-0.3){ try{ v.currentTime=tA; }catch(e){} } });
-    v.addEventListener('canplay', function(){ if (s.el!==v || s.ready) return; if (tA>0 && !s.hls && v.seeking) return; s.ready=true; clearTimeout(s.timers.load); onReady(s); });
-    v.addEventListener('seeked', function(){ if (s.el!==v || s.ready || v.readyState<3) return; s.ready=true; clearTimeout(s.timers.load); onReady(s); });
-    v.addEventListener('error', function(){ if (s.el===v){ log('error de video', s.key); prepare(s); } });
+    // Listo para tocar en cuanto trae su primer cuadro. No se espera a «canplay»: con el video
+    // en pausa (precargando mientras suena otro) el navegador de OBS a veces deja de bajarlo.
+    var mark=function(){ if (s.el!==v || s.ready) return; if (tA>0 && !s.hls && v.seeking) return; s.ready=true; clearTimeout(s.timers.load); clearTimeout(s.timers.meta); onReady(s); };
+    v.addEventListener('loadeddata', mark); v.addEventListener('canplay', mark);
+    v.addEventListener('loadedmetadata', function(){ if (s.el===v) later(s, 'meta', mark, 1200); });
+    v.addEventListener('seeked', function(){ if (s.el===v && v.readyState>=2) mark(); });
+    v.addEventListener('error', function(){ if (s.el===v){ oops(s, 'el video no cargó ('+(src.how||src.type)+', error '+(v.error ? v.error.code : '?')+')'); prepare(s); } });
     v.addEventListener('ended', function(){ if (s.el===v && s===cur) finish(s, false); });
     v.addEventListener('timeupdate', function(){ if (s.el===v && s===cur) progress(s); });
     s.el=v; stage.appendChild(v);
@@ -337,20 +349,24 @@ function prepare(s){
       if (Hls.isSupported()){
         var h=new Hls({enableWorker:false, maxBufferLength:30, maxMaxBufferLength:60, backBufferLength:10, startPosition:trimOf(s.clip).a||-1});
         s.hls=h;
-        h.on(Hls.Events.ERROR, function(_e, d){ if (d && d.fatal && s.el===v){ log('hls', d.details); prepare(s); } });
+        h.on(Hls.Events.ERROR, function(_e, d){ if (d && d.fatal && s.el===v){ oops(s, 'Kick: '+(d.details||'error')); prepare(s); } });
+        h.on(Hls.Events.MANIFEST_PARSED, function(){     // siempre la más alta (hasta 1080)
+          var lv=h.levels||[], best=-1; lv.forEach(function(l, i){ var hh=l.height||0; if (hh<=1080 && (best<0 || hh>(lv[best].height||0))) best=i; });
+          if (lv.length>1 && best>=0){ try{ h.currentLevel=best; }catch(e){} }
+        });
         h.loadSource(src.url); h.attachMedia(v);
       } else if (v.canPlayType('application/vnd.apple.mpegurl')){ v.src=src.url; v.load(); }
       else prepare(s);
     });
   }).catch(function(e){
     if (s.dead || s.i!==token) return;
-    log('fuente falló', s.key, e && e.message);
+    oops(s, e && e.message || 'no se pudo');
     if (e && e.dead) return failSlot(s);
     prepare(s);                                       // la siguiente forma de cargarlo
   });
 }
 function failSlot(s){
-  failed[s.key]=1; var wasCur=s===cur, wasNxt=s===nxt;
+  failed[s.key]=1; if (s.why) lastErr=s.why; var wasCur=s===cur, wasNxt=s===nxt;
   kill(s);
   if (wasNxt){ nxt=null; preload(); }
   if (wasCur){ cur=null; advance(false); }
@@ -579,7 +595,8 @@ if (PREVIEW) window.addEventListener('message', function(ev){
 if (DEBUG) window.BRB_DEBUG=function(){ return {cur:cur&&cur.key, kind:cur&&cur.kind, playing:!!(cur&&cur.playing), paused:ctl.paused, muted:wantMuted(),
   gain:audio ? audio.master.gain.value : null, ctx:audio ? audio.ctx.state : null, routed:!!(cur&&cur.node), keys:keys.slice(), failed:Object.keys(failed),
   pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className, played:Object.keys(readPlayed()), bag:bag.slice(),
-  t:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentTime : null, cors:!!(cur&&cur.cors), src:cur ? cur.src : null, by:card.querySelector('.by').hidden ? '' : card.querySelector('.by').textContent, cfg:CFG, ev:evEl.className+'|'+evEl.textContent}; };
+  t:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentTime : null, cors:!!(cur&&cur.cors), src:cur ? cur.src : null, err:lastErr,
+  vsrc:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentSrc : '', by:card.querySelector('.by').hidden ? '' : card.querySelector('.by').textContent, cfg:CFG, ev:evEl.className+'|'+evEl.textContent}; };
 
 function boot(){
   if (!SCR){ say('Falta el id de la pantalla (s=…). Copia el link desde el estudio.'); return; }

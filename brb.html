@@ -450,7 +450,7 @@ code.link{display:block;word-break:break-all;background:var(--bg);border:1px sol
           <h3>Sonido</h3>
           <div class="sw"><span><b>Sonido de los clips</b><small>Va al mezclador de audio de OBS</small></span><button class="tg" data-s="sound" aria-label="Sonido de los clips"></button></div>
           <div class="sw" style="display:block"><span><b>Volumen</b></span><div class="rng"><input type="range" min="0" max="100" step="1" id="sVol" aria-label="Volumen"><b id="sVolN">100%</b></div></div>
-          <div class="sw"><span><b>Volumen parejo</b><small>Los clips bajitos suben y los ruidosos bajan. Algunos clips de Twitch no lo permiten y suenan a su volumen original.</small></span><button class="tg" data-s="normalize" aria-label="Volumen parejo"></button></div>
+          <div class="sw"><span><b>Volumen parejo</b><small>Los clips bajitos suben y los ruidosos bajan. Funciona en los de Kick; los de Twitch suenan a su volumen original (Twitch no deja tocar su audio).</small></span><button class="tg" data-s="normalize" aria-label="Volumen parejo"></button></div>
         </div>
         <div class="card">
           <h3>Video</h3>
@@ -1290,7 +1290,7 @@ function twMp4(slug){
     var q=(clip && clip.videoQualities)||[], tok=clip && clip.playbackAccessToken;
     if (!q.length || !tok) throw new Error('Twitch no dio el video');
     q=q.slice().sort(function(a,b){ return (parseInt(b.quality,10)||0)-(parseInt(a.quality,10)||0); });
-    var best=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=720; })[0]||q[q.length-1];
+    var best=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=1080; })[0]||q[0];   // la más alta: 1080
     var u=new URL(best.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value);
     return u.toString();
   });
@@ -1749,7 +1749,8 @@ function paintCtl(){
   $('cNow').innerHTML=(c ? thumb(c) : '<span class="ph"></span>')+'<div style="min-width:0"><b>'+
     (st.onAir ? esc(c ? c.t : (now && now.t) || 'Cargando clip…') : 'La escena del BRB no está al aire')+'</b><small>'+
     (st.onAir ? (c ? '<span class="tag '+(c.p==='kick'?'kk':'tw')+'">'+(c.p==='kick'?'KICK':'TWITCH')+'</span> '+(c.cr?'clip de '+esc(c.cr)+' · ':'') : '')+esc(plName)+(ctl.paused?' · ⏸ en pausa':'')+(ctl.muted?' · 🔇 sin sonido':'')
-               : 'Los controles se aplican en cuanto la pongas'+(plName?' · '+esc(plName):''))+'</small></div>';
+               : 'Los controles se aplican en cuanto la pongas'+(plName?' · '+esc(plName):''))+'</small>'+
+    (now && now.e ? '<small class="bad" style="display:block;margin-top:4px">⚠ Último clip que no cargó: '+esc(now.e)+' (se brincó solo)</small>' : '')+'</div>';
   var pb=$('cPause'); pb.classList.toggle('act', !!ctl.paused); pb.querySelector('span').textContent=ctl.paused ? 'Seguir' : 'Pausar';
   var mb=$('cMute'); mb.classList.toggle('act', !!ctl.muted); mb.querySelector('span').textContent=ctl.muted ? 'Con sonido' : 'Silenciar';
   var pm=(P && P.id===D.scr.pl ? P.set.msg : (plById(D.scr.pl)||{set:{}}).set.msg)||'';
