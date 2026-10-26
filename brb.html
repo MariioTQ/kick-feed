@@ -11,8 +11,9 @@
 /* ==================================================================
    BRB STUDIO
    Arma la pantalla de BRB con clips de tus canales de Twitch y Kick.
-   1) Clips: importa de tus canales o pega links.
-   2) Playlist: elige cuáles y en qué orden.
+   1) Clips: importa de tus canales, pega links o trae tu playlist de IRLhosting.
+   1b) Hoy: los clips de tu último stream para agregar los que te gusten.
+   2) Playlist: elige cuáles y en qué orden (y recórtalos a tu gusto).
    3) Ajustes: mensaje, sonido, recuadro… con vista previa en vivo.
    4) OBS: crea la escena y la fuente con un toque.
    5) Control: siguiente, pausa, silencio, mensaje (también en los Atajos del feed).
@@ -192,6 +193,29 @@ input:focus,select:focus,textarea:focus{border-color:var(--kick)}
 .list.dropzone{outline:2px dashed var(--kick);outline-offset:4px;border-radius:12px}
 #pasteCard.drop{outline:2px dashed var(--kick);outline-offset:4px}
 dialog.cv{width:min(900px,calc(100% - 24px));padding:14px}
+/* recortar */
+.trim{margin-top:12px;padding:12px;border:1px solid var(--ln2);border-radius:12px;background:var(--p1)}
+.trh{display:flex;align-items:center;gap:10px;justify-content:space-between;font-size:14px}
+.trh small{color:var(--dim);font-size:12.5px;text-align:right}
+.trbar{position:relative;height:46px;margin:6px 0 8px;touch-action:none}
+.trbar .trk{position:absolute;left:11px;right:11px;top:19px;height:8px;border-radius:999px;background:var(--p3)}
+.trbar .trsel{position:absolute;top:19px;height:8px;border-radius:999px;background:var(--kick)}
+.trbar .trnow{position:absolute;top:9px;width:2px;height:28px;margin-left:-1px;background:#fff;opacity:.85;pointer-events:none}
+.trbar input[type=range]{position:absolute;left:0;top:0;width:100%;height:46px;margin:0;padding:0;background:none;border:0;pointer-events:none;-webkit-appearance:none;appearance:none;outline:none}
+.trbar input[type=range]::-webkit-slider-runnable-track{background:none;border:0;height:46px}
+.trbar input[type=range]::-webkit-slider-thumb{pointer-events:auto;-webkit-appearance:none;width:22px;height:36px;margin-top:5px;border-radius:7px;background:#fff;border:3px solid var(--kick);cursor:ew-resize;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.trbar input[type=range]::-moz-range-thumb{pointer-events:auto;width:16px;height:30px;border-radius:7px;background:#fff;border:3px solid var(--kick);cursor:ew-resize}
+.trbar input[type=range]::-moz-range-track{background:none}
+.trbar input[type=range]:focus-visible::-webkit-slider-thumb{outline:2px solid #fff;outline-offset:2px}
+.trim .row{flex-wrap:wrap;gap:8px}
+.cl .du.cut,.it .cut{color:var(--kick)}
+/* hoy */
+.hoyh{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}
+.hoyh .seg{flex:1 1 320px}
+.cl .bd small.when{color:var(--tx);opacity:.8}
+.cl .new{position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.75);color:var(--kick);font-size:11px;font-weight:800;padding:1px 6px;border-radius:5px}
+.hnames{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.hnames .chip{display:inline-flex;align-items:center;gap:6px}
 .cvh{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:10px}
 .cvh h2{margin:2px 0 0;font-size:17px;line-height:1.3}
 .cvh small{color:var(--dim);font-size:12.5px}
@@ -254,6 +278,7 @@ code.link{display:block;word-break:break-all;background:var(--bg);border:1px sol
 
 <nav class="tabs" id="tabs" hidden>
   <button data-t="clips"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 20h16"/></svg>Clips</button>
+  <button data-t="hoy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M12 14.5l1 2 2.2.3-1.6 1.5.4 2.2-2-1.1-2 1.1.4-2.2-1.6-1.5 2.2-.3z"/></svg>Hoy</button>
   <button data-t="pl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h11M4 12h11M4 18h7M17 14l4 3-4 3z"/></svg>Playlist</button>
   <button data-t="set"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Ajustes</button>
   <button data-t="obs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>OBS</button>
@@ -294,6 +319,15 @@ code.link{display:block;word-break:break-all;background:var(--bg);border:1px sol
       <div class="sw" style="border:0;margin-top:6px"><span><b>Agregar también a la playlist</b><small id="alsoName">La que estás editando</small></span><button class="tg on" id="alsoTg" aria-label="Agregar también a la playlist"></button></div>
     </div>
 
+    <div class="sec card" id="irlCard">
+      <h2>Traer de IRLhosting</h2>
+      <p class="sub">Pega el link de tu playlist de IRLhosting: el de la fuente de OBS, que empieza con <b>media.irlcdn.com/brb/</b>. Se copian los clips, el orden y los ajustes. Allá no se borra nada.</p>
+      <label class="f">Link del reproductor<input type="text" id="irlIn" placeholder="https://media.irlcdn.com/brb/bp_…" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <div class="sw" style="border:0;margin-top:6px"><span><b>Crear una playlist igual</b><small>Con el mismo orden y ajustes que allá</small></span><button class="tg on" id="irlPl" aria-label="Crear una playlist igual"></button></div>
+      <button class="btn pri wide" id="irlGo">Traer mis clips</button>
+      <div class="note" id="irlSt" hidden></div>
+    </div>
+
     </div>
     <div>
     <div class="sec card" id="pasteCard">
@@ -315,6 +349,20 @@ code.link{display:block;word-break:break-all;background:var(--bg);border:1px sol
       <div class="row"><button class="btn" id="pcCopy">Copiar link</button><button class="btn" id="pcShare" hidden>Compartir…</button></div>
     </div>
     </div>
+    </div>
+  </section>
+
+  <!-- ======================= HOY ======================= -->
+  <section data-p="hoy" hidden>
+    <div class="sec">
+      <h2>Clips del día</h2>
+      <p class="sub">Cuando termines tu stream, aquí ves los clips que sacaron. Tócalos para meterlos a tu playlist, ▶ para verlos y recortarlos.</p>
+      <div class="hoyh">
+        <div class="seg" id="hoyWin"><button data-w="stream">Último stream</button><button data-w="day">24 horas</button><button data-w="week">7 días</button></div>
+        <button class="btn sm" id="hoyRf">↻ Actualizar</button>
+      </div>
+      <div class="row" style="margin-bottom:12px"><span class="grow note" id="hoyInfo" style="margin:0"></span><button class="btn sm pri" id="hoyAll" hidden>Agregar todos</button></div>
+      <div class="cards" id="hoyCards"></div>
     </div>
   </section>
 
@@ -423,6 +471,14 @@ code.link{display:block;word-break:break-all;background:var(--bg);border:1px sol
             <label class="f">Texto<select id="sBy"><option value="en">clipped by …</option><option value="es">clip de …</option></select></label>
           </div>
         </div>
+        <div class="card">
+          <h3>Para todas tus playlists</h3>
+          <div class="sw"><span><b>Avisar subs, regalos y Kicks</b><small>Sale «¡Nuevo sub!» con el nombre encima de los clips, como en tu BRB viejo</small></span><button class="tg" id="gAlerts" aria-label="Avisar subs, regalos y Kicks"></button></div>
+          <div style="margin-top:12px"><b style="font-size:14.5px">No mostrar quién sacó el clip cuando fue…</b>
+            <p class="note" style="margin:4px 0 0">Tú, tus bots de clips o quien tú digas. En tus propios clips nunca sale.</p></div>
+          <div class="hnames" id="gHide"></div>
+          <div class="row"><input type="text" id="gHideIn" class="grow" placeholder="nombre de usuario" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn sm" id="gHideAdd">Agregar</button></div>
+        </div>
       </div>
     </div>
   </section>
@@ -476,6 +532,15 @@ code.link{display:block;word-break:break-all;background:var(--bg);border:1px sol
 <dialog id="cvDlg" class="cv" aria-labelledby="cvT">
   <div class="cvh"><div style="min-width:0"><small id="cvM"></small><h2 id="cvT"></h2></div><button class="btn sm ghost" id="cvX" aria-label="Cerrar">✕</button></div>
   <div class="cvmedia" id="cvMedia"></div>
+  <div class="trim" id="cvTrim" hidden>
+    <div class="trh"><b>✂ Recortar</b><small id="trInfo"></small></div>
+    <div class="trbar" id="trBar"><div class="trk"></div><div class="trsel" id="trSel"></div><div class="trnow" id="trNow"></div>
+      <input type="range" id="trA" aria-label="Dónde empieza"><input type="range" id="trB" aria-label="Dónde termina"></div>
+    <div class="row"><button class="btn sm" id="trSetA">⇤ Empieza aquí</button><button class="btn sm" id="trSetB">Termina aquí ⇥</button><button class="btn sm" id="trPlay">▶ Ver recorte</button>
+      <span class="grow"></span><button class="btn sm ghost" id="trReset">Sin recorte</button><button class="btn sm pri" id="trSave" disabled>Guardar recorte</button></div>
+    <p class="note" id="trNote" style="margin:8px 0 0">Mueve las dos agarraderas o usa «Empieza aquí» y «Termina aquí» mientras se reproduce. El video original no cambia.</p>
+  </div>
+  <p class="note" id="cvNoTrim" hidden></p>
   <div class="row" style="margin-top:12px"><a class="btn sm" id="cvOpen" target="_blank" rel="noopener">Abrir en Twitch</a><span class="grow"></span><button class="btn sm" id="cvPrev" aria-label="Clip anterior">‹</button><button class="btn sm" id="cvNext" aria-label="Clip siguiente">›</button><button class="btn pri" id="cvAdd">Agregar a la playlist</button></div>
 </dialog>
 <dialog id="dlg"><h2 id="dlgT"></h2><p class="sub" id="dlgB"></p><input type="text" id="dlgIn" maxlength="40" autocomplete="off" hidden>
@@ -534,8 +599,13 @@ function api(a, body){
 }
 
 /* ---------------- datos ---------------- */
-var D={clips:[], pls:[], scr:{id:'', pl:'', ctl:{}}, now:null, limits:{lib:3000, pls:20, clips:500, msg:80}};
+var D={clips:[], pls:[], scr:{id:'', pl:'', ctl:{}}, now:null, session:null, limits:{lib:3000, pls:20, clips:500, msg:80}};
 var LIB={};                    // clave → clip
+var XTRA={};                   // clips que viste en «Hoy» y todavía no están en tu biblioteca
+function clipOf(k){ return LIB[k]||XTRA[k]||null; }
+// Recorte: el clip se ve desde «a» hasta «b» (b = 0: hasta el final). El video original no cambia.
+function effD(c){ if (!c) return 0; var d=c.d||0, a=c.a||0, b=c.b||0; return Math.max(0, (b ? (d ? Math.min(b, d) : b) : d)-a); }
+function durTxt(c){ return fmtD(effD(c))+(c && (c.a || c.b) ? ' ✂' : ''); }
 var P=null;                    // la playlist que estás editando (copia local)
 var dirty=false, saving=false, saveT=0;
 function setLib(clips){ D.clips=clips; LIB={}; clips.forEach(function(c){ LIB[key(c)]=c; }); }
@@ -546,7 +616,8 @@ function playerUrl(){ return API+'/brb-player.html?s='+encodeURIComponent(D.scr.
 function load(){
   return api('lib').then(function(j){
     if (!j.ok){ if (j._st===403){ showGate('Esa clave no coincide con la de tu servidor.'); return false; } toast(j.error||'No pude cargar', true); return false; }
-    setLib(j.clips||[]); D.pls=j.pls||[]; D.scr=j.scr||D.scr; D.now=j.now; D.limits=j.limits||D.limits;
+    setLib(j.clips||[]); D.pls=j.pls||[]; D.scr=j.scr||D.scr; D.now=j.now; D.limits=j.limits||D.limits; D.session=j.session||null;
+    Object.keys(XTRA).forEach(function(k){ if (LIB[k]) delete XTRA[k]; });
     // si tienes cambios sin guardar en la playlist, se quedan (se guardan solos en un momento)
     if (P && (dirty || saving) && plById(P.id)) return true;
     var want=(P && plById(P.id)) ? P.id : (D.scr.pl || (D.pls[0] && D.pls[0].id) || '');
@@ -611,6 +682,7 @@ function goTab(t){
   if (t==='set') pvOpen(); else pvClose();
   if (t==='ctl') ctlStart(); else ctlStop();
   if (t==='pl') paintPl();
+  if (t==='hoy') hoyOpen();
   window.scrollTo(0, 0);
 }
 $('tabs').addEventListener('click', function(ev){ var b=ev.target.closest('button[data-t]'); if (b) goTab(b.getAttribute('data-t')); });
@@ -902,7 +974,7 @@ if (MQ){ var onMq=function(){ if (TAB==='pl') paintPl(); }; if (MQ.addEventListe
 var plView='in', inShown=60, fShown=60, fSeed=Math.random(), VIEW=[], lastIx=-1;
 var F0={q:'', p:'all', sort:'views', hide:false, ch:'', cat:'', cr:'', dur:'', minV:0, from:'', to:'', feat:false};
 var fFilter=JSON.parse(JSON.stringify(F0));
-function plDur(keys){ var s=0, mx=(P && P.set && P.set.maxSec)||0; keys.forEach(function(k){ var c=LIB[k]; if (c){ var d=c.d||0; s+=mx>0 ? Math.min(d, mx) : d; } }); return s; }
+function plDur(keys){ var s=0, mx=(P && P.set && P.set.maxSec)||0; keys.forEach(function(k){ var c=LIB[k]; if (c){ var d=effD(c); s+=mx>0 ? Math.min(d, mx) : d; } }); return s; }
 function paintPlHeader(){
   var sel=$('plSel');
   sel.innerHTML=D.pls.map(function(p){ return '<option value="'+esc(p.id)+'"'+(P && p.id===P.id?' selected':'')+'>'+esc(p.name)+' · '+p.clips.length+'</option>'; }).join('')||'<option value="">Sin playlists</option>';
@@ -937,7 +1009,7 @@ function paintIn(){
     var c=LIB[k];
     return '<div class="it'+(c?'':' gone')+'" data-i="'+i+'" data-k="'+esc(k)+'" draggable="true"><span class="n">'+(i+1)+'</span>'+thumb(c)+
       '<div class="tx"><b>'+esc(c ? c.t||'(sin título)' : 'Ya no está en tu biblioteca')+'</b><small>'+
-      (c ? tagHtml(c)+' '+fmtD(c.d)+(c.cr?' · '+esc(c.cr):'') : 'Se va a saltar · quítalo')+'</small></div>'+
+      (c ? tagHtml(c)+' <span class="'+(c.a||c.b ? 'cut' : '')+'">'+durTxt(c)+'</span>'+(c.cr?' · '+esc(c.cr):'') : 'Se va a saltar · quítalo')+'</small></div>'+
       '<div class="ac"><button data-a="up" aria-label="Subir"'+(i===0?' disabled':'')+'>'+ICON.up+'</button><button data-a="down" aria-label="Bajar"'+(i===n-1?' disabled':'')+'>'+ICON.down+'</button>'+
       '<button data-a="rm" aria-label="Quitar de la playlist">'+ICON.x+'</button></div></div>';
   }).join('');
@@ -1104,19 +1176,34 @@ function paintFind(){
     var k=key(c), on=!!r.inPl[k];
     return '<div class="cl'+(on?' on':'')+'" role="button" tabindex="0" draggable="true" data-k="'+esc(k)+'" data-ix="'+ix+'" aria-pressed="'+on+'" aria-label="'+esc(c.t)+'">'+
       '<div class="th">'+thumb(c)+tagHtml(c)+'<button class="pvb" aria-label="Ver el clip"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>'+
-      '<span class="ck">'+ICON.ck+'</span><span class="du">'+fmtD(c.d)+'</span></div>'+
+      '<span class="ck">'+ICON.ck+'</span><span class="du'+(c.a||c.b ? ' cut' : '')+'">'+durTxt(c)+'</span></div>'+
       '<div class="bd"><b>'+esc(c.t||'(sin título)')+'</b><small>'+fmtN(c.v)+' vistas · '+esc(fmtDate(c.at))+(c.f?' · ★':'')+'</small><small>'+(c.cr?'por '+esc(c.cr):'&nbsp;')+'</small></div></div>';
   }).join('');
   $('fMore').hidden=L.length<=fShown; $('fMore').textContent='Ver más ('+(L.length-fShown)+')';
 }
+// Un clip de «Hoy» que todavía no está en tu biblioteca: se guarda primero.
+function toLib(keys){
+  var need=keys.filter(function(k){ return !LIB[k] && XTRA[k]; });
+  if (!need.length) return Promise.resolve(true);
+  if (D.clips.length+need.length>D.limits.lib){ toast('Tu biblioteca está llena ('+D.limits.lib+' clips).', true); return Promise.resolve(false); }
+  return api('add', {clips:need.map(function(k){ return XTRA[k]; })}).then(function(j){
+    if (!j.ok){ toast(j.error||'No se guardó', true); return false; }
+    need.forEach(function(k){ var c=XTRA[k]; delete XTRA[k]; if (!LIB[k]){ LIB[k]=c; D.clips.push(c); } });
+    paintLib(); return true;
+  });
+}
+function afterPlChange(){ touch(); paintPlHeader(); markCards(); if (isDesk()) paintIn(); cvBtn(); paintHoy(); }
 function toggleClip(k){
   return ensurePl().then(function(){
     if (!P) return;
     var i=P.clips.indexOf(k);
-    if (i>=0) P.clips.splice(i, 1);
-    else { if (P.clips.length>=D.limits.clips) return toast('La playlist ya tiene '+D.limits.clips+' clips, el máximo.', true); P.clips.push(k); }
-    touch(); paintPlHeader(); markCards(); if (isDesk()) paintIn(); cvBtn();
-    if (fFilter.hide && i<0) setTimeout(paintFind, 250);
+    if (i>=0){ P.clips.splice(i, 1); afterPlChange(); return; }
+    if (P.clips.length>=D.limits.clips) return toast('La playlist ya tiene '+D.limits.clips+' clips, el máximo.', true);
+    return toLib([k]).then(function(ok){
+      if (!ok || !P || P.clips.indexOf(k)>=0) return;
+      P.clips.push(k); afterPlChange();
+      if (fFilter.hide) setTimeout(paintFind, 250);
+    });
   });
 }
 function addKeys(keys){
@@ -1179,53 +1266,372 @@ function loadHls(){
   });
   return hlsP;
 }
-var CV={k:null, list:[], hls:null};
-function cvStop(){ if (CV.hls){ try{ CV.hls.destroy(); }catch(e){} CV.hls=null; } var v=$('cvMedia').querySelector('video'); if (v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} } $('cvMedia').innerHTML=''; }
+var CV={k:null, list:[], hls:null, v:null};
+function cvStop(){
+  if (CV.hls){ try{ CV.hls.destroy(); }catch(e){} CV.hls=null; }
+  var v=$('cvMedia').querySelector('video'); if (v){ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} }
+  CV.v=null; $('cvMedia').innerHTML=''; trimHide('');
+}
 function cvBtn(){
   if (!$('cvDlg').open || !CV.k) return;
   var inPl=!!(P && P.clips.indexOf(CV.k)>=0), i=CV.list.indexOf(CV.k);
   $('cvAdd').textContent=inPl ? 'Quitar de la playlist' : 'Agregar a la playlist'; $('cvAdd').className='btn '+(inPl ? 'dng' : 'pri');
   $('cvPrev').disabled=i<=0; $('cvNext').disabled=i<0 || i>=CV.list.length-1;
 }
+// Twitch: el mismo video directo que usa el player de OBS (así se puede recortar).
+function twMp4(slug){
+  return fetch('https://gql.twitch.tv/gql',{method:'POST', credentials:'omit', headers:{'Client-Id':TW_CLIENT,'Content-Type':'application/json'},
+    body:JSON.stringify({operationName:'VideoAccessToken_Clip', variables:{slug:slug},
+      query:'query VideoAccessToken_Clip($slug: ID!){clip(slug:$slug){playbackAccessToken(params:{platform:"web",playerBackend:"mediaplayer",playerType:"site"}){signature value} videoQualities{quality sourceURL}}}'})})
+  .then(function(r){ if (!r.ok) throw new Error('Twitch contestó '+r.status); return r.json(); })
+  .then(function(j){
+    var clip=j && j.data && j.data.clip;
+    if (j && j.data && clip===null){ var e=new Error('Ese clip ya no existe en Twitch'); e.dead=true; throw e; }
+    var q=(clip && clip.videoQualities)||[], tok=clip && clip.playbackAccessToken;
+    if (!q.length || !tok) throw new Error('Twitch no dio el video');
+    q=q.slice().sort(function(a,b){ return (parseInt(b.quality,10)||0)-(parseInt(a.quality,10)||0); });
+    var best=q.filter(function(x){ return (parseInt(x.quality,10)||0)<=720; })[0]||q[q.length-1];
+    var u=new URL(best.sourceURL); u.searchParams.set('sig', tok.signature); u.searchParams.set('token', tok.value);
+    return u.toString();
+  });
+}
+function clipLink(c){ return c.p==='kick' ? 'https://kick.com/'+encodeURIComponent(c.ch||CH_KICK)+'/clips/'+encodeURIComponent(c.id) : 'https://clips.twitch.tv/'+encodeURIComponent(c.id); }
 function openClip(k, list){
-  var c=LIB[k]; if (!c) return;
+  var c=clipOf(k); if (!c) return;
   CV.k=k; if (list) CV.list=list;
   $('cvT').textContent=c.t||'(sin título)';
   $('cvM').innerHTML=tagHtml(c)+' '+esc(c.chd||c.ch||'')+(c.cr?' · clip de '+esc(c.cr):'')+' · '+fmtN(c.v)+' vistas · '+fmtD(c.d)+(c.at?' · '+esc(fmtDate(c.at)):'')+(c.cat?' · '+esc(c.cat):'');
-  var link=c.p==='kick' ? 'https://kick.com/'+encodeURIComponent(c.ch||CH_KICK)+'/clips/'+encodeURIComponent(c.id) : 'https://clips.twitch.tv/'+encodeURIComponent(c.id);
-  $('cvOpen').href=link; $('cvOpen').textContent=c.p==='kick' ? 'Abrir en Kick' : 'Abrir en Twitch';
+  $('cvOpen').href=clipLink(c); $('cvOpen').textContent=c.p==='kick' ? 'Abrir en Kick' : 'Abrir en Twitch';
   cvStop();
-  var box=$('cvMedia');
+  var box=$('cvMedia'), mine=k;
+  var v=document.createElement('video'); v.controls=true; v.playsInline=true; v.autoplay=true; v.preload='auto'; if (c.th) v.poster=c.th;
+  v.addEventListener('loadedmetadata', function(){ if (CV.k===mine && CV.v===v) trimInit(c, v); });
+  v.addEventListener('timeupdate', function(){ if (CV.v===v) trimTick(); });
+  box.appendChild(v); CV.v=v;
+  var fail=function(msg){ if (CV.k!==mine) return; cvStop(); box.innerHTML='<p>'+esc(msg)+'</p>'; };
   if (c.p==='twitch'){
-    var f=document.createElement('iframe'); f.title='Clip de Twitch'; f.setAttribute('allow', 'autoplay; fullscreen'); f.setAttribute('allowfullscreen', '');
-    f.src='https://clips.twitch.tv/embed?clip='+encodeURIComponent(c.id)+'&parent='+encodeURIComponent(location.hostname)+'&autoplay=true&muted=false';
-    box.appendChild(f);
+    twMp4(c.id).then(function(u){ if (CV.k!==mine || CV.v!==v) return; v.onerror=function(){ if (CV.v===v) twEmbed(c, mine); }; v.src=u; },
+      function(e){ if (CV.k!==mine) return; if (e && e.dead) return fail('Este clip ya no existe en Twitch (lo borraron). En OBS se salta solo.'); twEmbed(c, mine); });
   } else {
-    var v=document.createElement('video'); v.controls=true; v.playsInline=true; v.autoplay=true; if (c.th) v.poster=c.th; box.appendChild(v);
-    var tried=false, mine=k;
-    var fail=function(){ if (CV.k===mine) box.innerHTML='<p>No se pudo ver aquí. Puede que lo hayan borrado en Kick; en OBS se salta solo.</p>'; };
+    var tried=false;
+    var kfail=function(){ fail('No se pudo ver aquí. Puede que lo hayan borrado en Kick; en OBS se salta solo.'); };
     var refresh=function(){
-      if (tried) return fail(); tried=true;
-      kickGet('https://kick.com/api/v2/clips/'+encodeURIComponent(c.id)).then(function(j){ var u=j && j.clip && (j.clip.clip_url || j.clip.video_url); if (!u) return fail(); c.u=u; go(u); }, fail);
+      if (tried) return kfail(); tried=true;
+      kickGet('https://kick.com/api/v2/clips/'+encodeURIComponent(c.id)).then(function(j){ var u=j && j.clip && (j.clip.clip_url || j.clip.video_url); if (!u) return kfail(); c.u=u; go(u); }, kfail);
     };
     var go=function(url){ return loadHls().then(function(Hls){
-      if (CV.k!==mine) return;
-      if (Hls.isSupported()){ var h=new Hls({enableWorker:false}); CV.hls=h; h.on(Hls.Events.ERROR, function(_e, d){ if (d && d.fatal){ try{ h.destroy(); }catch(e){} CV.hls=null; refresh(); } }); h.loadSource(url); h.attachMedia(v); }
+      if (CV.k!==mine || CV.v!==v) return;
+      if (Hls.isSupported()){ var h=new Hls({enableWorker:false, startPosition:c.a||-1}); CV.hls=h; h.on(Hls.Events.ERROR, function(_e, d){ if (d && d.fatal){ try{ h.destroy(); }catch(e){} CV.hls=null; refresh(); } }); h.loadSource(url); h.attachMedia(v); }
       else if (v.canPlayType('application/vnd.apple.mpegurl')){ v.src=url; v.onerror=refresh; }
-      else fail();
-    }, fail); };
+      else kfail();
+    }, kfail); };
     if (c.u) go(c.u); else refresh();
   }
   if (!$('cvDlg').open) $('cvDlg').showModal();
   cvBtn();
 }
+// Si Twitch no deja el video directo: su reproductor oficial (ahí no se puede recortar).
+function twEmbed(c, mine){
+  if (CV.k!==mine) return;
+  cvStop();
+  var f=document.createElement('iframe'); f.title='Clip de Twitch'; f.setAttribute('allow', 'autoplay; fullscreen'); f.setAttribute('allowfullscreen', '');
+  f.src='https://clips.twitch.tv/embed?clip='+encodeURIComponent(c.id)+'&parent='+encodeURIComponent(location.hostname)+'&autoplay=true&muted=false';
+  $('cvMedia').appendChild(f);
+  trimHide('Twitch no dejó cargar este clip directo, así que aquí no se puede recortar. Inténtalo más tarde.');
+}
 function cvStep(d){ var i=CV.list.indexOf(CV.k)+d; if (i>=0 && i<CV.list.length) openClip(CV.list[i]); }
 $('cvX').onclick=function(){ $('cvDlg').close(); };
 $('cvDlg').addEventListener('close', function(){ cvStop(); CV.k=null; });
 $('cvDlg').addEventListener('click', function(ev){ if (ev.target===this) this.close(); });   // tocar afuera cierra
-$('cvDlg').addEventListener('keydown', function(ev){ if (ev.key==='ArrowLeft'){ ev.preventDefault(); cvStep(-1); } if (ev.key==='ArrowRight'){ ev.preventDefault(); cvStep(1); } });
+$('cvDlg').addEventListener('keydown', function(ev){
+  if (ev.target && ev.target.tagName==='INPUT') return;                       // las flechas mueven el recorte
+  if (ev.key==='ArrowLeft'){ ev.preventDefault(); cvStep(-1); } if (ev.key==='ArrowRight'){ ev.preventDefault(); cvStep(1); } });
 $('cvPrev').onclick=function(){ cvStep(-1); }; $('cvNext').onclick=function(){ cvStep(1); };
 $('cvAdd').onclick=function(){ if (CV.k) toggleClip(CV.k); };
+
+/* ✂ recortar: se guarda desde dónde hasta dónde (el player de OBS lo respeta) */
+var TR=null;
+var r1=function(x){ return Math.round(x*10)/10; };
+function trimHide(msg){ TR=null; $('cvTrim').hidden=true; $('cvNoTrim').hidden=!msg; $('cvNoTrim').textContent=msg||''; }
+function trimInit(c, v){
+  var dur=isFinite(v.duration) && v.duration>0 ? v.duration : (c.d||0);
+  if (!(dur>=2)) return trimHide('');
+  dur=r1(dur);
+  var a=Math.min(c.a||0, dur-1), b=c.b && c.b<=dur ? c.b : dur; if (b<a+1) b=Math.min(dur, a+1);
+  TR={k:CV.k, a:a, b:b, dur:dur, a0:c.a||0, b0:(c.b && c.b<dur-0.2) ? c.b : 0, play:false};
+  ['trA','trB'].forEach(function(id){ var el=$(id); el.min=0; el.max=dur; el.step=0.1; });
+  $('trA').value=a; $('trB').value=b;
+  $('cvTrim').hidden=false; $('cvNoTrim').hidden=true;
+  if (a>0 && (v.currentTime||0)<a-0.3){ try{ v.currentTime=a; }catch(e){} }
+  trimPaint();
+}
+function trimSaved(){ if (!TR) return {a:0, b:0}; return {a:r1(TR.a), b:TR.b>=TR.dur-0.2 ? 0 : r1(TR.b)}; }
+function trimPaint(){
+  if (!TR) return;
+  var pa=TR.a/TR.dur, pb=TR.b/TR.dur, sel=$('trSel');
+  sel.style.left='calc(11px + (100% - 22px) * '+pa.toFixed(4)+')'; sel.style.width='calc((100% - 22px) * '+(pb-pa).toFixed(4)+')';
+  var t=CV.v ? (CV.v.currentTime||0) : 0; $('trNow').style.left='calc(11px + (100% - 22px) * '+Math.min(1, t/TR.dur).toFixed(4)+')';
+  var cut=TR.a>0.05 || TR.b<TR.dur-0.2, len=TR.b-TR.a;
+  $('trInfo').textContent=cut ? 'Dura '+fmtD(len)+' de '+fmtD(TR.dur)+' · de '+fmtD(TR.a)+' a '+fmtD(TR.b) : 'Clip completo · '+fmtD(TR.dur);
+  var sv=trimSaved(), changed=sv.a!==r1(TR.a0) || sv.b!==r1(TR.b0);
+  var inLib=!!LIB[TR.k];
+  $('trSave').disabled=!changed && inLib;
+  $('trSave').textContent=inLib ? 'Guardar recorte' : (cut ? 'Guardar y agregar' : 'Agregar sin recorte');
+  $('trReset').disabled=!cut;
+}
+function trimSeek(t){ var v=CV.v; if (!v || !TR) return; TR.play=false; try{ v.pause(); v.currentTime=Math.max(0, Math.min(TR.dur-0.05, t)); }catch(e){} trimPaint(); }
+function trimTick(){
+  if (!TR || !CV.v) return;
+  var v=CV.v;
+  if (TR.play && (v.currentTime||0)>=TR.b-0.05){ TR.play=false; try{ v.pause(); }catch(e){} }
+  trimPaint();
+}
+$('trA').addEventListener('input', function(){ if (!TR) return; TR.a=Math.max(0, Math.min(Number(this.value)||0, TR.b-1)); this.value=TR.a; trimSeek(TR.a); });
+$('trB').addEventListener('input', function(){ if (!TR) return; TR.b=Math.min(TR.dur, Math.max(Number(this.value)||0, TR.a+1)); this.value=TR.b; trimSeek(TR.b-0.1); });
+$('trSetA').onclick=function(){ if (!TR || !CV.v) return; TR.a=Math.max(0, Math.min(r1(CV.v.currentTime||0), TR.b-1)); $('trA').value=TR.a; trimPaint(); };
+$('trSetB').onclick=function(){ if (!TR || !CV.v) return; TR.b=Math.min(TR.dur, Math.max(r1(CV.v.currentTime||0), TR.a+1)); $('trB').value=TR.b; TR.play=false; try{ CV.v.pause(); }catch(e){} trimPaint(); };
+$('trPlay').onclick=function(){ var v=CV.v; if (!TR || !v) return; TR.play=true; try{ v.currentTime=TR.a; }catch(e){} v.play().catch(function(){}); };
+$('trReset').onclick=function(){ if (!TR) return; TR.a=0; TR.b=TR.dur; $('trA').value=0; $('trB').value=TR.dur; trimPaint(); };
+$('trSave').onclick=function(){
+  if (!TR) return;
+  var k=TR.k, sv=trimSaved(), btn=this, c=clipOf(k);
+  if (!c) return;
+  if (!LIB[k]){                                        // un clip de «Hoy»: se guarda ya recortado y entra a tu playlist
+    if (sv.a) c.a=sv.a; else delete c.a;
+    if (sv.b) c.b=sv.b; else delete c.b;
+    btn.disabled=true;
+    return toggleClip(k).then(function(){ if (TR && TR.k===k){ TR.a0=sv.a; TR.b0=sv.b; } trimPaint(); if (LIB[k]) toast('✓ '+(sv.a||sv.b ? 'Recortado y agregado' : 'Agregado')+' a «'+(P ? P.name : 'tu playlist')+'»'); refreshClipViews(); });
+  }
+  btn.disabled=true; btn.textContent='Guardando…';
+  api('trim', {k:k, a:sv.a, b:sv.b}).then(function(j){
+    if (!j.ok){ toast(j.error||'No se guardó el recorte', true); trimPaint(); return; }
+    var lc=LIB[k]; if (lc){ if (j.clip.a) lc.a=j.clip.a; else delete lc.a; if (j.clip.b) lc.b=j.clip.b; else delete lc.b; }
+    if (TR && TR.k===k){ TR.a0=j.clip.a||0; TR.b0=j.clip.b||0; }
+    trimPaint(); refreshClipViews(); pvReload(true);
+    toast(sv.a||sv.b ? '✓ Recorte guardado: ahora dura '+fmtD(effD(lc)) : '✓ Sin recorte: se ve completo');
+  });
+};
+function refreshClipViews(){ if (TAB==='pl') paintPl(); else if (isDesk()) paintIn(); paintPlHeader(); paintHoy(); }
+
+/* ======================= HOY: clips del día ======================= */
+var HOY={win:'stream', keys:[], loading:false, err:'', note:'', at:0, range:null};
+try{ var hw=localStorage.getItem('brb.hoy.win'); if (hw==='day' || hw==='week' || hw==='stream') HOY.win=hw; }catch(e){}
+function hms(sec){ sec=Math.max(0, sec|0); var h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), x=sec%60; return (h ? h+':'+(m<10?'0':'') : '')+m+':'+(x<10?'0':'')+x; }
+function hhmm(ms){ try{ return new Date(ms).toLocaleTimeString('es-MX', {hour:'numeric', minute:'2-digit'}); }catch(e){ return ''; } }
+function hoyRange(){
+  var now=Date.now(), se=D.session;
+  if (HOY.win==='stream' && se && se.start){
+    return {from:se.start-10*60000, to:se.end ? se.end+3*3600000 : now+60000, stream:true,
+            label:(se.live ? 'Stream en vivo desde las ' : 'Último stream: ')+fmtDate(se.start)+' '+hhmm(se.start)+(se.end ? ' a '+hhmm(se.end) : '')};
+  }
+  if (HOY.win==='week') return {from:now-7*864e5, to:now+60000, label:'Últimos 7 días'};
+  return {from:now-864e5, to:now+60000, label:'Últimas 24 horas', noSession:HOY.win==='stream'};
+}
+function hoyOpen(){
+  document.querySelectorAll('#hoyWin button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-w')===HOY.win); });
+  if (!HOY.loading && (Date.now()-HOY.at>120000 || !HOY.range)) hoyLoad(); else paintHoy();
+}
+function hoyKick(r){
+  var out=[], cursor=null, pages=0;
+  return (function page(){
+    var u='https://kick.com/api/v2/channels/'+encodeURIComponent(CH_KICK)+'/clips?sort=date&time=all'+(cursor ? '&cursor='+encodeURIComponent(cursor) : '');
+    return kickGet(u).then(function(j){
+      pages++;
+      var list=(j.clips||[]).map(mapKick).filter(function(c){ return c.id; });
+      list.forEach(function(c){ if (c.at>=r.from && c.at<=r.to) out.push(c); });
+      var oldest=list.length ? Math.min.apply(null, list.map(function(c){ return c.at||Date.now(); })) : 0;
+      cursor=j.nextCursor||null;
+      if (cursor && list.length && oldest>=r.from && pages<10) return sleep(200).then(page);
+      return out;
+    });
+  })();
+}
+function hoyTwitch(r){
+  var period=Date.now()-r.from>2*864e5 ? 'LAST_WEEK' : 'LAST_DAY';
+  if (r.stream && Date.now()-r.from>864e5) period='LAST_WEEK';
+  function ask(sort){
+    return gqlFields(function(F){ return '{user(login:'+JSON.stringify(CH_TW)+'){login displayName clips(first:100,criteria:{period:'+period+',sort:'+sort+'}){edges{node{'+F+'}}}}}'; });
+  }
+  return ask('CREATED_AT_DESC').then(function(j){
+    var err=j.errors ? JSON.stringify(j.errors) : '';
+    if (err && TW_SORT_ERR.test(err)) return ask('VIEWS_DESC');
+    return j;
+  }).then(function(j){
+    var u=j.data && j.data.user; if (!u) return [];
+    return ((u.clips && u.clips.edges)||[]).map(function(e){ return mapTw(e.node, u); }).filter(function(c){ return c.id && c.at>=r.from && c.at<=r.to; });
+  });
+}
+function hoyLoad(){
+  var r=hoyRange(); HOY.range=r; HOY.loading=true; HOY.err=''; HOY.note=''; paintHoy();
+  var res={kick:null, twitch:null}, errs=[];
+  return Promise.all([
+    hoyKick(r).then(function(x){ res.kick=x; }, function(e){ errs.push('Kick ('+(e && e.message || 'sin respuesta')+')'); }),
+    hoyTwitch(r).then(function(x){ res.twitch=x; }, function(e){ errs.push('Twitch ('+(e && e.message || 'sin respuesta')+')'); })
+  ]).then(function(){
+    var all=(res.kick||[]).concat(res.twitch||[]), seen={};
+    all.sort(function(a,b){ return (b.at||0)-(a.at||0); });
+    HOY.keys=[];
+    all.forEach(function(c){ var k=key(c); if (seen[k]) return; seen[k]=1; HOY.keys.push(k);
+      if (LIB[k]){ var lc=LIB[k]; ['t','v','th','cr','cat','d','at'].forEach(function(f){ if (c[f] && !lc[f]) lc[f]=c[f]; }); } else XTRA[k]=c; });
+    if (errs.length) HOY.err='No pude leer '+errs.join(' ni ')+'.';
+    HOY.loading=false; HOY.at=Date.now(); paintHoy();
+  });
+}
+function paintHoy(){
+  if (!HOY.range) return;
+  var r=HOY.range, inPl={}; if (P) P.clips.forEach(function(k){ inPl[k]=1; });
+  var L=HOY.keys.filter(clipOf), nIn=L.filter(function(k){ return inPl[k]; }).length;
+  var info=r.label+(r.noSession ? ' (todavía no sé cuándo fue tu último stream)' : '');
+  if (HOY.loading) info+=' · buscando…';
+  else info+=' · '+(L.length ? L.length+(L.length===1 ? ' clip' : ' clips')+(nIn ? ' · '+nIn+' ya en «'+(P ? P.name : 'tu playlist')+'»' : '') : 'sin clips');
+  $('hoyInfo').textContent=info;
+  $('hoyAll').hidden=HOY.loading || !L.length || nIn===L.length;
+  var se=D.session;
+  var h=L.map(function(k, ix){
+    var c=clipOf(k), on=!!inPl[k], lib=!!LIB[k];
+    var when=(se && se.start && c.at>=se.start && (!se.end || c.at<=se.end+3600000) ? '⏱ '+hms(Math.round((c.at-se.start)/1000))+' · ' : '')+hhmm(c.at);
+    return '<div class="cl'+(on?' on':'')+'" role="button" tabindex="0" data-k="'+esc(k)+'" data-ix="'+ix+'" aria-pressed="'+on+'" aria-label="'+esc(c.t)+'">'+
+      '<div class="th">'+thumb(c)+tagHtml(c)+'<button class="pvb" aria-label="Ver y recortar el clip"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>'+
+      '<span class="ck">'+ICON.ck+'</span>'+(lib ? '' : '<span class="new">NUEVO</span>')+'<span class="du'+(c.a||c.b ? ' cut' : '')+'">'+durTxt(c)+'</span></div>'+
+      '<div class="bd"><b>'+esc(c.t||'(sin título)')+'</b><small class="when" title="⏱ = en qué momento de tu stream lo sacaron">'+esc(when)+'</small><small>'+(c.cr ? 'por '+esc(c.cr)+' · ' : '')+fmtN(c.v)+' vistas</small></div></div>';
+  }).join('');
+  if (!L.length) h='<div class="empty" style="grid-column:1/-1"><b>'+(HOY.loading ? 'Buscando tus clips…' : 'No hay clips aquí')+'</b>'+
+    (HOY.loading ? 'Le estoy preguntando a Kick y a Twitch.' : HOY.err ? esc(HOY.err)+' Toca ↻ para reintentar.' : 'Prueba con «7 días» o vuelve al rato: los clips tardan unos minutos en aparecer.')+'</div>';
+  else if (HOY.err) h+='<div class="empty" style="grid-column:1/-1">'+esc(HOY.err)+' Toca ↻ para reintentar.</div>';
+  $('hoyCards').innerHTML=h;
+}
+$('hoyWin').addEventListener('click', function(ev){ var b=ev.target.closest('button[data-w]'); if (!b) return; HOY.win=b.getAttribute('data-w'); try{ localStorage.setItem('brb.hoy.win', HOY.win); }catch(e){}
+  this.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x===b); }); hoyLoad(); });
+$('hoyRf').onclick=function(){ load().then(function(){ hoyLoad(); }); };
+$('hoyCards').addEventListener('click', function(ev){
+  var card=ev.target.closest('.cl[data-k]'); if (!card) return;
+  var k=card.getAttribute('data-k');
+  if (ev.target.closest('.pvb')) return openClip(k, HOY.keys.filter(clipOf));
+  toggleClip(k);
+});
+$('hoyCards').addEventListener('keydown', function(ev){
+  var card=ev.target.closest && ev.target.closest('.cl[data-k]');
+  if (card && ev.target===card && (ev.key==='Enter' || ev.key===' ')){ ev.preventDefault(); toggleClip(card.getAttribute('data-k')); }
+});
+$('hoyAll').onclick=function(){
+  var keys=HOY.keys.filter(clipOf), btn=this; btn.disabled=true;
+  toLib(keys).then(function(ok){ btn.disabled=false; if (ok) return addKeys(keys.filter(function(k){ return LIB[k]; })); }).then(function(){ paintHoy(); });
+};
+
+/* ======================= TRAER DE IRLHOSTING ======================= */
+// Su reproductor publica la lista de tu playlist (títulos, quién lo sacó y de dónde sale el video).
+// Aquí se lee esa lista, se revisa cada clip con Twitch y Kick, y se guarda en tu biblioteca.
+function irlId(v){ var m=String(v||'').match(/\bbp_[A-Za-z0-9]{8,64}\b/); return m ? m[0] : ''; }
+function irlSt(cls, html){ var el=$('irlSt'); el.hidden=!html; el.innerHTML=html ? '<span class="'+cls+'">'+html+'</span>' : ''; }
+function irlClip(c){
+  if (!c || (c.platform!=='twitch' && c.platform!=='kick') || !c.id) return null;
+  var o={p:c.platform, id:String(c.id), t:String(c.title||''), cr:String(c.creator||''), chd:String(c.channel||''), ch:String(c.channel||'').toLowerCase(),
+         d:Number(c.duration)||0, th:String(c.thumbnail||''), v:0, at:0, cat:'', lang:''};
+  if (o.p==='kick'){ var h=(c.sources||[]).filter(function(x){ return x && x.type==='hls' && /^https:\/\//.test(x.url||''); })[0]; if (h) o.u=h.url; }
+  if (o.p==='kick' ? !KICK_ID.test(o.id) : !TW_SLUG.test(o.id)) return null;
+  return o;
+}
+function irlSet(x){
+  x=x||{}; var o=x.overlay||{}, mx=Number(x.maxClipSeconds)||0, ok=[0,15,30,45,60,90], best=0;
+  if (mx>0) ok.forEach(function(v){ if (v && Math.abs(v-mx)<Math.abs((best||1e9)-mx)) best=v; });
+  return {shuffle:x.shuffle!==false, loop:x.loop!==false, sound:x.muted!==true, volume:Math.max(0, Math.min(100, Number(x.volume==null ? 100 : x.volume)||0)),
+          normalize:x.normalize!==false, maxSec:best, fit:x.fit==='cover' ? 'cover' : 'contain', progress:!!x.progress, msg:String(x.message||'').slice(0, 80),
+          card:{title:o.title!==false, channel:o.channel!==false, platform:o.platform!==false, creator:o.creator!==false,
+                pos:['bottom-left','bottom-right','top-left','top-right'].indexOf(o.position)>=0 ? o.position : 'bottom-right', by:'en'}};
+}
+// Twitch: de 25 en 25 en una sola pregunta (vistas, fecha, categoría…). Si Twitch dice que ya no existe, se brinca.
+function irlTwitch(list, onStep){
+  var gone=0, i=0;
+  function next(){
+    if (i>=list.length) return Promise.resolve();
+    var chunk=list.slice(i, i+25); i+=25;
+    return gqlFields(function(F){ return '{'+chunk.map(function(c, n){ return 'c'+n+':clip(slug:'+JSON.stringify(c.id)+'){'+F+'}'; }).join(' ')+'}'; })
+      .then(function(j){
+        if (!j || !j.data) return;
+        chunk.forEach(function(c, n){
+          if (!('c'+n in j.data)) return;
+          var node=j.data['c'+n];
+          if (node===null){ c.gone=1; gone++; return; }
+          var m=mapTw(node, null);
+          ['t','cr','cat','lang','v','d','at','th','f'].forEach(function(f){ if (m[f]) c[f]=m[f]; });
+          if (m.ch){ c.ch=m.ch; c.chd=m.chd||c.chd; }
+        });
+      }, function(){ /* sin Twitch: se queda con lo que dijo IRLhosting */ })
+      .then(function(){ onStep(Math.min(i, list.length)); return sleep(150); }).then(next);
+  }
+  return next().then(function(){ return gone; });
+}
+function irlKick(list, onStep){
+  var gone=0, i=0;
+  function next(){
+    if (i>=list.length) return Promise.resolve();
+    var c=list[i++];
+    return kickGet('https://kick.com/api/v2/clips/'+encodeURIComponent(c.id)).then(function(j){
+      if (j && j.clip){ var m=mapKick(j.clip); ['t','cr','cat','v','d','at','th','u'].forEach(function(f){ if (m[f]) c[f]=m[f]; }); if (m.ch){ c.ch=m.ch; c.chd=m.chd||c.chd; } }
+    }, function(e){ if (e && e.nf){ c.gone=1; gone++; } })
+      .then(function(){ onStep(i); return sleep(120); }).then(next);
+  }
+  return next().then(function(){ return gone; });
+}
+$('irlPl').onclick=function(){ this.classList.toggle('on'); };
+$('irlGo').onclick=function(){
+  var id=irlId($('irlIn').value), btn=this;
+  if (!id) return irlSt('bad', '⚠ Ese no parece el link del reproductor de IRLhosting. Es el de la fuente de OBS y empieza con https://media.irlcdn.com/brb/bp_…');
+  var mkPl=$('irlPl').classList.contains('on');
+  btn.disabled=true; btn.textContent='Trayendo…'; irlSt('', progHtml(0, 0, 'Leyendo tu playlist de IRLhosting…'));
+  var man=null, list=[], tw=[], kk=[], gone=0, added=0, updated=0, plMade=null;
+  fetch('https://media.irlcdn.com/v1/brb/player/'+encodeURIComponent(id), {cache:'no-store', credentials:'omit'})
+    .then(function(r){
+      if (r.status===404 || r.status===403) throw new Error('IRLhosting dice que ese link ya no existe. Cópialo otra vez de tu fuente de OBS.');
+      if (!r.ok) throw new Error('IRLhosting contestó '+r.status+'. Inténtalo en un rato.');
+      return r.json();
+    })
+    .then(function(m){
+      man=m||{};
+      var seen={};
+      (man.clips||[]).forEach(function(c){ var o=irlClip(c); if (o && !seen[key(o)]){ seen[key(o)]=1; list.push(o); } });
+      if (!list.length) throw new Error('Esa playlist de IRLhosting no tiene clips de Twitch o Kick.');
+      tw=list.filter(function(c){ return c.p==='twitch'; }); kk=list.filter(function(c){ return c.p==='kick'; });
+      var room=D.limits.lib-D.clips.filter(function(c){ return !seen[key(c)]; }).length;
+      if (room<list.length) throw new Error('No caben: tu biblioteca tiene espacio para '+Math.max(0, room)+' y son '+list.length+'. Quita un canal en «Tu biblioteca».');
+      var total=list.length, step=function(n){ irlSt('', progHtml(n, total, 'Revisando cada clip con Twitch y Kick…')); };
+      return irlTwitch(tw, function(n){ step(n); }).then(function(g){ gone+=g; return irlKick(kk, function(n){ step(tw.length+n); }); }).then(function(g){ gone+=g; });
+    })
+    .then(function(){
+      var keep=list.filter(function(c){ return !c.gone; }), i=0;
+      irlSt('', progHtml(0, keep.length, 'Guardando en tu biblioteca…'));
+      function next(){
+        if (i>=keep.length) return Promise.resolve();
+        var chunk=keep.slice(i, i+200); i+=200;
+        return api('add', {clips:chunk}).then(function(j){
+          if (!j.ok) throw new Error(j.error||'Tu servidor no guardó los clips');
+          added+=j.added; updated+=j.updated; irlSt('', progHtml(Math.min(i, keep.length), keep.length, 'Guardando en tu biblioteca…'));
+        }).then(next);
+      }
+      return next().then(function(){ return keep; });
+    })
+    .then(function(keep){
+      if (!mkPl || !keep.length) return;
+      if (D.pls.length>=D.limits.pls) return 'full';
+      var name=(String(man.name||'BRB clips').slice(0, 26)+' · IRLhosting').slice(0, 40);
+      return save().then(function(){ return api('pl', {pl:{name:name, clips:keep.map(key).slice(0, D.limits.clips), set:irlSet(man.settings)}}); }).then(function(j){
+        if (!j.ok) throw new Error(j.error||'No se creó la playlist');
+        D.pls.push(j.pl); D.scr.pl=j.active||D.scr.pl; P=cloneP(j.pl); plMade=j.pl;
+      });
+    })
+    .then(function(r){
+      var nT=tw.filter(function(c){ return !c.gone; }).length, nK=kk.filter(function(c){ return !c.gone; }).length;
+      var msg='✓ '+(added ? added+' clips nuevos' : 'No había clips nuevos')+(updated ? ' · '+updated+' ya estaban' : '')+' ('+(nT ? nT+' de Twitch' : '')+(nT && nK ? ', ' : '')+(nK ? nK+' de Kick' : '')+')';
+      var extra=(gone ? '<br><span class="note">'+gone+(gone===1 ? ' ya no existe' : ' ya no existen')+' en Twitch o Kick, así que no se trajeron.</span>' : '')+
+        (plMade ? '<br><span class="note">Playlist «'+esc(plMade.name)+'» creada con el mismo orden y ajustes'+(plMade.id===D.scr.pl ? ' y ya está al aire.' : '. Para ponerla al aire: Playlist → «Ponerla al aire».')+'</span>' : '')+
+        (r==='full' ? '<br><span class="note">No se creó la playlist: ya tienes '+D.limits.pls+', el máximo.</span>' : '');
+      irlSt('ok', esc(msg)+extra);
+      return load().then(function(){ paintAll(); });
+    })
+    .catch(function(e){ irlSt('bad', '⚠ '+esc(e && e.message || 'Algo falló')+(added||updated ? '<br><span class="note">Lo que ya entró ('+(added+updated)+') se quedó guardado.</span>' : '')); })
+    .then(function(){ btn.disabled=false; btn.textContent='Traer mis clips'; });
+};
+
 
 /* ======================= AJUSTES ======================= */
 function S(){ return (P && P.set) || {}; }
@@ -1276,6 +1682,34 @@ window.addEventListener('message', function(ev){
 });
 $('pvSound').onclick=function(){ PV.sound=!PV.sound; this.textContent=PV.sound ? '🔊 Con sonido' : '🔇 Sin sonido'; pvPost({type:'brb-sound', on:PV.sound}); };
 $('pvNext').onclick=function(){ pvPost({type:'brb-next'}); };
+
+/* para todas tus playlists: nombres sin «clip de» y avisos de subs/Kicks */
+function cfgOf(){ var c=(D.scr && D.scr.cfg)||{}; return {hideBy:Array.isArray(c.hideBy) ? c.hideBy : ['mariotq','aizulimx','instantclipsbot'], alerts:c.alerts!==false}; }
+function paintCfg(){
+  var c=cfgOf();
+  $('gAlerts').classList.toggle('on', c.alerts);
+  $('gHide').innerHTML=c.hideBy.length ? c.hideBy.map(function(n){ return '<span class="chip">'+esc(n)+'<button class="btn sm ghost" data-n="'+esc(n)+'" aria-label="Quitar a '+esc(n)+'" style="min-height:26px;padding:0 6px">✕</button></span>'; }).join('')
+    : '<span class="note" style="margin:0">Nadie: siempre sale quién lo sacó (menos en tus propios clips).</span>';
+}
+function saveCfg(patch){
+  D.scr.cfg=Object.assign(cfgOf(), patch); paintCfg();
+  return api('cfg', patch).then(function(j){
+    if (!j.ok){ toast(j.error||'No se guardó', true); return load().then(paintCfg); }
+    D.scr.cfg=j.cfg; paintCfg(); pvReload(true); toast('✓ Guardado para todas tus playlists');
+  });
+}
+$('gAlerts').onclick=function(){ saveCfg({alerts:!cfgOf().alerts}); };
+$('gHide').addEventListener('click', function(ev){ var b=ev.target.closest('[data-n]'); if (!b) return; var n=b.getAttribute('data-n'); saveCfg({hideBy:cfgOf().hideBy.filter(function(x){ return x!==n; })}); });
+function hideAdd(){
+  var n=$('gHideIn').value.trim().replace(/^@/, '').toLowerCase(), cur=cfgOf().hideBy;
+  if (!n) return;
+  if (!/^[a-z0-9_.-]{1,40}$/.test(n)) return toast('Escribe solo el nombre de usuario (letras, números, _ . -)', true);
+  $('gHideIn').value='';
+  if (cur.indexOf(n)>=0) return toast(n+' ya está en la lista');
+  saveCfg({hideBy:cur.concat([n])});
+}
+$('gHideAdd').onclick=hideAdd;
+$('gHideIn').addEventListener('keydown', function(ev){ if (ev.key==='Enter'){ ev.preventDefault(); hideAdd(); } });
 
 /* ======================= OBS ======================= */
 function paintObs(){ $('oLink').textContent=D.scr.id ? playerUrl() : '…'; }
@@ -1336,7 +1770,7 @@ $('cMsgGo').onclick=function(){ var v=$('cMsgIn').value.trim(); sendCtl({cmd:'ms
 $('cPl').onchange=function(){ var id=this.value; sendCtl({cmd:'pl', pl:id}).then(function(j){ if (j) toast('✓ Al aire: '+((plById(id)||{}).name||'')); }); };
 
 /* ======================= arranque ======================= */
-function paintAll(){ paintLib(); paintPlHeader(); paintSet(); paintObs(); if (TAB==='pl') paintPl(); if (TAB==='ctl') paintCtl(); if (TAB==='set') pvOpen(); paintSave(); }
+function paintAll(){ paintLib(); paintPlHeader(); paintSet(); paintCfg(); paintHoy(); paintObs(); if (TAB==='pl') paintPl(); if (TAB==='ctl') paintCtl(); if (TAB==='set') pvOpen(); paintSave(); }
 function showGate(err){
   $('gate').hidden=false; $('app').hidden=true; $('tabs').hidden=true; $('gateErr').textContent=err||'';
 }
@@ -1357,7 +1791,8 @@ function boot(){
   });
 }
 boot();
-if (Q.get('debug')==='1') window.BRB_STUDIO=function(){ return {tab:TAB, clips:P ? P.clips.slice() : null, desk:isDesk()}; };   // solo para pruebas
+if (Q.get('debug')==='1') window.BRB_STUDIO=function(){ return {tab:TAB, clips:P ? P.clips.slice() : null, desk:isDesk(), pl:P ? {name:P.name, set:P.set} : null, pls:D.pls.map(function(p){ return p.name; }),
+  lib:D.clips.length, hoy:HOY.keys.slice(), tr:TR ? {a:TR.a, b:TR.b, dur:TR.dur} : null, cfg:cfgOf(), clip:function(k){ return clipOf(k); }}; };   // solo para pruebas
 })();
 </script>
 </body>

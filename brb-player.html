@@ -16,6 +16,9 @@
    - Recuadro con el título, la plataforma, el canal y quién lo sacó.
    - Lo controlas desde el estudio o desde los Atajos del feed
      (siguiente, pausa, silencio, mensaje y playlist): lo ve en ≤ 3 s.
+   - Recortes: cada clip puede empezar y terminar donde tú digas.
+   - Como tu BRB viejo: sin «clip de» cuando lo sacaste tú, un bot o
+     alguien de tu lista, y aviso en pantalla de subs, regalos y Kicks.
    ================================================================== */
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;color:#fff;
@@ -47,6 +50,15 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent
 #msg.on{opacity:1}
 #msg.low{top:auto;bottom:44px}
 
+/* aviso de sub, regalo o Kicks (como el de tu BRB viejo) */
+#ev{position:absolute;z-index:32;top:48px;right:56px;max-width:46%;text-align:right;opacity:0;transform:translateY(-12px);
+  transition:opacity .5s ease,transform .5s ease;pointer-events:none;text-shadow:0 2px 12px rgba(0,0,0,.6)}
+#ev.left{right:auto;left:56px;text-align:left}
+#ev.on{opacity:1;transform:none}
+#ev .l{font-size:20px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:#53fc18}
+#ev.gift .l{color:#ff5a4f}#ev.kicks .l{color:#a970ff}
+#ev .n{font-size:58px;font-weight:900;line-height:1.05;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#ev .s{font-size:22px;font-weight:600;color:rgba(255,255,255,.75);margin-top:4px}
 #bar{position:absolute;z-index:29;left:0;right:0;bottom:0;height:5px;background:rgba(255,255,255,.18);opacity:0;transition:opacity .4s}
 #bar.on{opacity:1}
 #bar i{display:block;height:100%;width:100%;background:rgba(255,255,255,.88);transform:scaleX(0);transform-origin:0 50%}
@@ -64,6 +76,7 @@ html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent
 <div id="msg"></div>
 <div id="card" class="br"><div class="t"></div><div class="m"><span class="tag"></span><span class="ch"></span><span class="dot">·</span><span class="by"></span></div></div>
 <div id="bar"><i></i></div>
+<div id="ev"><div class="l"></div><div class="n"></div><div class="s"></div></div>
 <button id="tap" hidden>▶ Toca para iniciar</button>
 <div id="note"></div>
 <script>
@@ -89,6 +102,7 @@ var byKey={}, keys=[], bag=[], passes=0, lastKey='', failed={};
 var cur=null, nxt=null, dying=[];
 var stopped=false, gone=false, retryT=0, tickT=0, ticking=false, seqSeen=null;
 var audio=null, audioBad=false, previewSound=false;
+var CFG={hideBy:[], alerts:true}, BOOT_AT=Date.now(), evLast='';
 
 function key(c){ return c.p+':'+c.id; }
 function say(t){ if (!DEBUG && !PREVIEW){ note.classList.remove('on'); return; } note.textContent=t||''; note.classList.toggle('on', !!t); }
@@ -113,6 +127,7 @@ function loadManifest(){
 function applyManifest(j){
   var first=!man, plChanged=!man || !j.pl || !man.pl || j.pl.id!==man.pl.id;
   man=j; set=(j.pl && j.pl.set) || {};
+  if (j.cfg) CFG=j.cfg;
   byKey={}; keys=[];
   (j.clips||[]).forEach(function(c){ var k=key(c); if (!byKey[k]){ byKey[k]=c; keys.push(k); } });
   failed={};
@@ -141,6 +156,8 @@ function tick(){
     var active=man && man.active, rev=man && man.pl ? man.pl.rev : -1;
     var needReload=!man || j.pl!==active || (j.pl===(man.pl&&man.pl.id) && j.rev!==rev);
     applyCtl(j.ctl||{}, false);
+    if (j.cfg && JSON.stringify(j.cfg)!==JSON.stringify(CFG)){ CFG=j.cfg; paintCard(); }
+    if (j.ev) showEv(j.ev);
     if (needReload) return loadManifest();
   }).catch(function(){ /* sin internet un ratito: el clip sigue */ }).finally(function(){ ticking=false; });
 }
@@ -293,7 +310,10 @@ function prepare(s){
     var v=document.createElement('video');
     v.className='layer'; v.playsInline=true; v.preload='auto'; v.muted=true; v.crossOrigin='anonymous';
     v.style.objectFit=S().fit==='cover' ? 'cover' : 'contain';
-    v.addEventListener('canplay', function(){ if (s.el!==v || s.ready) return; s.ready=true; clearTimeout(s.timers.load); onReady(s); });
+    var tA=trimOf(s.clip).a;                         // recorte: brinca al inicio que elegiste
+    v.addEventListener('loadedmetadata', function(){ if (s.el===v && tA>0 && !s.hls && (v.currentTime||0)<tA-0.3){ try{ v.currentTime=tA; }catch(e){} } });
+    v.addEventListener('canplay', function(){ if (s.el!==v || s.ready) return; if (tA>0 && !s.hls && v.seeking) return; s.ready=true; clearTimeout(s.timers.load); onReady(s); });
+    v.addEventListener('seeked', function(){ if (s.el!==v || s.ready || v.readyState<3) return; s.ready=true; clearTimeout(s.timers.load); onReady(s); });
     v.addEventListener('error', function(){ if (s.el===v){ log('error de video', s.key); prepare(s); } });
     v.addEventListener('ended', function(){ if (s.el===v && s===cur) finish(s, false); });
     v.addEventListener('timeupdate', function(){ if (s.el===v && s===cur) progress(s); });
@@ -302,7 +322,7 @@ function prepare(s){
     else return loadHls().then(function(Hls){
       if (s.dead || s.el!==v) return;
       if (Hls.isSupported()){
-        var h=new Hls({enableWorker:false, maxBufferLength:30, maxMaxBufferLength:60, backBufferLength:10});
+        var h=new Hls({enableWorker:false, maxBufferLength:30, maxMaxBufferLength:60, backBufferLength:10, startPosition:trimOf(s.clip).a||-1});
         s.hls=h;
         h.on(Hls.Events.ERROR, function(_e, d){ if (d && d.fatal && s.el===v){ log('hls', d.details); prepare(s); } });
         h.loadSource(src.url); h.attachMedia(v);
@@ -360,7 +380,7 @@ function startEmbed(s){
   var shown=false, go=function(){ if (!shown && !s.dead && s===cur){ shown=true; show(s); } };
   f.addEventListener('load', function(){ later(s, 'emb', go, 900); });
   later(s, 'show', go, 3500);
-  var secs=lengthOf(s.clip, NaN);
+  var secs=lengthOf(s.clip, NaN, true);                 // el reproductor de Twitch no se puede recortar
   later(s, 'end', function(){ if (s===cur) finish(s, false); }, (secs+1.5)*1000);
   later(s, 'cardout', function(){ if (s===cur) cardOff(); }, Math.max(0, secs-CARD_OUT)*1000);
 }
@@ -376,17 +396,24 @@ function show(s){
   preload();
   if (!PREVIEW) setTimeout(tick, 200);                  // avisa luego luego qué está sonando
 }
-function lengthOf(c, media){
-  var d=isFinite(media) && media>0 ? media : (c.d||0);
-  if (!(d>0)) d=S().maxSec||60;
-  return S().maxSec>0 ? Math.min(d, S().maxSec) : d;
+// Recorte del clip: desde a hasta b (b = 0: hasta el final).
+function trimOf(c){ var a=Number(c && c.a)||0, b=Number(c && c.b)||0; if (a<0) a=0; if (b && b<a+1) b=0; return {a:a, b:b}; }
+// Cuántos segundos se ve el clip (con su recorte y el máximo de la playlist).
+function lengthOf(c, media, noTrim){
+  var d=isFinite(media) && media>0 ? media : (c.d||0), tr=noTrim ? {a:0, b:0} : trimOf(c);
+  if (!(d>0)) d=tr.b || S().maxSec || 60;
+  var len=(tr.b ? Math.min(tr.b, d) : d)-tr.a;
+  if (!(len>0)) len=d;
+  return S().maxSec>0 ? Math.min(len, S().maxSec) : len;
 }
 function progress(s){
-  var v=s.el, t=v.currentTime||0;
+  var v=s.el, t=v.currentTime||0, a=trimOf(s.clip).a;
   if (t!==s.lastT){ s.lastT=t; s.lastMove=Date.now(); }
-  var end=lengthOf(s.clip, v.duration);
-  if (t>=end-CARD_OUT) cardOff();
-  if (S().maxSec>0 && t>=S().maxSec) finish(s, true);
+  // si el video todavía no dejaba brincar al inicio del recorte, se intenta otra vez
+  if (a>0 && t<a-0.5 && Date.now()-(s.seekAt||0)>800 && v.seekable && v.seekable.length && v.seekable.end(v.seekable.length-1)>=a){ s.seekAt=Date.now(); try{ v.currentTime=a; }catch(e){} }
+  var len=lengthOf(s.clip, v.duration), el=t-a;
+  if (el>=len-CARD_OUT) cardOff();
+  if (el>=len-0.05 && el>0) finish(s, S().maxSec>0 && len>=S().maxSec);
   paintBar();
 }
 // Si se congela 20 s, se prueba la otra fuente o se salta.
@@ -447,7 +474,7 @@ function paintCard(){
   card.className=({'bottom-left':'bl','bottom-right':'br','top-left':'tl','top-right':'tr'})[o.pos||'bottom-right']+(card.classList.contains('on') ? ' on' : '');
   if (!c) return;
   var t=card.querySelector('.t'), tag=card.querySelector('.tag'), ch=card.querySelector('.ch'), dot=card.querySelector('.dot'), by=card.querySelector('.by');
-  var showT=o.title!==false && c.t, showTag=o.platform!==false, showCh=o.channel!==false && (c.chd||c.ch), showBy=o.creator!==false && c.cr;
+  var showT=o.title!==false && c.t, showTag=o.platform!==false, showCh=o.channel!==false && (c.chd||c.ch), showBy=o.creator!==false && c.cr && !hiddenBy(c);
   t.textContent=showT ? c.t : ''; t.hidden=!showT;
   tag.textContent=c.p==='kick' ? 'KICK' : 'TWITCH'; tag.className='tag '+(c.p==='kick' ? 'kk' : 'tw'); tag.hidden=!showTag;
   ch.textContent=showCh ? (c.chd||c.ch) : ''; ch.hidden=!showCh;
@@ -455,6 +482,28 @@ function paintCard(){
   dot.hidden=!(showCh && showBy);
   card.querySelector('.m').hidden=!(showTag || showCh || showBy);
   if (!showT && !(showTag || showCh || showBy)) card.classList.remove('on');
+}
+// Sin «clip de» cuando lo sacaste tú (el dueño del canal), un bot o alguien de tu lista.
+function hiddenBy(c){
+  var n=String(c.cr||'').toLowerCase().replace(/^@/, '');
+  if (!n) return true;
+  if (n===String(c.ch||'').toLowerCase()) return true;
+  return (CFG.hideBy||[]).indexOf(n)>=0;
+}
+// Aviso de sub, regalo o Kicks: solo lo que llega con la escena al aire.
+var evEl=$('ev'), evT=0;
+function showEv(e){
+  if (PREVIEW || !e || !e.id || e.id===evLast) return;
+  evLast=e.id;
+  if ((e.at||0)<BOOT_AT-5000) return;                 // pasó antes de que se mostrara la escena
+  var name=e.anon ? 'Anónimo' : (e.u||'Alguien'), n=Number(e.n)||0;
+  var lbl={sub:'¡Nuevo sub!', resub:'¡Gracias por renovar!', gift:'¡Subs de regalo!', kicks:'¡Gracias por los Kicks!'}[e.k]||'¡Gracias!';
+  var sub=e.k==='resub' ? (n>1 ? n+' meses seguidos 🔥' : '') : e.k==='gift' ? 'regaló '+n+(n===1 ? ' sub' : ' subs') : e.k==='kicks' ? n+' Kicks' : '¡Gracias por el sub!';
+  evEl.querySelector('.l').textContent=lbl; evEl.querySelector('.n').textContent=name; evEl.querySelector('.s').textContent=sub;
+  var pos=(S().card||{}).pos||'bottom-right';
+  evEl.className=(e.k==='gift' ? 'gift' : e.k==='kicks' ? 'kicks' : '')+(pos==='top-right' ? ' left' : '');
+  void evEl.offsetWidth; evEl.classList.add('on');
+  clearTimeout(evT); evT=setTimeout(function(){ evEl.classList.remove('on'); }, 7000);
 }
 function paintMsg(){
   var m=ctl.msg!=null ? ctl.msg : (S().msg||'');
@@ -468,8 +517,8 @@ function paintBar(){
   var s=cur, on=!!(S().progress && s && s.shown && s.el);
   bar.className=on ? 'on' : '';
   if (!on) return;
-  var total=s.kind==='embed' ? lengthOf(s.clip, NaN) : lengthOf(s.clip, s.el.duration);
-  var el=s.kind==='embed' ? (Date.now()-s.t0)/1000 : (s.el.currentTime||0);
+  var total=s.kind==='embed' ? lengthOf(s.clip, NaN, true) : lengthOf(s.clip, s.el.duration);
+  var el=s.kind==='embed' ? (Date.now()-s.t0)/1000 : (s.el.currentTime||0)-trimOf(s.clip).a;
   barFill.style.transform='scaleX('+Math.max(0, Math.min(1, total>0 ? el/total : 0)).toFixed(4)+')';
   if (s.kind==='embed') barT=setTimeout(paintBar, 250);
 }
@@ -508,7 +557,8 @@ if (PREVIEW) window.addEventListener('message', function(ev){
 // ?debug=1: para revisar desde la consola qué está pasando
 if (DEBUG) window.BRB_DEBUG=function(){ return {cur:cur&&cur.key, kind:cur&&cur.kind, playing:!!(cur&&cur.playing), paused:ctl.paused, muted:wantMuted(),
   gain:audio ? audio.master.gain.value : null, ctx:audio ? audio.ctx.state : null, routed:!!(cur&&cur.node), keys:keys.slice(), failed:Object.keys(failed),
-  pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className, played:Object.keys(readPlayed()), bag:bag.slice()}; };
+  pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className, played:Object.keys(readPlayed()), bag:bag.slice(),
+  t:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentTime : null, by:card.querySelector('.by').hidden ? '' : card.querySelector('.by').textContent, cfg:CFG, ev:evEl.className+'|'+evEl.textContent}; };
 
 function boot(){
   if (!SCR){ say('Falta el id de la pantalla (s=…). Copia el link desde el estudio.'); return; }

@@ -432,6 +432,12 @@ async function webhook(req, res) {
     if (!skip) await redis('ZADD', 'ev', rt, JSON.stringify(ev));
     await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
     await addToLists(ev);
+    // 🎞 BRB: el último sub, regalo o Kicks, para dar las gracias en la pantalla de clips
+    // (el player lo lee junto con lo que ya pregunta cada 3 s; no gasta consultas de más).
+    if (['sub', 'resub', 'gift', 'kicks'].indexOf(ev.d.kind) >= 0) {
+      try { await redis('SET', 'brb:last', JSON.stringify({ id: String(msgId).slice(0, 80), k: ev.d.kind, u: ev.d.user || '', anon: !!ev.d.anon,
+        n: ev.d.kind === 'kicks' ? ev.d.amount : ev.d.kind === 'gift' ? ev.d.count : ev.d.months, at: rt }), 'EX', 900); } catch (e) {}
+    }
     let newSess = false;
     if (type === 'livestream.status.updated') {
       await setJSON('live', Object.assign({ at: rt }, ev.d));
