@@ -514,6 +514,28 @@ async function obs(req, res, b) {
       return send(res, 200, Object.assign({ ok: true }, out));
     } catch (e) { return send(res, 200, { ok: false, error: e.message }); }
   }
+  if (act === 'fix') {
+    // Revisa las fuentes de OBS que usan el player del BRB y les prende «Apagar la fuente cuando
+    // no sea visible» y «Actualizar al activar la escena»: así el player solo le pregunta al
+    // servidor (cada 3 s) mientras la escena está al aire, y no gasta llamadas de Vercel.
+    try {
+      const out = await obsSession(cfg.url, pass, async batch => {
+        const [il] = await batch([['GetInputList', { inputKind: 'browser_source' }]]);
+        const names = (dataOf(il).inputs || []).map(i => i.inputName).slice(0, 60);
+        if (!names.length) return { found: [] };
+        const got = await batch(names.map(n => ['GetInputSettings', { inputName: n }]));
+        const mine = [];
+        names.forEach((n, i) => { const st = dataOf(got[i]).inputSettings || {}; if (/brb-player\.html/.test(String(st.url || ''))) mine.push({ name: n, st }); });
+        const fixList = mine.filter(m => m.st.shutdown !== true || m.st.restart_when_active !== true);
+        if (fixList.length) {
+          const rs = await batch(fixList.map(m => ['SetInputSettings', { inputName: m.name, inputSettings: { shutdown: true, restart_when_active: true }, overlay: true }]));
+          rs.forEach((r, i) => { if (!okOf(r)) throw new Error('No se pudo ajustar «' + fixList[i].name + '»: ' + errOf(r)); });
+        }
+        return { found: mine.map(m => ({ name: m.name, changed: fixList.indexOf(m) >= 0 })) };
+      }, 15000);
+      return send(res, 200, Object.assign({ ok: true }, out));
+    } catch (e) { return send(res, 200, { ok: false, error: e.message }); }
+  }
   if (act !== 'add') return send(res, 400, { ok: false, error: 'acción rara' });
   const scene = str(b.scene, 80) || 'BRB Clips';
   const name = str(b.name, 80) || 'BRB Clips TQ';
