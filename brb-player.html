@@ -185,7 +185,7 @@ function applyManifest(j){
 
 /* cada 3 s, solo mientras la escena está al aire (OBS apaga la fuente cuando no se ve) */
 function tick(){
-  if (PREVIEW || gone || !SCR || ticking) return;
+  if (PREVIEW || gone || !SCR || ticking || obsHidden) return;   // escena fuera del aire: no gasta llamadas
   ticking=true;
   var c=cur && cur.clip;
   var u=API+'/api/brb?a=tick&s='+encodeURIComponent(SCR)+
@@ -490,7 +490,7 @@ function progress(s){
 function watch(s){
   later(s, 'watch', function(){
     if (s!==cur || s.dead) return;
-    if (s.kind==='video' && !ctl.paused && !document.hidden && Date.now()-s.lastMove>STALL_MS){ log('se congeló', s.key); s.shown=false; s.playing=false; prepare(s); return; }
+    if (s.kind==='video' && !ctl.paused && !document.hidden && !obsHidden && Date.now()-s.lastMove>STALL_MS){ log('se congeló', s.key); s.shown=false; s.playing=false; prepare(s); return; }
     watch(s);
   }, 1000);
 }
@@ -614,10 +614,21 @@ tapBtn.addEventListener('click', function(){
   if (audio && audio.ctx.state!=='running') try{ audio.ctx.resume(); }catch(e){}
   if (cur && cur.el && cur.kind==='video'){ cur.el.muted=wantMuted() && !cur.node; cur.el.play().then(function(){ show(cur); }, function(){}); }
 });
+function onHide(){ pauseCur(); }
+function onShow(){ if (cur){ if (!cur.playing && cur.ready) start(cur); else if (!ctl.paused) resumeCur(); } }
 document.addEventListener('visibilitychange', function(){
+  if (gone || PREVIEW || obsHidden) return;
+  if (document.hidden) onHide(); else onShow();
+});
+// En OBS: aunque la fuente no tenga «Apagar cuando no sea visible», cuando la escena sale del
+// aire el player se pausa y deja de preguntarle al servidor; al volver sigue donde se quedó.
+var obsHidden=false;
+window.addEventListener('obsSourceVisibleChanged', function(ev){
   if (gone || PREVIEW) return;
-  if (document.hidden){ pauseCur(); }
-  else if (cur){ if (!cur.playing && cur.ready) start(cur); else if (!ctl.paused) resumeCur(); }
+  var vis=!!(ev && ev.detail && ev.detail.visible);
+  if (vis===!obsHidden) return;
+  obsHidden=!vis;
+  if (obsHidden) onHide(); else { onShow(); tick(); }
 });
 window.addEventListener('pagehide', function(){ shutdown(''); });
 window.addEventListener('online', function(){ if (!gone && !man) boot(); });
@@ -637,7 +648,7 @@ if (DEBUG) window.BRB_DEBUG=function(){ return {cur:cur&&cur.key, kind:cur&&cur.
   gain:audio ? audio.master.gain.value : null, ctx:audio ? audio.ctx.state : null, routed:!!(cur&&cur.node), keys:keys.slice(), failed:Object.keys(failed),
   pl:man&&man.pl&&man.pl.id, rev:man&&man.pl&&man.pl.rev, msg:msgEl.textContent, msgOn:msgEl.classList.contains('on'), card:card.className, played:Object.keys(readPlayed()), bag:bag.slice(),
   t:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentTime : null, cors:!!(cur&&cur.cors), src:cur ? cur.src : null, err:lastErr,
-  vsrc:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentSrc : '', by:card.querySelector('.by').hidden ? '' : card.querySelector('.by').textContent, cfg:CFG, ev:evEl.className+'|'+evEl.textContent}; };
+  vsrc:cur&&cur.el&&cur.el.tagName==='VIDEO' ? cur.el.currentSrc : '', obsHidden:obsHidden, by:card.querySelector('.by').hidden ? '' : card.querySelector('.by').textContent, cfg:CFG, ev:evEl.className+'|'+evEl.textContent}; };
 
 function boot(){
   if (!SCR){ say('Falta el id de la pantalla (s=…). Copia el link desde el estudio.'); return; }

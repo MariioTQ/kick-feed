@@ -642,6 +642,12 @@ dialog.cv{width:min(920px,calc(100% - 24px));padding:16px}
           <button class="btn pri wide" id="oGo" style="margin-top:12px">Crear en OBS</button>
           <div class="res" id="oRes"></div>
           <p class="note">Si ya existen no se duplican: solo se actualiza el link.</p>
+          <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+            <b>Que no gaste cuando no está al aire</b>
+            <p class="note" style="margin:4px 0 10px">Revisa tus fuentes del BRB en OBS y les prende «Apagar la fuente cuando no sea visible» y «Actualizar al activar la escena». Así solo trabaja mientras la escena está al aire.</p>
+            <button class="btn wide" id="oFix">Revisar mis fuentes del BRB</button>
+            <div class="res" id="oFixRes"></div>
+          </div>
         </div>
       </details>
       <details class="acc" id="accLink">
@@ -1966,6 +1972,17 @@ $('oGo').onclick=function(){
     $('oRes').innerHTML=(j.steps||[]).map(function(s){ return '<div><span class="t">'+esc(s)+'</span><em class="ok">✓</em></div>'; }).join('')+
       '<div><span class="t">Cuando cambies a «'+esc(j.scene)+'», empiezan los clips.</span></div>';
     toast('✓ Listo en OBS');
+  });
+};
+$('oFix').onclick=function(){
+  var btn=this; btn.disabled=true; btn.textContent='Revisando OBS…'; $('oFixRes').innerHTML='';
+  api('obs', {act:'fix'}).then(function(j){
+    btn.disabled=false; btn.textContent='Revisar mis fuentes del BRB';
+    if (!j.ok){ $('oFixRes').innerHTML='<div><span class="t bad">⚠ '+esc(j.error||'No se pudo')+'</span></div>'; return; }
+    var f=j.found||[];
+    if (!f.length){ $('oFixRes').innerHTML='<div><span class="t">No encontré fuentes con el player del BRB. Usa «Crear en OBS».</span></div>'; return; }
+    $('oFixRes').innerHTML=f.map(function(x){ return '<div><span class="t">«'+esc(x.name)+'»: '+(x.changed ? 'ya se apaga sola cuando no está al aire' : 'ya estaba bien')+'</span><em class="ok">✓</em></div>'; }).join('');
+    toast('✓ Fuentes revisadas');
   });
 };
 $('oCopy').onclick=function(){
