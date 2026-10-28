@@ -206,8 +206,19 @@ function cleanPl(p, old) {
 
 /* ---------------- la pantalla (el player de OBS) ---------------- */
 function newCtl(old) {
-  return Object.assign({ seq: 0, cmd: '', at: 0, paused: false, muted: false, msg: null }, old || {});
+  return Object.assign({ seq: 0, cmd: '', at: 0, paused: false, muted: false, msg: null, tmp: null }, old || {});
 }
+// v73: un mensaje de unos segundos (p. ej. una respuesta rápida del feed «Sin pila 🔋»).
+// Se guarda con la hora en que se acaba; al player se le manda cuánto le falta,
+// así no importa si el reloj de la compu de OBS está un poco adelantado o atrasado.
+function ctlOut(c) {
+  c = newCtl(c);
+  const o = Object.assign({}, c);
+  const left = c.tmp && c.tmp.until ? c.tmp.until - Date.now() : 0;
+  o.tmp = left > 0 ? { m: c.tmp.m, left, sec: c.tmp.sec || 5, id: c.tmp.id || 0 } : null;
+  return o;
+}
+const TMP_MIN = 2, TMP_MAX = 120;
 async function screen(write) {
   let scr = parse(await redis('GET', 'brb:scr'));
   if (!scr || !scr.id) {
@@ -228,7 +239,7 @@ function cleanCfg(c) {
 }
 // al player solo le sirve esto (se manda cada 3 s, mejor chiquito)
 function cfgPlayer(c) { c = cleanCfg(c); return { hideBy: c.hideBy, alerts: c.alerts }; }
-function pubScr(scr) { return { id: scr.id, pl: scr.pl, ctl: scr.ctl, cfg: cleanCfg(scr.cfg) }; }
+function pubScr(scr) { return { id: scr.id, pl: scr.pl, ctl: ctlOut(scr.ctl), cfg: cleanCfg(scr.cfg) }; }
 function syncRevs(scr, list) {
   const revs = {};
   list.forEach(p => { revs[p.id] = p.rev; });
@@ -247,7 +258,7 @@ async function play(req, res, q) {
   const by = new Map(((lib && lib.clips) || []).map(c => [ckey(c), c]));
   const clips = pl ? pl.clips.map(k => by.get(k)).filter(Boolean) : [];
   return send(res, 200, { ok: true, pl: pl ? { id: pl.id, name: pl.name, rev: pl.rev, set: cleanSet(pl.set) } : null,
-                          clips, ctl: newCtl(scr.ctl), cfg: cfgPlayer(scr.cfg), active: scr.pl });
+                          clips, ctl: ctlOut(scr.ctl), cfg: cfgPlayer(scr.cfg), active: scr.pl });
 }
 // Cada 3 s mientras la escena está al aire: una sola lectura de la base
 // (MGET cuenta como una). Trae la pantalla y el último sub/regalo/Kicks.
@@ -264,7 +275,7 @@ async function tick(req, res, q) {
   }
   const cfg = cfgPlayer(scr.cfg);
   const ev = cfg.alerts && last && last.id && Date.now() - (last.at || 0) < 10 * 60000 ? last : null;
-  return send(res, 200, { ok: true, pl: scr.pl || '', rev: (scr.revs || {})[scr.pl] || 0, ctl: newCtl(scr.ctl), cfg, ev });
+  return send(res, 200, { ok: true, pl: scr.pl || '', rev: (scr.revs || {})[scr.pl] || 0, ctl: ctlOut(scr.ctl), cfg, ev });
 }
 
 // Respaldo para clips de Twitch: si el player no consigue el video, tu servidor se lo pide a
@@ -391,11 +402,20 @@ async function ctl(req, res, b) {
   else if (cmd === 'mute') { c.muted = true; bump('mute'); }
   else if (cmd === 'unmute') { c.muted = false; bump('unmute'); }
   else if (cmd === 'mutetoggle') { c.muted = !c.muted; bump(c.muted ? 'mute' : 'unmute'); }
-  else if (cmd === 'msg') { c.msg = b.msg == null ? null : str(String(b.msg), MSG_MAX); bump('msg'); }
+  else if (cmd === 'msg') { c.msg = b.msg == null ? null : str(String(b.msg), MSG_MAX); c.tmp = null; bump('msg'); }
+  else if (cmd === 'msgtmp') {                        // v73: unos segundos y luego vuelve el mensaje de antes
+    const m = str(String(b.msg || ''), MSG_MAX);
+    if (!m) { c.tmp = null; bump('msg'); }
+    else {
+      const sec = Math.max(TMP_MIN, Math.min(TMP_MAX, Math.round(Number(b.sec) || 5)));
+      // +3 s de colchón: el player pregunta cada 3 s, así se ve los segundos completos
+      c.tmp = { m, sec, until: Date.now() + (sec + 3) * 1000, id: (c.seq || 0) + 1 }; bump('msgtmp');
+    }
+  }
   else if (cmd === 'msgnext') {                       // atajo: el siguiente de tus mensajes guardados
     const ms = cleanCfg(scr.cfg).msgs;
     if (!ms.length) return send(res, 400, { ok: false, error: 'No tienes mensajes guardados' });
-    c.msg = ms[(ms.indexOf(c.msg) + 1) % ms.length]; bump('msg');
+    c.msg = ms[(ms.indexOf(c.msg) + 1) % ms.length]; c.tmp = null; bump('msg');
   }
   else if (cmd === 'pl') {
     const [pls] = await getMany('brb:pls');
@@ -412,7 +432,7 @@ async function state(req, res) {
   const [scr0, now, pls] = await getMany('brb:scr', 'brb:now', 'brb:pls');
   const scr = scr0 && scr0.id ? scr0 : await screen();
   const fresh = now && Date.now() - (now.at || 0) < 15000;   // el player avisa cada 3 s mientras está al aire
-  return send(res, 200, { ok: true, scr: pubScr(Object.assign({}, scr, { ctl: newCtl(scr.ctl) })), now: now || null, onAir: !!fresh,
+  return send(res, 200, { ok: true, scr: pubScr(scr), now: now || null, onAir: !!fresh,
                           pls: ((pls && pls.list) || []).map(p => ({ id: p.id, name: p.name, n: p.clips.length })) });
 }
 async function trim(req, res, b) {
