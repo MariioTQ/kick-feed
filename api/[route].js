@@ -10,6 +10,7 @@
      /api/obs       cambiar de escena en OBS desde el feed
      /api/rules     reglas automáticas: «cuando pase esto, haz esto»
      /api/goal      sumar o restar subs a la meta a mano
+     /api/tw…       🟣 Twitch (multistream): ver la sección TWITCH
 
    Variables que se configuran en Vercel (Settings → Environment Variables):
      KICK_CLIENT_ID, KICK_CLIENT_SECRET   las dos claves de tu app de Kick
@@ -101,6 +102,597 @@ async function kfetch(url, opts, ms) {
     throw e;
   }
 }
+/* ---------------- aviso a Telegram cuando empieza el stream ----------------
+   Se configura en Vercel con dos variables:
+     TELEGRAM_BOT_TOKEN   el token que da BotFather
+     TELEGRAM_CHAT_ID     el id del grupo (empieza con -100…)
+   Si faltan, simplemente no manda nada. */
+const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TG_CHAT = process.env.TELEGRAM_CHAT_ID || '';
+// v74 · multistream: si ya avisaste por una plataforma y prendes la otra, el mismo mensaje se edita con los dos links.
+const TG_LINK = { kick: () => 'https://kick.com/' + CHANNEL, tw: () => 'https://twitch.tv/' + TW_CHANNEL };
+function tgText(titulo, pfs) {
+  const t = '🔴 ¡Mario está EN VIVO! ' + String(titulo || '').trim();
+  if (pfs.length === 1) return t + '\n\nEntra ahorita 👉 ' + TG_LINK[pfs[0]]();
+  return t + '\n\nEntra ahorita 👉\n🟢 Kick: ' + TG_LINK.kick() + '\n🟣 Twitch: ' + TG_LINK.tw();
+}
+async function tgCall(method, body) {
+  const r = await kfetch('https://api.telegram.org/bot' + TG_TOKEN + '/' + method, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ chat_id: TG_CHAT }, body)) }, 8000);
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) throw new Error('Telegram: ' + (j.description || r.status));
+  return j.result || {};
+}
+async function avisoTelegram(titulo, pf) {
+  if (!TG_TOKEN || !TG_CHAT) return;
+  pf = pf === 'tw' ? 'tw' : 'kick';
+  try {
+    // Candado: un solo aviso por stream, aunque Kick o Twitch repitan o se corte la señal.
+    const mine = { pfs: [pf], mid: 0, title: String(titulo || '').trim().slice(0, 200), at: Date.now() };
+    if (await redis('SET', 'tg:live', JSON.stringify(mine), 'NX', 'EX', 7200)) {
+      const m = await tgCall('sendMessage', { text: tgText(mine.title, mine.pfs) });
+      mine.mid = m.message_id || 0;
+      const cur = await getJSON('tg:live');                          // por si la otra plataforma llegó mientras
+      if (cur && cur.pfs && cur.pfs.length > 1 && mine.mid) { mine.pfs = cur.pfs; await tgCall('editMessageText', { message_id: mine.mid, text: tgText(mine.title, mine.pfs) }); }
+      await setJSON('tg:live', mine, 7200);
+      return;
+    }
+    let lk = null; try { lk = await getJSON('tg:live'); } catch (e) {}
+    if (!lk || typeof lk !== 'object') lk = { pfs: ['kick'], mid: 0, title: '' };   // el candado viejo (antes de Twitch)
+    if ((lk.pfs || []).indexOf(pf) >= 0) return;
+    lk.pfs = (lk.pfs || []).concat([pf]);
+    if (!lk.title) lk.title = String(titulo || '').trim().slice(0, 200);
+    await setJSON('tg:live', lk, 7200);
+    if (lk.mid) await tgCall('editMessageText', { message_id: lk.mid, text: tgText(lk.title, lk.pfs) });
+  } catch (e) {
+    try { await logPush('raw', { at: Date.now(), type: 'telegram-error', body: String((e && e.message) || e) }, 40); } catch (e2) {}
+  }
+}
+
+/* ======================================================================
+   🟣 TWITCH (multistream): lo mismo que con Kick, por la vía oficial de Twitch.
+   Variables en Vercel: TWITCH_CLIENT_ID y TWITCH_CLIENT_SECRET (de tu app en
+   dev.twitch.tv) y, opcional, TWITCH_CHANNEL (por defecto el mismo que Kick).
+     /api/twlogin      conectar tu cuenta de Twitch (?as=bot: la de tu bot) · con tu clave
+     /api/twcallback   Twitch regresa aquí después de «Autorizar»
+     /api/twhook       Twitch avisa aquí (EventSub): subs, bits, raids, encuestas,
+                       predicciones, Hype Train, anuncios, chat…
+     /api/tw?a=…       lo que hace el feed con Twitch (con tu clave)
+   Igual que con Kick: no se guarda ninguna contraseña, solo el permiso que tú
+   autorizas en la página oficial de Twitch, y solo si la cuenta es la tuya.
+   ====================================================================== */
+const TW_ID = process.env.TWITCH_CLIENT_ID || '';
+const TW_SECRET = process.env.TWITCH_CLIENT_SECRET || '';
+const TW_CHANNEL = (process.env.TWITCH_CHANNEL || CHANNEL).toLowerCase();
+const TW_SCOPES = ['channel:read:subscriptions', 'bits:read', 'moderator:read:followers', 'channel:read:redemptions',
+  'channel:manage:polls', 'channel:manage:predictions', 'channel:read:hype_train', 'channel:read:ads', 'channel:manage:ads',
+  'channel:edit:commercial', 'channel:manage:broadcast', 'channel:moderate', 'moderator:manage:banned_users',
+  'moderator:manage:chat_messages', 'user:read:chat', 'user:write:chat', 'user:bot', 'channel:bot',
+  'moderator:manage:shoutouts', 'moderator:manage:chat_settings', 'channel:manage:raids', 'clips:edit'].join(' ');
+const TW_BOT_SCOPES = 'user:read:chat user:write:chat user:bot';
+const TW_SUBS_VER = '1';
+// [tipo, versión, condición] (B = tu id de Twitch)
+const TW_EVENTS = [
+  ['stream.online', '1', B => ({ broadcaster_user_id: B })],
+  ['stream.offline', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.update', '2', B => ({ broadcaster_user_id: B })],
+  ['channel.subscribe', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.subscription.message', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.subscription.gift', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.cheer', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.raid', '1', B => ({ to_broadcaster_user_id: B })],
+  ['channel.follow', '2', B => ({ broadcaster_user_id: B, moderator_user_id: B })],
+  ['channel.channel_points_custom_reward_redemption.add', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.poll.begin', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.poll.progress', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.poll.end', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.prediction.begin', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.prediction.progress', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.prediction.lock', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.prediction.end', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.hype_train.begin', '2', B => ({ broadcaster_user_id: B })],
+  ['channel.hype_train.progress', '2', B => ({ broadcaster_user_id: B })],
+  ['channel.hype_train.end', '2', B => ({ broadcaster_user_id: B })],
+  ['channel.ad_break.begin', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.ban', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.unban', '1', B => ({ broadcaster_user_id: B })],
+  ['channel.chat.message', '1', B => ({ broadcaster_user_id: B, user_id: B })]   // antispam, comandos y respaldo del chat
+];
+
+async function twFetch(url, opts, ms) {
+  try { return await fetch(url, Object.assign({}, opts || {}, { signal: AbortSignal.timeout(ms || 9000) })); }
+  catch (e) {
+    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new Error('Twitch tardó demasiado en contestar, intenta otra vez');
+    throw e;
+  }
+}
+async function twTokenReq(params) {
+  const r = await twFetch('https://id.twitch.tv/oauth2/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params).toString() });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) throw new Error('Twitch no entregó el permiso (' + r.status + ' ' + (j.message || j.error || '') + ')');
+  return j;
+}
+// token de la app (para EventSub y lecturas públicas): se guarda hasta que caduque
+let TWAPP = null;
+async function twAppToken(fresh) {
+  if (!fresh && TWAPP && Date.now() < TWAPP.exp - 300000) return TWAPP.t;
+  if (!fresh) { try { const c = await getJSON('tw:app'); if (c && Date.now() < c.exp - 300000) { TWAPP = c; return c.t; } } catch (e) {} }
+  const j = await twTokenReq({ client_id: TW_ID, client_secret: TW_SECRET, grant_type: 'client_credentials' });
+  TWAPP = { t: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+  try { await setJSON('tw:app', TWAPP, Math.max(60, (j.expires_in || 3600) - 60)); } catch (e) {}
+  return TWAPP.t;
+}
+// tu token (role 'b') o el de tu bot ('bot'); se renueva solo
+async function twUserToken(role) {
+  const key = role === 'bot' ? 'tw:bot' : 'tw:tok';
+  const t = await getJSON(key);
+  if (!t) return null;
+  if (Date.now() < t.expires_at - 120000) return t;
+  try {
+    const j = await twTokenReq({ client_id: TW_ID, client_secret: TW_SECRET, grant_type: 'refresh_token', refresh_token: t.refresh_token });
+    const nt = Object.assign({}, t, { access_token: j.access_token, refresh_token: j.refresh_token || t.refresh_token, expires_at: Date.now() + (j.expires_in || 3600) * 1000 });
+    await setJSON(key, nt);
+    return nt;
+  } catch (e) {
+    try { await logPush('raw', { at: Date.now(), type: 'twitch-token', body: role + ': ' + e.message }, 40); } catch (e2) {}
+    return null;
+  }
+}
+// Llama a la API de Twitch. who: 'b' (tú), 'bot' o 'app'. Devuelve {ok, status, j}
+async function helix(method, path, body, who) {
+  let tok;
+  if (who === 'app') tok = await twAppToken();
+  else { const t = await twUserToken(who || 'b'); tok = t && t.access_token; }
+  if (!tok) return { ok: false, status: 409, j: { message: who === 'bot' ? 'Falta conectar tu bot de Twitch' : 'Falta conectar tu cuenta de Twitch' } };
+  const r = await twFetch('https://api.twitch.tv/helix' + path, {
+    method, headers: { Authorization: 'Bearer ' + tok, 'Client-Id': TW_ID, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined });
+  const j = r.status === 204 ? {} : await r.json().catch(() => ({}));
+  if (r.status === 401 && who === 'app') TWAPP = null;
+  return { ok: r.ok, status: r.status, j };
+}
+function twErr(r, need) {
+  const msg = (r && r.j && (r.j.message || r.j.error)) || '';
+  if (r.status === 409) return msg || 'Falta conectar tu cuenta de Twitch';
+  if (r.status === 401 || (r.status === 403 && /scope|token|authoriz/i.test(msg))) return 'Twitch no dio permiso' + (need ? ' (' + need + ')' : '') + ': vuelve a conectar tu cuenta de Twitch';
+  if (r.status === 429) return 'Twitch pidió esperar un momento, intenta otra vez';
+  return msg ? 'Twitch: ' + msg : 'Twitch respondió ' + r.status;
+}
+async function twMe() { const t = await getJSON('tw:tok'); return t ? String(t.user_id) : ''; }
+async function twHookSecret() {
+  let s = await redis('GET', 'tw:hsec');
+  if (!s) { s = crypto.randomBytes(24).toString('hex'); await redis('SET', 'tw:hsec', s); }
+  return s;
+}
+async function twSubscribeAll(req) {
+  const B = await twMe(); if (!B) throw new Error('Falta conectar tu cuenta de Twitch');
+  const cb = baseUrl(req) + '/api/twhook', secret = await twHookSecret();
+  // las de esta app que ya había (para no repetirlas): se borran y se hacen de nuevo
+  let after = '', old = [];
+  for (let i = 0; i < 10; i++) {
+    const r = await helix('GET', '/eventsub/subscriptions' + (after ? '?after=' + encodeURIComponent(after) : ''), null, 'app');
+    if (!r.ok) break;
+    old = old.concat((r.j.data || []).filter(s => s.transport && s.transport.method === 'webhook'));
+    after = (r.j.pagination || {}).cursor || ''; if (!after) break;
+  }
+  for (const s of old) { try { await helix('DELETE', '/eventsub/subscriptions?id=' + encodeURIComponent(s.id), null, 'app'); } catch (e) {} }
+  const out = [];
+  for (const [type, version, cond] of TW_EVENTS) {
+    let r = await helix('POST', '/eventsub/subscriptions', { type, version, condition: cond(B), transport: { method: 'webhook', callback: cb, secret } }, 'app');
+    if (!r.ok && version === '2' && /hype_train/.test(type)) r = await helix('POST', '/eventsub/subscriptions', { type, version: '1', condition: cond(B), transport: { method: 'webhook', callback: cb, secret } }, 'app');
+    out.push({ name: type, ok: r.ok, error: r.ok ? '' : twErr(r) });
+  }
+  await redis('SET', 'tw:subsVer', TW_SUBS_VER);
+  return out;
+}
+
+/* ---- conectar tu cuenta (o la de tu bot) ---- */
+async function twLogin(req, res) {
+  const q = req.query || {};
+  const html = (code, b) => send(res, code, page('Twitch · Kick Feed', b), 'text/html; charset=utf-8');
+  if (!TW_ID || !TW_SECRET) return html(500, '<h1 class="bad">Faltan las claves de Twitch</h1><p>Agrega <code>TWITCH_CLIENT_ID</code> y <code>TWITCH_CLIENT_SECRET</code> en Vercel y vuelve a publicar.</p>');
+  if (!(await checkKey(q.key))) return html(403, '<h1 class="bad">Falta tu clave</h1><p>Ábrelo desde el feed: ⚙ → Plataformas → Conectar Twitch.</p>');
+  const role = q.as === 'bot' ? 'bot' : 'b';
+  const state = b64url(crypto.randomBytes(16));
+  await redis('SET', 'twst:' + state, role, 'EX', 900);
+  const qs = { client_id: TW_ID, redirect_uri: baseUrl(req) + '/api/twcallback', response_type: 'code',
+               scope: role === 'bot' ? TW_BOT_SCOPES : TW_SCOPES, state, force_verify: 'true' };
+  res.statusCode = 302;
+  res.setHeader('Location', 'https://id.twitch.tv/oauth2/authorize?' + Object.keys(qs).map(k => k + '=' + encodeURIComponent(qs[k])).join('&'));
+  res.end();
+}
+async function twCallback(req, res) {
+  const q = req.query || {};
+  const html = (code, b) => send(res, code, page('Twitch · Kick Feed', b), 'text/html; charset=utf-8');
+  if (q.error) return html(400, '<h1 class="bad">No se autorizó</h1><p>' + esc(q.error_description || q.error) + '</p>');
+  const role = q.state ? await redis('GET', 'twst:' + q.state) : null;
+  if (!q.code || !role) return html(400, '<h1 class="bad">El enlace ya caducó</h1><p>Vuelve a picarle a «Conectar» desde el feed.</p>');
+  await redis('DEL', 'twst:' + q.state);
+  try {
+    const j = await twTokenReq({ client_id: TW_ID, client_secret: TW_SECRET, code: q.code, grant_type: 'authorization_code', redirect_uri: baseUrl(req) + '/api/twcallback' });
+    const r = await twFetch('https://api.twitch.tv/helix/users', { headers: { Authorization: 'Bearer ' + j.access_token, 'Client-Id': TW_ID } });
+    const u = (((await r.json().catch(() => ({}))).data) || [])[0] || {};
+    const login = String(u.login || '').toLowerCase();
+    if (role === 'b' && login !== TW_CHANNEL)
+      return html(403, '<h1 class="bad">Esa cuenta no es ' + esc(TW_CHANNEL) + '</h1><p>Entraste como <b>' + esc(u.display_name || login) + '</b>. Cierra sesión en Twitch, entra con tu cuenta y vuelve a intentarlo.</p>');
+    const tok = { access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in || 3600) * 1000,
+                  user_id: String(u.id || ''), login, name: u.display_name || login, scope: Array.isArray(j.scope) ? j.scope.join(' ') : String(j.scope || ''), at: Date.now() };
+    await setJSON(role === 'bot' ? 'tw:bot' : 'tw:tok', tok);
+    if (role === 'bot') return html(200, '<h1 class="ok">✅ Listo, ' + esc(tok.name) + '</h1><p>Tus mensajes a Twitch desde el feed pueden salir con esta cuenta (lo eliges en ⚙ → Plataformas).</p>');
+    let subs = [];
+    try { subs = await twSubscribeAll(req); } catch (e) { subs = [{ name: 'EventSub', ok: false, error: e.message }]; }
+    const lines = subs.map(s => '<li>' + (s.ok ? '<span class="ok">✔</span> ' : '<span class="bad">✘</span> ') + esc(s.name) + (s.error ? ' <small>(' + esc(s.error) + ')</small>' : '') + '</li>').join('');
+    return html(200, '<h1 class="ok">✅ Twitch conectado: ' + esc(tok.name) + '</h1><p>Twitch ya le avisa a tu servidor de esto:</p><ul>' + lines + '</ul><p><small>Ya puedes cerrar esta página y regresar al feed.</small></p>');
+  } catch (e) {
+    return html(500, '<h1 class="bad">Algo falló</h1><p>' + esc(e.message) + '</p>');
+  }
+}
+
+/* ---- convertir el aviso de Twitch en un evento sencillo (como los de Kick) ---- */
+function twBadges(list) {
+  const map = { broadcaster: 'broadcaster', moderator: 'moderator', vip: 'vip', founder: 'founder', partner: 'verified', staff: 'staff', admin: 'staff',
+                'sub-gifter': 'sub_gifter', 'sub-gift-leader': 'sub_gifter', subscriber: 'subscriber', bits: 'bits', 'bits-leader': 'bits', artist: 'artist' };
+  return (list || []).map(b => {
+    const t = map[b.set_id]; if (!t) return null;
+    const o = { type: t };
+    if (t === 'subscriber' || t === 'founder') o.count = Number(b.info) || (Number(b.id) % 1000) || 1;
+    else if (t === 'sub_gifter' || t === 'bits') o.count = Number(b.id) || 0;
+    return o;
+  }).filter(Boolean);
+}
+// el texto con sus emotes de Twitch como [twe:id:nombre] (el feed los pinta como imagen)
+function twText(msg) {
+  const fr = (msg && msg.fragments) || [];
+  if (!fr.length) return String((msg && msg.text) || '');
+  return fr.map(f => f.type === 'emote' && f.emote && f.emote.id ? '[twe:' + String(f.emote.id).replace(/[^\w-]/g, '') + ':' + String(f.text || '').replace(/[\]:]/g, '') + ']' : String(f.text || '')).join('');
+}
+function twNorm(type, e) {
+  e = e || {};
+  const u = e.user_name || e.user_login || '';
+  switch (type) {
+    case 'channel.subscribe': return e.is_gift ? null : { kind: 'sub', user: u, months: 1, tier: e.tier || '1000' };
+    case 'channel.subscription.message': return { kind: 'resub', user: u, months: Number(e.cumulative_months) || Number(e.duration_months) || 1, streak: Number(e.streak_months) || 0, tier: e.tier || '1000', message: twText(e.message) };
+    case 'channel.subscription.gift': return { kind: 'gift', user: e.is_anonymous ? '' : u, anon: !!e.is_anonymous, count: Number(e.total) || 1, giftees: [], tier: e.tier || '1000', cumulative: Number(e.cumulative_total) || 0 };
+    case 'channel.cheer': return { kind: 'bits', user: e.is_anonymous ? '' : u, anon: !!e.is_anonymous, amount: Number(e.bits) || 0, message: String(e.message || '').slice(0, 500) };
+    case 'channel.raid': return { kind: 'raid', user: e.from_broadcaster_user_name || e.from_broadcaster_user_login || '', viewers: Number(e.viewers) || 0 };
+    case 'channel.follow': return { kind: 'follow', user: u };
+    case 'channel.channel_points_custom_reward_redemption.add': return { kind: 'reward', user: u, reward: (e.reward || {}).title || '', cost: Number((e.reward || {}).cost) || 0, input: String(e.user_input || '').slice(0, 300) };
+    case 'channel.ban': return { kind: 'ban', user: e.user_name || e.user_login || '', uid: e.user_id || '', mod: e.moderator_user_name || '', reason: e.reason || '', expires_at: e.is_permanent ? null : (e.ends_at || null) };
+    case 'channel.unban': return { kind: 'unban', user: e.user_name || e.user_login || '', mod: e.moderator_user_name || '' };
+    case 'channel.update': return { kind: 'meta', title: e.title || '', cat: e.category_id ? { id: e.category_id, name: e.category_name || '' } : null };
+    case 'stream.online': return { kind: 'live', is_live: true, started_at: e.started_at || null };
+    case 'stream.offline': return { kind: 'live', is_live: false };
+  }
+  return null;
+}
+// encuestas, predicciones, Hype Train y anuncios: el estado de ahorita (el feed lo pinta en su ventanita)
+function twPoll(e, st) {
+  return { id: e.id, title: e.title || '', st, ends: e.ends_at || null, ended: e.ended_at || null, status: e.status || '',
+           choices: (e.choices || []).map(c => ({ id: c.id, t: c.title, v: (Number(c.votes) || 0) || ((Number(c.channel_points_votes) || 0) + (Number(c.bits_votes) || 0)) })), at: Date.now() };
+}
+function twPred(e, st) {
+  return { id: e.id, title: e.title || '', st, locks: e.locks_at || null, win: e.winning_outcome_id || null, status: e.status || '',
+           outcomes: (e.outcomes || []).map(o => ({ id: o.id, t: o.title, c: o.color || '', users: Number(o.users) || 0, pts: Number(o.channel_points) || 0,
+             top: ((o.top_predictors || [])[0] || {}).user_name || '' })), at: Date.now() };
+}
+function twHype(e, st) {
+  return { id: e.id, st, level: Number(e.level) || 1, total: Number(e.total) || 0, progress: Number(e.progress) || 0, goal: Number(e.goal) || 0,
+           expires: e.expires_at || null, ended: e.ended_at || null, type: e.type || '', golden: !!e.is_golden_kappa_train || e.type === 'golden_kappa',
+           top: (e.top_contributions || []).map(c => ({ u: c.user_name || c.user_login || '', type: c.type, n: Number(c.total) || 0 })).slice(0, 3), at: Date.now() };
+}
+
+/* ---- donde Twitch avisa ---- */
+async function twHook(req, res) {
+  if (req.method !== 'POST') return send(res, 200, { ok: true, info: 'Aquí Twitch manda los avisos.' });
+  const raw = await readRaw(req);
+  const h = k => String(req.headers[k] || '');
+  const id = h('twitch-eventsub-message-id'), ts = h('twitch-eventsub-message-timestamp'), sig = h('twitch-eventsub-message-signature');
+  const mtype = h('twitch-eventsub-message-type');
+  let ok = false;
+  try {
+    const want = 'sha256=' + crypto.createHmac('sha256', await twHookSecret()).update(id + ts + raw).digest('hex');
+    ok = !!sig && sig.length === want.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want));
+  } catch (e) { ok = false; }
+  if (!ok) { try { await logPush('rejected', { at: Date.now(), type: 'twitch:' + mtype, id, body: raw.slice(0, 200) }, 20); } catch (e) {} return send(res, 403, { ok: false }); }
+  let p = {}; try { p = JSON.parse(raw); } catch (e) {}
+  if (mtype === 'webhook_callback_verification') return send(res, 200, String(p.challenge || ''), 'text/plain; charset=utf-8');
+  const type = (p.subscription || {}).type || h('twitch-eventsub-subscription-type');
+  if (mtype === 'revocation') {
+    try { await logPush('raw', { at: Date.now(), type: 'twitch-revocation', body: type + ' · ' + ((p.subscription || {}).status || '') }, 40); await redis('DEL', 'tw:subsVer'); } catch (e) {}
+    return send(res, 204, '');
+  }
+  if (mtype !== 'notification') return send(res, 204, '');
+  // Twitch puede repetir el aviso: una sola vez
+  if (!(await redis('SET', 'twseen:' + id, '1', 'NX', 'EX', 3 * 86400))) return send(res, 204, '');
+  const e = p.event || {};
+  if (type === 'channel.chat.message') { try { await twChat(e); } catch (x) {} return send(res, 204, ''); }
+  const rt = Date.now();
+  try {
+    if (/^channel\.poll\./.test(type)) {
+      const st = type.split('.').pop(), po = twPoll(e, st);
+      await setJSON('tw:poll', po, st === 'end' ? 600 : 3 * 3600);
+      if (st === 'end' && e.status !== 'ARCHIVED') await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'tw:' + id, type: 'tw.poll', ts: rt, rt, d: Object.assign({ kind: 'poll', pf: 'tw' }, po) }));
+    } else if (/^channel\.prediction\./.test(type)) {
+      const st = type.split('.').pop(), pr = twPred(e, st);
+      await setJSON('tw:pred', pr, st === 'end' ? 600 : 3 * 3600);
+      if (st === 'end') await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'tw:' + id, type: 'tw.pred', ts: rt, rt, d: Object.assign({ kind: 'pred', pf: 'tw' }, pr) }));
+    } else if (/^channel\.hype_train\./.test(type)) {
+      const st = type.split('.').pop(), hy = twHype(e, st);
+      await setJSON('tw:hype', hy, st === 'end' ? 300 : 3600);
+      if (st === 'begin' || st === 'end') await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'tw:' + id, type: 'tw.hype', ts: rt, rt, d: Object.assign({ kind: 'hype', pf: 'tw' }, hy) }));
+    } else if (type === 'channel.ad_break.begin') {
+      const dur = Math.max(1, Number(e.duration_seconds) || 30);
+      await setJSON('tw:ad', { at: Date.parse(e.started_at) || rt, dur, auto: !!e.is_automatic, by: e.requester_user_name || '' }, dur + 30);
+    } else {
+      const d = twNorm(type, e);
+      if (d) {
+        d.pf = 'tw';
+        const ev = { id: 'tw:' + id, type: 'tw.' + type, ts: rt, rt, d };
+        let skip = false, newSess = false;
+        if (type === 'channel.update') {
+          const prev = await getJSON('tw:meta'), cur = { title: d.title, cat: d.cat };
+          await setJSON('tw:meta', cur);
+          const ch = [];
+          if (!prev || prev.title !== cur.title) ch.push('title');
+          if (!prev || ((prev.cat || {}).id || '') !== ((cur.cat || {}).id || '')) ch.push('category');
+          d.changed = ch; if (prev) { d.oldTitle = prev.title || ''; d.oldCat = (prev.cat || {}).name || ''; }
+          skip = !ch.length;
+        }
+        if (d.kind === 'live') {
+          const se = (await getJSON('tw:session')) || {};
+          if (d.is_live) {
+            const st = Date.parse(d.started_at) || rt;
+            let title = ''; try { title = ((await getJSON('tw:meta')) || {}).title || ''; } catch (x) {}
+            d.title = title;
+            if (!se.start || !se.lastEnd || st - se.lastEnd > 30 * 60000) { se.prevEnd = se.lastEnd || 0; se.start = st; newSess = true;
+              try { const pa = await getJSON('tw:subAdj'); if (pa && (pa.start === 0 || pa.start === 'off')) await setJSON('tw:subAdj', { start: st, n: 0, s: 0, at: rt }); } catch (x) {} }
+            se.live = true;
+          } else { se.lastEnd = rt; se.live = false; }
+          await setJSON('tw:session', se);
+          await setJSON('tw:live', { is_live: !!d.is_live, started_at: d.is_live ? (d.started_at || null) : (se.start ? new Date(se.start).toISOString() : null), ended_at: d.is_live ? null : new Date(rt).toISOString(), title: d.title || '', at: rt });
+          if (!d.is_live) { try { await redis('DEL', 'tw:vw', 'tw:ad'); } catch (x) {} }
+          if (newSess) { const tg = avisoTelegram(d.title, 'tw'); if (!later(tg)) await tg; }
+        }
+        if (d.kind === 'ban' && d.uid) { try { if (await redis('GET', 'spamto:tw:' + d.uid)) d.spam = 1; } catch (x) {} }
+        if (!skip) await redis('ZADD', 'ev', rt, JSON.stringify(ev));
+        await redis('ZREMRANGEBYRANK', 'ev', 0, -(KEEP + 1));
+        await addToLists(ev);
+        if (['sub', 'resub', 'gift', 'bits'].indexOf(d.kind) >= 0) {
+          try { await redis('SET', 'brb:last', JSON.stringify({ id: ev.id.slice(0, 80), k: d.kind === 'bits' ? 'bits' : d.kind, pf: 'tw', u: d.user || '', anon: !!d.anon,
+            n: d.kind === 'bits' ? d.amount : d.kind === 'gift' ? d.count : d.months, at: rt }), 'EX', 900); } catch (x) {}
+        }
+        // ⚙️ reglas: subs, regalos, follows, raids y recompensas de Twitch (los mensajes de la regla van al chat de Twitch)
+        const trig = d.kind === 'raid' ? [['host', d]] : d.kind === 'reward' ? [['reward', d]] : d.kind === 'live' ? (d.is_live ? (newSess && !(await kickLive()) ? [['live', d]] : []) : (!(await kickLive()) ? [['off', d]] : []))
+          : ruleTriggers(d, newSess).filter(x => x[0] !== 'kicks' && x[0] !== 'live' && x[0] !== 'off');
+        if (trig.length) { const pr = Promise.all(trig.map(t => rulesOn(t[0], t[1], 'tw'))).catch(() => {}); if (!later(pr)) await pr; }
+      }
+    }
+    await redis('SET', 'lastHook', String(rt));
+    await logPush('raw', { at: rt, type: 'twitch:' + type, body: raw.slice(0, 1500) }, 40);
+  } catch (x) { try { await logPush('raw', { at: rt, type: 'twitch-error', body: type + ': ' + x.message }, 40); } catch (e2) {} }
+  return send(res, 204, '');
+}
+async function kickLive() { try { const se = await getJSON('session'); return !!(se && se.live); } catch (e) { return false; } }
+async function twLiveNow() { try { const se = await getJSON('tw:session'); return !!(se && se.live); } catch (e) { return false; } }
+
+// el chat de Twitch por la vía oficial: antispam, comandos de tus mods, primer mensaje y respaldo (igual que Kick)
+async function twChat(e) {
+  const rt = Date.now();
+  const m = { pf: 'tw', id: String(e.message_id || ''), ts: rt, rt, u: e.chatter_user_name || e.chatter_user_login || '', ul: String(e.chatter_user_login || '').toLowerCase(),
+              uid: String(e.chatter_user_id || ''), color: e.color || '', badges: twBadges(e.badges), t: twText(e.message).slice(0, 600) };
+  if (e.reply) m.rq = { id: e.reply.parent_message_id || '', u: e.reply.parent_user_name || e.reply.parent_user_login || '', t: String(e.reply.parent_message_body || '').slice(0, 200) };
+  if (e.cheer && e.cheer.bits) m.bits = Number(e.cheer.bits) || 0;
+  if (!m.id || !m.u) return;
+  if (!m.badges.length) {
+    try { const cfg = await spamCfg(); const rule = cfg.on ? spamHit(m.t.replace(/\[twe:[^\]]*\]/g, ' ')) : null; if (rule) { m.spam = 1; await twSpamDelete(m, rule, false, cfg); } } catch (x) {}
+  }
+  if (!m.spam && /^\s*!/.test(m.t)) { try { await modCmd(m); } catch (x) {} }
+  try { const lu = m.u.toLowerCase(); await knownLoad(); if (!KNOWN.has(lu)) { KNOWN.add(lu); if (Number(await redis('SADD', 'chatters', lu)) === 1) m.first = 1; } } catch (x) {}
+  try { await chatKeep(m); } catch (x) {}
+}
+async function twSpamDelete(m, rule, manual, cfg) {
+  const B = await twMe();
+  const r = B ? await helix('DELETE', '/moderation/chat?broadcaster_id=' + B + '&moderator_id=' + B + '&message_id=' + encodeURIComponent(m.id), null, 'b') : { ok: false, status: 409, j: {} };
+  const ok = r.ok || r.status === 404;
+  const to = spamTo(cfg || SPAMC.cfg);
+  let toOk = false, toErr = '';
+  if (B && to && m.uid && String(m.uid) !== B) {
+    try { await redis('SET', 'spamto:tw:' + m.uid, '1', 'EX', 180); } catch (e) {}
+    const b = await helix('POST', '/moderation/bans?broadcaster_id=' + B + '&moderator_id=' + B, { data: { user_id: String(m.uid), duration: to * 60, reason: 'Spam (antispam automático)' } }, 'b');
+    toOk = !!b.ok; if (!b.ok) toErr = twErr(b, 'banear');
+  }
+  const rt = Date.now();
+  const ev = { id: 'spam:tw:' + m.id, type: 'antispam', ts: rt, rt, d: { kind: 'spam', pf: 'tw', user: m.u, uid: m.uid || 0, mid: m.id, text: String(m.t || '').slice(0, 300), rule, manual: !!manual, ok, to: toOk ? to : 0, toErr, error: ok ? '' : twErr(r, 'borrar mensajes') } };
+  await redis('ZADD', 'ev', rt, JSON.stringify(ev));
+  await logPush('spamlog', { at: rt, u: m.u, t: ev.d.text.slice(0, 200), rule, ok, manual: !!manual, to: ev.d.to, pf: 'tw' }, 30);
+  return ev.d;
+}
+
+/* ---- escribir en el chat de Twitch (con tu bot si lo conectaste y así lo elegiste) ---- */
+async function twSend(text, replyTo, as) {
+  const B = await twMe(); if (!B) return { ok: false, error: 'Falta conectar tu cuenta de Twitch' };
+  let who = 'b', sender = B;
+  if (as !== 'me') { const bt = await twUserToken('bot'); if (bt && bt.user_id) { who = 'bot'; sender = bt.user_id; } }
+  const body = { broadcaster_id: B, sender_id: sender, message: String(text || '').slice(0, 500) };
+  if (replyTo) body.reply_parent_message_id = String(replyTo);
+  const r = await helix('POST', '/chat/messages', body, who);
+  const d = ((r.j && r.j.data) || [])[0] || {};
+  if (!r.ok) return { ok: false, error: twErr(r, 'escribir en el chat') };
+  if (d.is_sent === false) return { ok: false, error: 'Twitch no lo mandó: ' + ((d.drop_reason || {}).message || 'sin razón') };
+  return { ok: true, message_id: d.message_id || null, as: who };
+}
+// un mensaje a la plataforma que toque (reglas, comandos, momentos)
+async function chatSay(pf, text) {
+  text = String(text || '').slice(0, 500); if (!text) return { ok: true };
+  if (pf === 'tw') return twSend(text);
+  const tk = await validToken(); if (!tk) return { ok: false, error: 'Falta conectar tu cuenta de Kick' };
+  const r = await kickCall('POST', '/chat', tk.access_token, { type: 'user', broadcaster_user_id: Number(tk.user_id), content: text });
+  return r.ok ? { ok: true } : { ok: false, error: kickErr(r.status, r.j, 'Escribir en el feed del chat') };
+}
+
+/* ---- totales de Twitch (aparte de los de Kick: cada plataforma con su meta) ---- */
+let TWTOT = { k: '', v: null, at: 0 };
+async function twTotals(from, adjS, fresh) {
+  let adj = null; try { adj = adjS ? JSON.parse(adjS) : null; } catch (e) {}
+  const an = adj && adj.start === from ? Number(adj.n) || 0 : 0;
+  const k = from + '|' + an;
+  if (!fresh && TWTOT.k === k && TWTOT.v && Date.now() - TWTOT.at < 20000) return TWTOT.v;
+  const sess = await redis('ZRANGEBYSCORE', 'ev', from - 3600000, '+inf');
+  const t = { from, subs: 0, bits: 0, newSubs: 0, resubs: 0, gifted: 0, adj: an };
+  (sess || []).forEach(s => {
+    let e; try { e = JSON.parse(s); } catch (x) { return; }
+    const d = e.d || {}; if (d.pf !== 'tw' || (e.ts || 0) < from - 60000) return;
+    if (d.kind === 'sub') { t.subs++; t.newSubs++; } else if (d.kind === 'resub') { t.subs++; t.resubs++; }
+    else if (d.kind === 'gift') { t.subs += d.count || 1; t.gifted += d.count || 1; } else if (d.kind === 'bits') t.bits += d.amount || 0;
+  });
+  t.real = t.subs; t.subs = Math.max(0, t.subs + an);
+  TWTOT = { k, v: t, at: Date.now() };
+  return t;
+}
+// viewers de Twitch (una pregunta a Twitch por minuto como máximo, aunque tus dos celulares pregunten)
+let TWVW = { at: 0, v: null };
+async function twViewers() {
+  if (Date.now() - TWVW.at < 55000) return TWVW.v;
+  try { const c = await getJSON('tw:vw'); if (c && Date.now() - c.at < 55000) { TWVW = { at: c.at, v: c }; return c; } } catch (e) {}
+  TWVW.at = Date.now();
+  const B = await twMe(); if (!B || !TW_ID) return null;
+  const r = await helix('GET', '/streams?user_id=' + B, null, 'app');
+  const s = ((r.j && r.j.data) || [])[0] || null;
+  const v = { at: Date.now(), n: s ? Number(s.viewer_count) || 0 : null, live: !!s, started_at: s ? s.started_at : null, title: s ? s.title : '', game: s ? s.game_name : '' };
+  TWVW = { at: v.at, v };
+  try { await setJSON('tw:vw', v, 70); } catch (e) {}
+  return v;
+}
+// lo de Twitch que el feed necesita en cada revisión (sale en /api/events)
+async function twState(q) {
+  const [liveS, seS, adjS, pollS, predS, hypeS, adS] = (await redis('MGET', 'tw:live', 'tw:session', 'tw:subAdj', 'tw:poll', 'tw:pred', 'tw:hype', 'tw:ad')) || [];
+  const pj = v => { try { return v ? JSON.parse(v) : null; } catch (e) { return null; } };
+  const se = pj(seS), live = pj(liveS);
+  const from = se && se.start && (se.live || (se.lastEnd && Date.now() - se.lastEnd < 30 * 60000)) ? se.start : 0;
+  const out = { on: true, live, session: se, poll: pj(pollS), pred: pj(predS), hype: pj(hypeS), ad: pj(adS) };
+  if (from) out.totals = await twTotals(from, adjS, q && q.tot === '1');
+  else { const a = pj(adjS); if (a && (a.start === 'off' || a.start === 0)) out.totals = { from: 0, off: true, subs: Math.max(0, Number(a.n) || 0), bits: 0, adj: Number(a.n) || 0, real: 0 }; }
+  if (se && se.live) { try { out.vw = await twViewers(); } catch (e) {} }
+  return out;
+}
+
+/* ---- lo que hace el feed con Twitch ---- */
+async function twApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const b = req.method === 'POST' ? await readJSONBody(req) : {};
+  const q = req.query || {};
+  if (!(await checkKey(q.key || b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const a = String(q.a || b.a || '');
+  if (!TW_ID || !TW_SECRET) return send(res, 200, { ok: false, configured: false, error: 'Faltan las claves de Twitch en Vercel' });
+  const B = await twMe();
+  if (a === 'status') {
+    const [t, bt] = [await getJSON('tw:tok'), await getJSON('tw:bot')];
+    const need = TW_SCOPES.split(' ').filter(s => !t || String(t.scope || '').split(' ').indexOf(s) < 0);
+    return send(res, 200, { ok: true, configured: true, channel: TW_CHANNEL, me: t ? { login: t.login, name: t.name, id: t.user_id, missing: need } : null,
+                            bot: bt ? { login: bt.login, name: bt.name } : null, subsOk: (await redis('GET', 'tw:subsVer')) === TW_SUBS_VER });
+  }
+  if (!B) return send(res, 200, { ok: false, error: 'Falta conectar tu cuenta de Twitch (⚙ → Plataformas)' });
+  if (a === 'resub') return send(res, 200, { ok: true, subs: await twSubscribeAll(req) });
+  if (a === 'now') return send(res, 200, Object.assign({ ok: true }, await twState(q)));
+  if (a === 'unlink') { await redis('DEL', b.who === 'bot' ? 'tw:bot' : 'tw:tok'); return send(res, 200, { ok: true }); }
+  if (a === 'send') { const r = await twSend(b.text, b.reply_to, b.as); return send(res, 200, r); }
+  if (a === 'mod') {
+    const act = String(b.action || ''), uid = String(b.user_id || '');
+    let r;
+    if (act === 'delete') r = await helix('DELETE', '/moderation/chat?broadcaster_id=' + B + '&moderator_id=' + B + '&message_id=' + encodeURIComponent(String(b.message_id || '')), null, 'b');
+    else {
+      if (!uid) return send(res, 400, { ok: false, error: 'falta la persona' });
+      if (uid === B) return send(res, 400, { ok: false, error: 'No te puedes silenciar a ti mismo' });
+      if (act === 'unban') r = await helix('DELETE', '/moderation/bans?broadcaster_id=' + B + '&moderator_id=' + B + '&user_id=' + encodeURIComponent(uid), null, 'b');
+      else if (act === 'timeout' || act === 'ban') {
+        const data = { user_id: uid }; if (act === 'timeout') data.duration = Math.max(1, Math.min(1209600, Math.round((Number(b.duration) || 10) * 60)));
+        if (b.reason) data.reason = String(b.reason).slice(0, 100);
+        r = await helix('POST', '/moderation/bans?broadcaster_id=' + B + '&moderator_id=' + B, { data }, 'b');
+      } else return send(res, 400, { ok: false, error: 'acción rara' });
+    }
+    await logPush('modlog', { at: Date.now(), act, user: b.username || uid, ok: r.ok, status: r.status, duration: b.duration || null, pf: 'tw' }, 100);
+    return send(res, 200, r.ok ? { ok: true } : { ok: false, error: twErr(r, 'moderar') });
+  }
+  if (a === 'chan') {
+    if (req.method === 'POST') { const r = await twChanSet(b.title, b.game_id, b.cat_name); if (!r.ok) return send(res, 200, r); }
+    return send(res, 200, Object.assign({ ok: true }, await twChanGet()));
+  }
+  if (a === 'cats') return send(res, 200, { ok: true, data: await twCats(q.q || b.q) });
+  if (a === 'poll') {
+    if (b.op === 'create') {
+      const choices = (Array.isArray(b.choices) ? b.choices : []).map(c => String(c || '').trim().slice(0, 25)).filter(Boolean).slice(0, 5);
+      if (!String(b.title || '').trim() || choices.length < 2) return send(res, 400, { ok: false, error: 'Pon la pregunta y al menos 2 opciones' });
+      const body = { broadcaster_id: B, title: String(b.title).trim().slice(0, 60), choices: choices.map(t => ({ title: t })), duration: Math.max(15, Math.min(1800, Math.round(Number(b.duration) || 120))) };
+      if (b.cp) { body.channel_points_voting_enabled = true; body.channel_points_per_vote = Math.max(1, Math.min(1000000, Math.round(Number(b.cp) || 100))); }
+      const r = await helix('POST', '/polls', body, 'b');
+      return send(res, 200, r.ok ? { ok: true, poll: ((r.j.data || [])[0]) || null } : { ok: false, error: twErr(r, 'encuestas') });
+    }
+    if (b.op === 'end') { const r = await helix('PATCH', '/polls', { broadcaster_id: B, id: String(b.id || ''), status: b.archive ? 'ARCHIVED' : 'TERMINATED' }, 'b'); return send(res, 200, r.ok ? { ok: true } : { ok: false, error: twErr(r, 'encuestas') }); }
+    return send(res, 400, { ok: false, error: 'op rara' });
+  }
+  if (a === 'pred') {
+    if (b.op === 'create') {
+      const outs = (Array.isArray(b.outcomes) ? b.outcomes : []).map(c => String(c || '').trim().slice(0, 25)).filter(Boolean).slice(0, 10);
+      if (!String(b.title || '').trim() || outs.length < 2) return send(res, 400, { ok: false, error: 'Pon la pregunta y al menos 2 resultados' });
+      const r = await helix('POST', '/predictions', { broadcaster_id: B, title: String(b.title).trim().slice(0, 45), outcomes: outs.map(t => ({ title: t })), prediction_window: Math.max(30, Math.min(1800, Math.round(Number(b.window) || 120))) }, 'b');
+      return send(res, 200, r.ok ? { ok: true, pred: ((r.j.data || [])[0]) || null } : { ok: false, error: twErr(r, 'predicciones') });
+    }
+    const st = b.op === 'lock' ? 'LOCKED' : b.op === 'resolve' ? 'RESOLVED' : b.op === 'cancel' ? 'CANCELED' : '';
+    if (!st) return send(res, 400, { ok: false, error: 'op rara' });
+    const body = { broadcaster_id: B, id: String(b.id || ''), status: st }; if (st === 'RESOLVED') body.winning_outcome_id = String(b.win || '');
+    const r = await helix('PATCH', '/predictions', body, 'b');
+    return send(res, 200, r.ok ? { ok: true } : { ok: false, error: twErr(r, 'predicciones') });
+  }
+  if (a === 'ads') {
+    if (b.op === 'snooze') { const r = await helix('POST', '/channels/ads/schedule/snooze?broadcaster_id=' + B, null, 'b'); if (!r.ok) return send(res, 200, { ok: false, error: twErr(r, 'anuncios') }); }
+    if (b.op === 'start') {
+      const len = [30, 60, 90, 120, 150, 180].indexOf(Number(b.length)) >= 0 ? Number(b.length) : 30;
+      const r = await helix('POST', '/channels/commercial', { broadcaster_id: B, length: len }, 'b');
+      if (!r.ok) return send(res, 200, { ok: false, error: twErr(r, 'anuncios') });
+      const d = ((r.j.data || [])[0]) || {};
+      if (d.length) { try { await setJSON('tw:ad', { at: Date.now(), dur: Number(d.length) || len, auto: false, by: 'tú' }, (Number(d.length) || len) + 30); } catch (e) {} }
+    }
+    const r = await helix('GET', '/channels/ads?broadcaster_id=' + B, null, 'b');
+    const d = ((r.j && r.j.data) || [])[0] || null;
+    return send(res, 200, r.ok ? { ok: true, sched: d && { next: tsAny(d.next_ad_at), last: tsAny(d.last_ad_at),
+      dur: Number(d.duration) || 0, preroll: Number(d.preroll_free_time) || 0, snooze: Number(d.snooze_count) || 0, snoozeAt: tsAny(d.snooze_refresh_at) } }
+      : { ok: false, error: twErr(r, 'anuncios') });
+  }
+  return send(res, 400, { ok: false, error: 'acción desconocida' });
+}
+// Twitch a veces manda las horas como número (segundos) y a veces como fecha
+function tsAny(v) { if (v == null || v === '' || v === 0 || v === '0') return 0; if (/^\d+$/.test(String(v))) { const n = Number(v); return n < 1e12 ? n * 1000 : n; } return Date.parse(v) || 0; }
+async function twChanGet() {
+  const B = await twMe(); if (!B) return { tw: null };
+  const r = await helix('GET', '/channels?broadcaster_id=' + B, null, 'app');
+  const c = ((r.j && r.j.data) || [])[0] || {};
+  return { tw: { title: c.title || '', category: c.game_id ? { id: c.game_id, name: c.game_name || '' } : null } };
+}
+async function twCats(term) {
+  term = String(term || '').trim(); if (term.length < 2) return [];
+  const r = await helix('GET', '/search/categories?first=20&query=' + encodeURIComponent(term), null, 'app');
+  return ((r.j && r.j.data) || []).map(c => ({ id: c.id, name: c.name, thumbnail: String(c.box_art_url || '').replace('{width}', '52').replace('{height}', '72') }));
+}
+// título y/o categoría en Twitch. Si viene el nombre de la categoría de Kick, se busca la misma en Twitch
+async function twChanSet(title, gameId, catName) {
+  const B = await twMe(); if (!B) return { ok: false, error: 'Falta conectar tu cuenta de Twitch' };
+  const body = {};
+  if (title && String(title).trim()) body.title = String(title).trim().slice(0, 140);
+  if (gameId) body.game_id = String(gameId);
+  else if (catName) {
+    const want = String(catName).trim().toLowerCase(), list = await twCats(catName);
+    const hit = list.find(c => c.name.toLowerCase() === want) || list[0];
+    if (hit) body.game_id = String(hit.id);
+  }
+  if (!Object.keys(body).length) return { ok: false, error: 'nada que cambiar' };
+  const r = await helix('PATCH', '/channels?broadcaster_id=' + B, body, 'b');
+  if (!r.ok) return { ok: false, error: twErr(r, 'cambiar título y categoría') };
+  await logPush('titles', { at: Date.now(), title: body.title || null, category_id: body.game_id || null, pf: 'tw' }, 50);
+  return { ok: true };
+}
+
 /* ---------------- tokens de Kick ---------------- */
 async function tokenRequest(params) {
   const r = await kfetch('https://id.kick.com/oauth/token', {
@@ -458,13 +1050,16 @@ async function webhook(req, res) {
         se.lastEnd = Date.parse(ev.d.ended_at) || ts; se.live = false;
       }
       await setJSON('session', se);
+      // 📣 aviso al grupo de Telegram (solo cuando de verdad empieza el stream)
+      if (newSess) { const tg = avisoTelegram(ev.d.title, 'kick'); if (!later(tg)) await tg; }
     }
     await redis('SET', 'lastHook', String(Date.now()));
     await logPush('raw', { at: Date.now(), type, body: raw.slice(0, 1500) }, 40);
     // ⚙️ reglas automáticas: si alguna le toca a este evento
-    const trig = ruleTriggers(ev.d, newSess);
+    let trig = ruleTriggers(ev.d, newSess);
+    if (ev.d.kind === 'live' && trig.length && TW_ID && (await twLiveNow())) trig = [];   // multistream: Twitch ya estaba al aire
     if (trig.length) {
-      const p = Promise.all(trig.map(t => rulesOn(t[0], t[1]))).catch(() => {});
+      const p = Promise.all(trig.map(t => rulesOn(t[0], t[1], 'kick'))).catch(() => {});
       if (!later(p)) await p;
     }
   }
@@ -472,7 +1067,7 @@ async function webhook(req, res) {
 }
 
 /* ---- listas para los paneles ★ (subs) y ⚡ (Kicks), ordenadas por hora ---- */
-function listOf(kind) { return kind === 'kicks' ? 'L:kicks' : (kind === 'sub' || kind === 'resub' || kind === 'gift') ? 'L:subs' : ''; }
+function listOf(kind) { return kind === 'kicks' ? 'L:kicks' : kind === 'bits' ? 'L:bits' : (kind === 'sub' || kind === 'resub' || kind === 'gift') ? 'L:subs' : ''; }
 async function addToLists(ev) {
   const key = listOf((ev.d || {}).kind);
   if (!key) return;
@@ -490,7 +1085,7 @@ async function list(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
   const q = req.query || {};
-  const key = q.kind === 'kicks' ? 'L:kicks' : 'L:subs';
+  const key = q.kind === 'kicks' ? 'L:kicks' : q.kind === 'bits' ? 'L:bits' : 'L:subs';
   await backfillLists();
   await repairTimes();
   const before = Number(q.before) || 0;                // para ir cargando hacia atrás
@@ -499,7 +1094,7 @@ async function list(req, res) {
   const items = await redis('ZREVRANGEBYSCORE', key, max, '-inf', 'LIMIT', 0, limit);
   const evs = (items || []).map(s => { try { return fixEv(JSON.parse(s)); } catch (e) { return null; } }).filter(Boolean)
     .sort((a, b) => b.ts - a.ts);                      // lo más nuevo arriba
-  return send(res, 200, { ok: true, kind: q.kind === 'kicks' ? 'kicks' : 'subs', events: evs, more: evs.length === limit });
+  return send(res, 200, { ok: true, kind: q.kind === 'kicks' ? 'kicks' : q.kind === 'bits' ? 'bits' : 'subs', events: evs, more: evs.length === limit });
 }
 
 /* ---- cambiar título y categoría (solo con la clave de tus celulares) ---- */
@@ -526,6 +1121,13 @@ async function channel(req, res) {
   const body = req.method === 'POST' ? await readJSONBody(req) : {};
   const key = (req.query && req.query.key) || body.key;
   if (!(await checkKey(key))) return send(res, 403, { ok: false, error: 'clave' });
+  const pf = body.pf === 'tw' || body.pf === 'both' ? body.pf : (req.query && (req.query.pf === 'tw' || req.query.pf === 'both') ? req.query.pf : 'kick');
+  let twOut = null;
+  if (pf !== 'kick' && TW_ID) {
+    if (req.method === 'POST') { const r = await twChanSet(body.title, pf === 'tw' ? body.category_id : null, body.cat_name); if (!r.ok) twOut = { error: r.error }; }
+    try { twOut = Object.assign((await twChanGet()).tw || {}, twOut || {}); } catch (e) { twOut = { error: e.message }; }
+    if (pf === 'tw') return send(res, 200, twOut && twOut.error && req.method === 'POST' ? { ok: false, error: twOut.error, tw: twOut } : { ok: true, tw: twOut });
+  }
   const t = await validToken();
   if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
   if (req.method === 'POST') {
@@ -546,13 +1148,14 @@ async function channel(req, res) {
   }
   const j = await kickApi('/channels', t.access_token);
   const c = (j.data || [])[0] || {};
-  return send(res, 200, { ok: true, title: c.stream_title || '', category: c.category || null, live: c.stream ? !!c.stream.is_live : null });
+  return send(res, 200, { ok: true, title: c.stream_title || '', category: c.category || null, live: c.stream ? !!c.stream.is_live : null, tw: twOut });
 }
 async function categories(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
   const q = req.query || {};
   if (!(await checkKey(q.key))) return send(res, 403, { ok: false, error: 'clave' });
+  if (q.pf === 'tw') return send(res, 200, { ok: true, data: TW_ID ? await twCats(q.q) : [] });
   const t = await validToken();
   if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
   const term = String(q.q || '').trim();
@@ -664,8 +1267,9 @@ async function chatSend(req, res) {
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
   const b = await readJSONBody(req);
   if (!(await checkKey(b.key))) return send(res, 403, { ok: false, error: 'clave' });
-  const t = await validToken();
-  if (!t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
+  const pf = b.pf === 'tw' || b.pf === 'both' ? b.pf : 'kick';
+  const t = pf === 'tw' ? null : await validToken();
+  if (pf !== 'tw' && !t) return send(res, 409, { ok: false, error: 'Falta conectar tu cuenta' });
   const content = String(b.content || '').trim().slice(0, 500);
   if (!content) return send(res, 400, { ok: false, error: 'mensaje vacío' });
   // v67: avisos automáticos (p. ej. «TTS activado»): si tus dos celulares lo mandan, sale una sola vez
@@ -673,11 +1277,19 @@ async function chatSend(req, res) {
     const ok1 = await redis('SET', 'conce:' + crypto.createHash('sha1').update(String(b.once)).digest('hex').slice(0, 20), '1', 'NX', 'EX', Math.max(10, Math.min(600, Number(b.ttl) || 60)));
     if (!ok1) return send(res, 200, { ok: true, dup: true });
   }
+  // 🟣 Twitch (los emotes de Kick no existen allá: se manda el nombre)
+  const twTxt = content.replace(/\[emote:\d+:([^\]]*)\]/g, '$1');
+  if (pf === 'tw') return send(res, 200, await twSend(twTxt, b.reply_to, b.as));
   const body = { type: 'user', broadcaster_user_id: Number(t.user_id), content };
   if (b.reply_to) body.reply_to_message_id = String(b.reply_to);
-  const r = await kickCall('POST', '/chat', t.access_token, body);
-  if (!r.ok) return send(res, 200, { ok: false, error: kickErr(r.status, r.j, 'Escribir en el feed del chat') });
+  const [r, rt] = await Promise.all([kickCall('POST', '/chat', t.access_token, body), pf === 'both' ? twSend(twTxt, null, b.as) : Promise.resolve(null)]);
   const d = r.j.data || r.j;
+  const kOk = r.ok && d.is_sent !== false;
+  if (pf === 'both') {
+    if (!kOk && !rt.ok) return send(res, 200, { ok: false, error: 'Kick: ' + kickErr(r.status, r.j, 'Escribir en el feed del chat') + ' · Twitch: ' + rt.error });
+    return send(res, 200, { ok: true, message_id: d.message_id || null, kick: kOk ? { ok: true } : { ok: false, error: kickErr(r.status, r.j, 'Escribir en el feed del chat') }, tw: rt });
+  }
+  if (!r.ok) return send(res, 200, { ok: false, error: kickErr(r.status, r.j, 'Escribir en el feed del chat') });
   return send(res, 200, { ok: !!(d.is_sent !== false), message_id: d.message_id || null });
 }
 
@@ -735,7 +1347,7 @@ async function modCmd(m) {
   if (!cfg.on) return;
   const cmd = (cfg.cmds || []).find(c => c.c === word);
   if (!cmd) return;
-  const u = String(m.u).toLowerCase();
+  const u = String(m.ul || m.u).toLowerCase();
   if (!isMe(m.badges) && (cfg.users || []).indexOf(u) < 0) return;  // ese mod no está en tu lista
   // una sola vez por mensaje (Kick puede repetir el aviso) y no más de una vez cada 3 s
   if (!(await redis('SET', 'cmd:' + m.id, '1', 'NX', 'EX', 3600))) return;
@@ -756,16 +1368,14 @@ async function modCmd(m) {
       }
     }
   }
-  const tk = (chats.length || cfg.del) ? await validToken() : null;
-  if (tk) {
-    for (const s of chats) {
-      const r = await kickCall('POST', '/chat', tk.access_token, { type: 'user', broadcaster_user_id: Number(tk.user_id), content: String(s.text).slice(0, 500) });
-      if (!r.ok && ok) { ok = false; err = kickErr(r.status, r.j, 'Escribir en el feed del chat'); }
-    }
-    if (cfg.del) await kickCall('DELETE', '/chat/' + encodeURIComponent(m.id), tk.access_token);
+  // los mensajes del comando salen en el chat donde lo escribieron (Kick o Twitch)
+  for (const s of chats) { const r = await chatSay(m.pf, s.text); if (!r.ok && ok) { ok = false; err = r.error; } }
+  if (cfg.del) {
+    if (m.pf === 'tw') { const B = await twMe(); if (B) await helix('DELETE', '/moderation/chat?broadcaster_id=' + B + '&moderator_id=' + B + '&message_id=' + encodeURIComponent(m.id), null, 'b'); }
+    else { const tk = await validToken(); if (tk) await kickCall('DELETE', '/chat/' + encodeURIComponent(m.id), tk.access_token); }
   }
   const rt = Date.now();
-  const ev = { id: 'cmd:' + m.id, type: 'modcmd', ts: rt, rt, d: { kind: 'cmd', user: m.u, cmd: word, ok, error: err, scene } };
+  const ev = { id: 'cmd:' + m.id, type: 'modcmd', ts: rt, rt, d: { kind: 'cmd', user: m.u, cmd: word, ok, error: err, scene, pf: m.pf || '' } };
   await redis('ZADD', 'ev', rt, JSON.stringify(ev));
   await logPush('cmdlog', { at: rt, u: m.u, c: word, ok, e: err }, 20);
 }
@@ -778,6 +1388,7 @@ async function momentAdd(u, note, src, hint) {
   const at = Date.now();
   const lv = (await getJSON('live')) || {};
   let vs = lv.is_live ? (Date.parse(lv.started_at) || 0) : 0;      // cuándo empezó ESTE stream (lo mismo que el VOD)
+  if (!vs) { try { const tl = await getJSON('tw:live'); if (tl && tl.is_live) vs = Date.parse(tl.started_at) || 0; } catch (e) {} }   // solo en Twitch
   const h = Number(hint) || 0;
   if (!vs && h > at - 36 * 3600e3 && h <= at) vs = h;                // lo que ve la app, por si Kick no avisó
   const it = { id: at.toString(36) + crypto.randomBytes(3).toString('hex'), at, vs, t: vs ? Math.max(0, at - vs) : null,
@@ -794,12 +1405,9 @@ async function momentCmd(m, mom) {
   const it = await momentAdd(m.u, String(m.t).trim().replace(/^\S+\s*/, ''), 'chat');
   let ok = true, err = '';
   if (mom.reply) {
-    const tk = await validToken();
-    if (tk) {
-      const txt = '📍 Momento guardado' + (it.t != null ? ' en el ' + hms(it.t) : '') + (it.note ? ': ' + it.note : '');
-      const r = await kickCall('POST', '/chat', tk.access_token, { type: 'user', broadcaster_user_id: Number(tk.user_id), content: txt.slice(0, 500) });
-      if (!r.ok) { ok = false; err = kickErr(r.status, r.j, 'Escribir en el feed del chat'); }
-    }
+    const txt = '📍 Momento guardado' + (it.t != null ? ' en el ' + hms(it.t) : '') + (it.note ? ': ' + it.note : '');
+    const r = await chatSay(m.pf, txt);
+    if (!r.ok) { ok = false; err = r.error; }
   }
   await logPush('cmdlog', { at: it.at, u: m.u, c: mom.c, ok, e: err }, 20);
 }
@@ -913,7 +1521,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Hace los pasos en orden: los de OBS por una sola conexión, los mensajes en
 // su lugar y las esperas aquí mismo. Si OBS falla, los mensajes igual se mandan.
 // test: no manda nada al chat (solo dice qué mandaría).
-async function ruleExec(steps, v, test) {
+async function ruleExec(steps, v, test, pf) {
   const res = { ok: true, error: '', scene: '', chats: [] };
   const fail = e => { if (res.ok) { res.ok = false; res.error = String(e || 'No se pudo'); } };
   const S = steps.map(s => {
@@ -924,12 +1532,13 @@ async function ruleExec(steps, v, test) {
   });
   const needObs = S.some(s => s.t !== 'chat' && s.t !== 'wait' && s.t !== 'goal');
   const needChat = !test && S.some(s => s.t === 'chat' && s.text);
-  const tk = needChat ? await validToken() : null;
-  if (needChat && !tk) fail('Falta conectar tu cuenta de Kick');
+  const tk = needChat && pf !== 'tw' ? await validToken() : null;
+  if (needChat && pf !== 'tw' && !tk) fail('Falta conectar tu cuenta de Kick');
   let k = 0, gen = 0, oc = null;
   const sendChat = async s => {
     if (!s.text) return;
     if (test) { res.chats.push(s.text); return; }
+    if (pf === 'tw') { const r = await twSend(s.text); if (!r.ok) fail(r.error); return; }
     if (!tk) return;
     const r = await kickCall('POST', '/chat', tk.access_token, { type: 'user', broadcaster_user_id: Number(tk.user_id), content: s.text });
     if (!r.ok) fail(kickErr(r.status, r.j, 'Escribir en el feed del chat'));
@@ -968,7 +1577,7 @@ async function ruleExec(steps, v, test) {
   return res;
 }
 // Llegó un evento: se hacen las reglas que le tocan (cada una con su espera entre una y otra)
-async function rulesOn(kind, d) {
+async function rulesOn(kind, d, pf) {
   let cfg;
   try { cfg = await ruleCfg(); } catch (e) { return; }
   if (!cfg || cfg.on === false) return;
@@ -978,11 +1587,11 @@ async function rulesOn(kind, d) {
   await Promise.all(hits.map(async r => {
     if (r.cd && !(await redis('SET', 'rcd:' + r.id, '1', 'NX', 'EX', r.cd))) return;   // todavía está en su espera
     let out;
-    try { out = await ruleExec(r.steps, v, false); } catch (e) { out = { ok: false, error: e.message }; }
+    try { out = await ruleExec(r.steps, v, false, pf); } catch (e) { out = { ok: false, error: e.message }; }
     const rt = Date.now();
     if (cfg.feed !== false || !out.ok) {
       const ev = { id: 'rule:' + r.id + ':' + rt, type: 'rule', ts: rt, rt,
-        d: { kind: 'rule', ev: kind, rid: r.id, user: v.nombre, n: v.cantidad, rw: v.recompensa, cat: v.categoria, ok: out.ok, error: out.error || '', scene: out.scene || '' } };
+        d: { kind: 'rule', ev: kind, rid: r.id, user: v.nombre, n: v.cantidad, rw: v.recompensa, cat: v.categoria, ok: out.ok, error: out.error || '', scene: out.scene || '', pf: pf || '' } };
       await redis('ZADD', 'ev', rt, JSON.stringify(ev));
     }
     await logPush('rulelog', { at: rt, ev: kind, rid: r.id, u: v.nombre, ok: out.ok, e: out.error || '' }, 20);
@@ -1080,6 +1689,17 @@ async function spamApi(req, res) {
   return send(res, 200, out);
 }
 
+// ¿Twitch conectado? (se revisa cada 5 min, no en cada pregunta)
+let TWON = { at: 0, v: false };
+async function twOn() { if (Date.now() - TWON.at > 300000) { try { TWON = { at: Date.now(), v: !!(await redis('GET', 'tw:tok')) }; } catch (e) { TWON.at = Date.now(); } } return TWON.v; }
+let TWSUBS_OK = false;
+async function twEnsureSubs(req) {
+  if (TWSUBS_OK) return;
+  if ((await redis('GET', 'tw:subsVer')) === TW_SUBS_VER) { TWSUBS_OK = true; return; }
+  await redis('SET', 'tw:subsVer', TW_SUBS_VER);
+  try { const r = await twSubscribeAll(req); await logPush('raw', { at: Date.now(), type: 'twitch-resubscribe', body: JSON.stringify(r).slice(0, 800) }, 40); }
+  catch (e) { await redis('DEL', 'tw:subsVer'); }
+}
 let SUBS_OK = false;
 async function ensureSubs() {
   if (SUBS_OK) return;
@@ -1110,7 +1730,7 @@ async function sessTotals(from, lastHook, adjS, fresh) {
   (sess || []).forEach(s => {
     let e; try { e = fixEv(JSON.parse(s)); } catch (x) { return; }
     const t = e.ts || 0, d = e.d || {};
-    if (t < from - 60000) return;
+    if (t < from - 60000 || d.pf === 'tw') return;                 // lo de Twitch va aparte (su propia meta)
     if (d.kind === 'sub') { totals.subs++; totals.newSubs++; }
     else if (d.kind === 'resub') { totals.subs++; totals.resubs++; }
     else if (d.kind === 'gift') { totals.subs += d.count || 1; totals.gifted += d.count || 1; }
@@ -1147,7 +1767,10 @@ async function events(req, res) {
   if (from && (evs.length || q.tot === '1' || !since)) totals = await sessTotals(from, Number(lhS) || 0, adjS, evs.length > 0);
   else if (!from) { const a = pj(adjS); if (a && (a.start === 'off' || a.start === 0)) totals = offTotals(a); }   // v68: sin stream, lo que sumaste para probar
   const lastHook = Number(lhS) || 0;
-  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0, rat: Number(raS) || 0 });
+  // 🟣 Twitch (si está conectado): en vivo, totales, viewers, encuesta, predicción, Hype Train y anuncio
+  let tw = null;
+  if (TW_ID && (await twOn())) { try { await twEnsureSubs(req); } catch (e) {} try { tw = await twState(q); } catch (e) {} }
+  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0, rat: Number(raS) || 0, tw });
 }
 
 /* ---- 👁 gráfica de viewers ----
@@ -1204,10 +1827,26 @@ async function goalAdjust(delta, reset, hint, share) {
 }
 // Le avisa al letrero de la meta (subgoal.html, fuente de navegador en OBS) por la misma
 // conexión de OBS de tus atajos: OBS se lo pasa a sus fuentes de navegador (evento «kickfeedGoal»).
-async function goalPush(t) {
+async function twGoalAdjust(delta, reset) {
+  const se = await getJSON('tw:session');
+  const from = se && se.start && (se.live || (se.lastEnd && Date.now() - se.lastEnd < 30 * 60000)) ? se.start : 0;
+  const cur = (await getJSON('tw:subAdj')) || {};
+  if (!from) {
+    let pn = cur.start === 'off' || cur.start === 0 ? Number(cur.n) || 0 : 0;
+    pn = reset ? 0 : Math.max(-500, Math.min(500, pn + Math.round(Number(delta) || 0)));
+    await setJSON('tw:subAdj', { start: 'off', n: pn, s: 0, at: Date.now() });
+    return { ok: true, off: true, n: pn, totals: { from: 0, off: true, subs: Math.max(0, pn), bits: 0, adj: pn, real: 0 } };
+  }
+  let n = cur.start === from ? Number(cur.n) || 0 : 0;
+  n = reset ? 0 : Math.max(-500, Math.min(500, n + Math.round(Number(delta) || 0)));
+  const adj = { start: from, n, s: 0, at: Date.now() };
+  await setJSON('tw:subAdj', adj);
+  return { ok: true, n, from, totals: await twTotals(from, JSON.stringify(adj), true) };
+}
+async function goalPush(t, pf) {
   const oc = await obsCfg(); if (!oc || !oc.url) return;
   let pass = ''; try { pass = obsOpen(oc.p); } catch (e) { return; }
-  const d = { subs: t.subs, adj: t.adj || 0, real: t.real || 0, newSubs: t.newSubs || 0, resubs: t.resubs || 0, gifted: t.gifted || 0, off: !!t.off };
+  const d = { subs: t.subs, adj: t.adj || 0, real: t.real || 0, newSubs: t.newSubs || 0, resubs: t.resubs || 0, gifted: t.gifted || 0, off: !!t.off, pf: pf === 'tw' ? 'tw' : 'kick' };
   await obsRun(oc.url, pass, [['CallVendorRequest', { vendorName: 'obs-browser', requestType: 'emit_event', requestData: { event_name: 'kickfeedGoal', event_data: d } }]], 6000);
 }
 async function goalApi(req, res) {
@@ -1222,6 +1861,12 @@ async function goalApi(req, res) {
     const [lh, adjS] = (await redis('MGET', 'lastHook', 'subAdj')) || [];
     let ad = null; try { ad = adjS ? JSON.parse(adjS) : null; } catch (e) {}
     return send(res, 200, { ok: true, dup: true, totals: from ? await sessTotals(from, Number(lh) || 0, adjS) : offTotals(ad) });
+  }
+  if (b.pf === 'tw') {                                 // 🟣 la meta de Twitch va aparte
+    const out = await twGoalAdjust(b.delta, !!b.reset);
+    if (out.ok && out.totals) { const p = goalPush(out.totals, 'tw').catch(() => {}); if (!later(p)) await p; }
+    if (out.ok) { const rt = Date.now(); await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'goal:tw:' + rt, type: 'goal', ts: rt, rt, d: { kind: 'goal', pf: 'tw', delta: b.reset ? 0 : Math.round(Number(b.delta) || 0), reset: !!b.reset, n: out.n, subs: out.totals ? out.totals.subs : null, off: !!out.off, by: String(b.by || '').slice(0, 40) } })); }
+    return send(res, 200, out);
   }
   const out = await goalAdjust(b.delta, !!b.reset, b.from, !!b.share);
   // v68: el letrero de OBS se entera AL MOMENTO (con o sin stream), sin preguntarle más seguido al servidor
@@ -1619,6 +2264,11 @@ async function status(req, res) {
     const lastHook = Number(await redis('GET', 'lastHook')) || 0;
     const n = await redis('ZCARD', 'ev');
     out += row(lastHook ? true : null, lastHook ? 'Último aviso recibido: ' + new Date(lastHook).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) + ' · ' + n + ' eventos guardados' : 'Todavía no llega ningún aviso de Kick (es normal hasta que haya una sub, Kicks, follow o empiece el stream)');
+    if (TW_ID) {
+      const tt = await getJSON('tw:tok'), tb = await getJSON('tw:bot');
+      out += row(tt ? true : null, tt ? 'Twitch conectado: <b>' + esc(tt.name || tt.login) + '</b>' + ((await redis('GET', 'tw:subsVer')) === TW_SUBS_VER ? ' · avisos de Twitch listos' : ' · <b>faltan los avisos</b>') : 'Twitch todavía sin conectar (⚙ → Plataformas en el feed)');
+      if (tb) out += row(true, 'Bot de Twitch: <b>' + esc(tb.name || tb.login) + '</b>');
+    } else out += row(null, 'Twitch: faltan <code>TWITCH_CLIENT_ID</code> y <code>TWITCH_CLIENT_SECRET</code> (opcional)');
     const rej = await redis('LLEN', 'rejected');
     if (rej) out += row(false, rej + ' avisos rechazados porque la firma no era de Kick');
   }
@@ -1653,6 +2303,10 @@ module.exports = async function handler(req, res) {
     if (route === 'prefs') return await prefsApi(req, res);
     if (route === 'obs') return await obsApi(req, res);
     if (route === 'chat') return await chatSend(req, res);
+    if (route === 'twhook') return await twHook(req, res);
+    if (route === 'tw') return await twApi(req, res);
+    if (route === 'twlogin') return await twLogin(req, res);
+    if (route === 'twcallback') return await twCallback(req, res);
     if (route === 'login') return await login(req, res);
     if (route === 'callback') return await callback(req, res);
     if (route === 'status') return await status(req, res);
