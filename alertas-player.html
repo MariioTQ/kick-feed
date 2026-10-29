@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Alertas · MarioTQ</title>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+/* ==================================================================
+   ALERTAS · PLAYER (fuente de navegador en OBS o en IRL Plus Chat)
+   Fondo transparente. Tamaño recomendado: 1920×1080 (o el de tu stream).
+   ?pf=kick o ?pf=tw   solo las de una plataforma (sin pf: las dos)
+   ?vol=50             más bajito en este lugar (p. ej. en tu cel)
+   ?mudo=1             sin sonido (solo se ven)    ?oculto=1  sin imagen (solo suenan)
+   ?demo=1             enseña una de prueba al abrir
+   ================================================================== */
+html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+#st{position:fixed;inset:0;display:flex;justify-content:center;padding:4vh 3vw;box-sizing:border-box;pointer-events:none}
+#st.pos-arriba{align-items:flex-start}#st.pos-centro{align-items:center}#st.pos-abajo{align-items:flex-end}
+body.oculto #st{display:none}
+</style>
+</head>
+<body>
+<div id="st" class="pos-centro"></div>
+<script src="alertas-comun.js"></script>
+<script>
+(function(){
+'use strict';
+var Q=new URLSearchParams(location.search), A=window.ALC, API=A.API;
+var ONLYPF=Q.get('pf')==='tw'?'tw':Q.get('pf')==='kick'?'kick':'';
+var MULT=Q.get('vol')!=null&&!isNaN(parseInt(Q.get('vol'),10))?Math.max(0,Math.min(100,parseInt(Q.get('vol'),10)))/100:1;
+var MUDO=Q.get('mudo')==='1';
+if (Q.get('oculto')==='1') document.body.classList.add('oculto');
+A.injectCss();
+var $st=document.getElementById('st'), CFG=null, FILES={}, CV=0, LOAD=Date.now(), SEEN={}, QUEUE=[], BUSY=false, CUR=null, LIVE={kick:false,tw:false};
+try{ SEEN=JSON.parse(sessionStorage.getItem('al.seen')||'{}')||{}; }catch(e){ SEEN={}; }
+function seenSave(){ var k=Object.keys(SEEN); if (k.length>300) k.slice(0,k.length-300).forEach(function(x){ delete SEEN[x]; }); try{ sessionStorage.setItem('al.seen', JSON.stringify(SEEN)); }catch(e){} }
+function loadCfg(){
+  return fetch(API+'?a=cfg',{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+    if (j && j.ok){ CFG=j.cfg; FILES=j.files||{}; $st.className='pos-'+(CFG.pos||'centro'); document.body.className=(document.body.classList.contains('oculto')?'oculto ':'')+'sz-'+(CFG.size||'normal');
+      // los sonidos de la app se preparan desde antes (así salen al instante)
+      A.TYPES.forEach(function(t){ ['kick','tw'].forEach(function(pf){ var x=CFG.pf[pf]&&CFG.pf[pf][t]; if (x&&/^b:/.test(x.snd)) A.synthUrl(x.snd.slice(2)); }); }); }
+  }).catch(function(){});
+}
+function take(list){
+  (list||[]).forEach(function(a){
+    if (!a || !a.id || SEEN[a.id]) return;
+    SEEN[a.id]=1;
+    if (a.ctl==='skip'){ if (a.ts>=LOAD-5000) skip(); return; }
+    if (a.ts < LOAD-10000) return;                       // lo de antes de abrir no se repite solo
+    if (ONLYPF && a.pf!==ONLYPF) return;
+    QUEUE.push(a);
+  });
+  seenSave(); next();
+}
+function skip(){ if (CUR && CUR.end) CUR.end(); }
+function next(){
+  if (BUSY || !QUEUE.length || !CFG) return;
+  var a=QUEUE.shift();
+  if (CFG.on===false && !a.test) return next();
+  var sp=A.spec(CFG, a, a.test ? a.vi : null);
+  if (!sp || (!sp.on && !a.test && !a.rp)) return next();
+  if (!a.test && !a.rp && typeof a.n==='number' && sp.min && a.n<sp.min) return next();
+  BUSY=true;
+  var el=A.build(sp, a, CFG, FILES, API), done=false, t0=Date.now(), snd=0, tts=0;
+  $st.innerHTML=''; $st.appendChild(el);
+  var finish=function(){ if (done) return; done=true; el.classList.add('out'); setTimeout(function(){ if (el.parentNode) el.remove(); BUSY=false; CUR=null; setTimeout(next, (CFG.gap||1)*1000); }, 520); };
+  CUR={end:finish};
+  var minEnd=t0+sp.dur*1000;
+  var p = MUDO ? Promise.resolve(0) : A.playSnd(sp, CFG, MULT, API).then(function(){ var tx=A.ttsText(sp, a); return tx ? A.say(tx, CFG, MULT) : 0; });
+  p.then(function(){ var left=minEnd-Date.now(); setTimeout(finish, Math.max(0, left)); });
+  setTimeout(finish, Math.max(sp.dur, 8)*1000+25000);   // por si algo se atora
+}
+var pollT=0;
+function poll(){
+  clearTimeout(pollT);
+  var b=Math.floor(Date.now()/2000);
+  fetch(API+'?a=poll&b='+b,{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+    if (!j || !j.ok) return;
+    LIVE=j.live||LIVE;
+    if (j.cv && j.cv!==CV){ CV=j.cv; return loadCfg().then(function(){ take(j.list); }); }
+    take(j.list);
+  }).catch(function(){}).then(function(){
+    var any=LIVE.kick||LIVE.tw;
+    pollT=setTimeout(poll, any || QUEUE.length || BUSY ? 2000 : 6000);
+  });
+}
+loadCfg().then(function(){
+  if (Q.get('demo')==='1') { QUEUE.push({id:'demo',k:'kicks',pf:ONLYPF||'kick',u:'MarioTQ',n:500,m:'¡Así se ven tus alertas!',test:1}); next(); }
+  poll();
+});
+window.alertasPlayer={ take:take, queue:QUEUE };
+})();
+</script>
+</body>
+</html>
