@@ -168,7 +168,7 @@ const TW_SCOPES = ['channel:read:subscriptions', 'bits:read', 'moderator:read:fo
   'channel:manage:polls', 'channel:manage:predictions', 'channel:read:hype_train', 'channel:read:ads', 'channel:manage:ads',
   'channel:edit:commercial', 'channel:manage:broadcast', 'channel:moderate', 'moderator:manage:banned_users',
   'moderator:manage:chat_messages', 'user:read:chat', 'user:write:chat', 'user:bot', 'channel:bot',
-  'moderator:manage:shoutouts', 'moderator:manage:chat_settings', 'channel:manage:raids', 'clips:edit'].join(' ');
+  'moderator:manage:shoutouts', 'moderator:manage:chat_settings', 'channel:manage:raids', 'clips:edit', 'channel:manage:vips'].join(' ');
 const TW_BOT_SCOPES = 'user:read:chat user:write:chat user:bot';
 const TW_SUBS_VER = '1';
 // [tipo, versión, condición] (B = tu id de Twitch)
@@ -345,7 +345,12 @@ function twBadges(list) {
 function twText(msg) {
   const fr = (msg && msg.fragments) || [];
   if (!fr.length) return String((msg && msg.text) || '');
-  return fr.map(f => f.type === 'emote' && f.emote && f.emote.id ? '[twe:' + String(f.emote.id).replace(/[^\w-]/g, '') + ':' + String(f.text || '').replace(/[\]:]/g, '') + ']' : String(f.text || '')).join('');
+  return fr.map(f => {
+    if (f.type === 'emote' && f.emote && f.emote.id) return '[twe:' + String(f.emote.id).replace(/[^\w-]/g, '') + ':' + String(f.text || '').replace(/[\]:]/g, '') + ']';
+    const g = f.gif || (f.type === 'gif' ? f : null);                    // v75: GIFs (GIPHY) en el chat de Twitch
+    if (g && /^https:\/\/[a-z0-9.-]*giphy\.com\/[^\s\]]{4,600}$/i.test(String(g.url || ''))) return '[twg:' + g.url + ']';
+    return String(f.text || '');
+  }).join('');
 }
 function twNorm(type, e) {
   e = e || {};
@@ -421,9 +426,12 @@ async function twHook(req, res) {
       const st = type.split('.').pop(), hy = twHype(e, st);
       await setJSON('tw:hype', hy, st === 'end' ? 300 : 3600);
       if (st === 'begin' || st === 'end') await redis('ZADD', 'ev', rt, JSON.stringify({ id: 'tw:' + id, type: 'tw.hype', ts: rt, rt, d: Object.assign({ kind: 'hype', pf: 'tw' }, hy) }));
+      if (st === 'begin') { const pr = rulesOn('hype', hy, 'tw').catch(() => {}); if (!later(pr)) await pr; }
     } else if (type === 'channel.ad_break.begin') {
       const dur = Math.max(1, Number(e.duration_seconds) || 30);
       await setJSON('tw:ad', { at: Date.parse(e.started_at) || rt, dur, auto: !!e.is_automatic, by: e.requester_user_name || '' }, dur + 30);
+      try { await redis('DEL', 'tw:adsch'); } catch (x) {}                     // el próximo cambia: se vuelve a preguntar
+      const pr = rulesOn('adstart', { dur, auto: !!e.is_automatic }, 'tw').catch(() => {}); if (!later(pr)) await pr;
     } else {
       const d = twNorm(type, e);
       if (d) {
@@ -463,9 +471,12 @@ async function twHook(req, res) {
             n: d.kind === 'bits' ? d.amount : d.kind === 'gift' ? d.count : d.months, at: rt }), 'EX', 900); } catch (x) {}
         }
         // ⚙️ reglas: subs, regalos, follows, raids y recompensas de Twitch (los mensajes de la regla van al chat de Twitch)
-        const trig = d.kind === 'raid' ? [['host', d]] : d.kind === 'reward' ? [['reward', d]] : d.kind === 'live' ? (d.is_live ? (newSess && !(await kickLive()) ? [['live', d]] : []) : (!(await kickLive()) ? [['off', d]] : []))
+        let anyOk = true;
+        const trig = d.kind === 'raid' ? [['host', d]] : d.kind === 'reward' ? [['reward', d]] : d.kind === 'bits' ? [['bits', d]]
+          : d.kind === 'live' ? (d.is_live && !newSess ? [] : [[d.is_live ? 'live' : 'off', d]])
           : ruleTriggers(d, newSess).filter(x => x[0] !== 'kicks' && x[0] !== 'live' && x[0] !== 'off');
-        if (trig.length) { const pr = Promise.all(trig.map(t => rulesOn(t[0], t[1], 'tw'))).catch(() => {}); if (!later(pr)) await pr; }
+        if (d.kind === 'live' && trig.length && (await kickLive())) anyOk = false;   // Kick ya estaba (o sigue) al aire → solo las de «Solo Twitch»
+        if (trig.length) { const pr = Promise.all(trig.map(t => rulesOn(t[0], t[1], 'tw', anyOk))).catch(() => {}); if (!later(pr)) await pr; }
       }
     }
     await redis('SET', 'lastHook', String(rt));
@@ -480,7 +491,8 @@ async function twLiveNow() { try { const se = await getJSON('tw:session'); retur
 async function twChat(e) {
   const rt = Date.now();
   const m = { pf: 'tw', id: String(e.message_id || ''), ts: rt, rt, u: e.chatter_user_name || e.chatter_user_login || '', ul: String(e.chatter_user_login || '').toLowerCase(),
-              uid: String(e.chatter_user_id || ''), color: e.color || '', badges: twBadges(e.badges), t: twText(e.message).slice(0, 600) };
+              uid: String(e.chatter_user_id || ''), color: e.color || '', badges: twBadges(e.badges), t: twText(e.message).slice(0, 900),
+              tb: (e.badges || []).map(b => String(b.set_id || '') + '/' + String(b.id || '')).filter(x => x.length > 2).slice(0, 8) };
   if (e.reply) m.rq = { id: e.reply.parent_message_id || '', u: e.reply.parent_user_name || e.reply.parent_user_login || '', t: String(e.reply.parent_message_body || '').slice(0, 200) };
   if (e.cheer && e.cheer.bits) m.bits = Number(e.cheer.bits) || 0;
   if (!m.id || !m.u) return;
@@ -488,7 +500,8 @@ async function twChat(e) {
     try { const cfg = await spamCfg(); const rule = cfg.on ? spamHit(m.t.replace(/\[twe:[^\]]*\]/g, ' ')) : null; if (rule) { m.spam = 1; await twSpamDelete(m, rule, false, cfg); } } catch (x) {}
   }
   if (!m.spam && /^\s*!/.test(m.t)) { try { await modCmd(m); } catch (x) {} }
-  try { const lu = m.u.toLowerCase(); await knownLoad(); if (!KNOWN.has(lu)) { KNOWN.add(lu); if (Number(await redis('SADD', 'chatters', lu)) === 1) m.first = 1; } } catch (x) {}
+  // v75: «primer mensaje» en Twitch lo dice Twitch (first-msg en el chat del cel); aquí solo se anota que ya escribió
+  try { const lu = m.u.toLowerCase(); await knownLoad(); if (!KNOWN.has(lu)) { KNOWN.add(lu); await redis('SADD', 'chatters', lu); } } catch (x) {}
   try { await chatKeep(m); } catch (x) {}
 }
 async function twSpamDelete(m, rule, manual, cfg) {
@@ -573,11 +586,37 @@ async function twState(q) {
   const out = { on: true, live, session: se, poll: pj(pollS), pred: pj(predS), hype: pj(hypeS), ad: pj(adS) };
   if (from) out.totals = await twTotals(from, adjS, q && q.tot === '1');
   else { const a = pj(adjS); if (a && (a.start === 'off' || a.start === 0)) out.totals = { from: 0, off: true, subs: Math.max(0, Number(a.n) || 0), bits: 0, adj: Number(a.n) || 0, real: 0 }; }
-  if (se && se.live) { try { out.vw = await twViewers(); } catch (e) {} }
+  if (se && se.live) {
+    try { out.vw = await twViewers(); } catch (e) {}
+    try { const B = await twMe(); if (B) out.adsch = await twAdSched(B, false); } catch (e) {}
+  }
   return out;
 }
 
 /* ---- lo que hace el feed con Twitch ---- */
+async function twBadgeMap(bid) {
+  bid = /^\d{1,20}$/.test(String(bid || '')) ? String(bid) : '';
+  const c = await getJSON('tw:badges');
+  if (c && c.map && c.b === bid && Date.now() - c.at < 12 * 3600e3) return c.map;
+  const map = {};
+  const add = j => ((j && j.data) || []).forEach(st => (st.versions || []).forEach(v => {
+    const u = v.image_url_2x || v.image_url_1x; if (u) map[st.set_id + '/' + v.id] = [u, String(v.title || st.set_id).slice(0, 60)]; }));
+  const g = await helix('GET', '/chat/badges/global', null, 'app'); if (g.ok) add(g.j);
+  if (bid) { const ch = await helix('GET', '/chat/badges?broadcaster_id=' + bid, null, 'app'); if (ch.ok) add(ch.j); }   // las de tu canal ganan
+  if (Object.keys(map).length) await setJSON('tw:badges', { at: Date.now(), b: bid, map }, 86400);
+  return map;
+}
+// v75: cuándo viene el próximo anuncio automático (se pregunta a Twitch máximo cada 90 s y solo en vivo)
+async function twAdSched(B, fresh) {
+  if (!fresh) { const c = await getJSON('tw:adsch'); if (c) return c.none ? null : c; }
+  const r = await helix('GET', '/channels/ads?broadcaster_id=' + B, null, 'b');
+  const d = ((r.j && r.j.data) || [])[0] || null;
+  if (!r.ok || !d) { try { await setJSON('tw:adsch', { none: 1, at: Date.now() }, 300); } catch (e) {} return null; }   // sin permiso: no insiste en 5 min
+  const o = { next: tsAny(d.next_ad_at), last: tsAny(d.last_ad_at), dur: Number(d.duration) || 0, preroll: Number(d.preroll_free_time) || 0,
+              snooze: Number(d.snooze_count) || 0, snoozeAt: tsAny(d.snooze_refresh_at), at: Date.now() };
+  await setJSON('tw:adsch', o, 90);
+  return o;
+}
 async function twApi(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -587,6 +626,7 @@ async function twApi(req, res) {
   const a = String(q.a || b.a || '');
   if (!TW_ID || !TW_SECRET) return send(res, 200, { ok: false, configured: false, error: 'Faltan las claves de Twitch en Vercel' });
   const B = await twMe();
+  if (a === 'badges') return send(res, 200, { ok: true, map: await twBadgeMap(q.bid || b.bid || B) });
   if (a === 'status') {
     const [t, bt] = [await getJSON('tw:tok'), await getJSON('tw:bot')];
     const need = TW_SCOPES.split(' ').filter(s => !t || String(t.scope || '').split(' ').indexOf(s) < 0);
@@ -654,11 +694,8 @@ async function twApi(req, res) {
       const d = ((r.j.data || [])[0]) || {};
       if (d.length) { try { await setJSON('tw:ad', { at: Date.now(), dur: Number(d.length) || len, auto: false, by: 'tú' }, (Number(d.length) || len) + 30); } catch (e) {} }
     }
-    const r = await helix('GET', '/channels/ads?broadcaster_id=' + B, null, 'b');
-    const d = ((r.j && r.j.data) || [])[0] || null;
-    return send(res, 200, r.ok ? { ok: true, sched: d && { next: tsAny(d.next_ad_at), last: tsAny(d.last_ad_at),
-      dur: Number(d.duration) || 0, preroll: Number(d.preroll_free_time) || 0, snooze: Number(d.snooze_count) || 0, snoozeAt: tsAny(d.snooze_refresh_at) } }
-      : { ok: false, error: twErr(r, 'anuncios') });
+    const sc = await twAdSched(B, true);
+    return send(res, 200, sc ? { ok: true, sched: sc } : { ok: false, error: 'Twitch no dijo cuándo es el próximo anuncio (revisa que tu cuenta tenga permiso de anuncios)' });
   }
   return send(res, 400, { ok: false, error: 'acción desconocida' });
 }
@@ -1056,10 +1093,10 @@ async function webhook(req, res) {
     await redis('SET', 'lastHook', String(Date.now()));
     await logPush('raw', { at: Date.now(), type, body: raw.slice(0, 1500) }, 40);
     // ⚙️ reglas automáticas: si alguna le toca a este evento
-    let trig = ruleTriggers(ev.d, newSess);
-    if (ev.d.kind === 'live' && trig.length && TW_ID && (await twLiveNow())) trig = [];   // multistream: Twitch ya estaba al aire
+    let trig = ruleTriggers(ev.d, newSess), anyOk = true;
+    if (ev.d.kind === 'live' && trig.length && TW_ID && (await twLiveNow())) anyOk = false;   // multistream: Twitch ya estaba al aire → solo las de «Solo Kick»
     if (trig.length) {
-      const p = Promise.all(trig.map(t => rulesOn(t[0], t[1], 'kick'))).catch(() => {});
+      const p = Promise.all(trig.map(t => rulesOn(t[0], t[1], 'kick', anyOk))).catch(() => {});
       if (!later(p)) await p;
     }
   }
@@ -1456,7 +1493,10 @@ async function modCmdApi(req, res) {
    tu servidor por Kick funcionan con la app cerrada; las de recompensas y
    raids las avisa la app abierta (Kick no se las manda al servidor). Solo se
    pregunta a la base cuando llega un evento (no con cada mensaje del chat). */
-const RULE_EV = { sub: 1, resub: 1, gift: 1, kicks: 1, follow: 1, live: 1, off: 1, cat: 1, catoff: 1, reward: 1, host: 1 };
+const RULE_EV = { sub: 1, resub: 1, gift: 1, kicks: 1, follow: 1, live: 1, off: 1, cat: 1, catoff: 1, reward: 1, host: 1, bits: 1, hype: 1, adstart: 1 };
+// v75: cada regla puede ser de Kick, de Twitch o de las dos ('' = cualquiera). Lo que solo existe en una, va fijo.
+const RULE_ONLY = { kicks: 'kick', bits: 'tw', hype: 'tw', adstart: 'tw' };
+function rulePf(r) { return RULE_ONLY[r.ev] || (r.pf === 'kick' || r.pf === 'tw' ? r.pf : ''); }
 const RULE_APP = { reward: 1, host: 1 };
 let RLC = { at: 0, cfg: null };
 async function ruleCfg(fresh) {
@@ -1476,8 +1516,10 @@ function cleanRule(x, i) {
   let tw = 0;
   steps.forEach(s => { if (s.t === 'wait') { if (tw + s.s > 60) s.s = Math.max(0.5, 60 - tw); tw += s.s; } });  // 1 minuto en total, máximo
   const id = /^[a-z0-9]{3,20}$/.test(String(x.id || '')) ? String(x.id) : 'r' + Date.now().toString(36) + (i || 0);
-  return { id, on: x.on !== false, ev: x.ev, min: Math.max(0, Math.min(1e6, Math.round(Number(x.min) || 0))),
+  const o = { id, on: x.on !== false, ev: x.ev, min: Math.max(0, Math.min(1e6, Math.round(Number(x.min) || 0))),
            name: String(x.name || '').trim().slice(0, 80), cd: Math.max(0, Math.min(3600, Math.round(Number(x.cd) || 0))), steps };
+  const pf = rulePf(x); if (pf) o.pf = pf;
+  return o;
 }
 function cleanRuleCfg(c) {
   c = c || {};
@@ -1486,10 +1528,10 @@ function cleanRuleCfg(c) {
   return { on: c.on !== false, feed: c.feed !== false, list, at: Date.now() };
 }
 const rlow = s => String(s == null ? '' : s).trim().toLowerCase();
-// lo que se puede poner en los mensajes: {nombre} {cantidad} {meses} {recompensa} {mensaje} {categoria} {titulo}
-function ruleVars(kind, d) {
+// lo que se puede poner en los mensajes: {nombre} {cantidad} {meses} {recompensa} {mensaje} {categoria} {titulo} {plataforma}
+function ruleVars(kind, d, pf) {
   d = d || {};
-  const v = { nombre: d.user || '', cantidad: '', meses: '', recompensa: '', mensaje: '', categoria: '', titulo: '' };
+  const v = { nombre: d.user || '', cantidad: '', meses: '', recompensa: '', mensaje: '', categoria: '', titulo: '', plataforma: pf === 'tw' ? 'Twitch' : 'Kick' };
   if (kind === 'gift') { v.nombre = d.user || 'Anónimo'; v.cantidad = String(d.count || 1); }
   else if (kind === 'kicks') { v.cantidad = String(d.amount || 0); v.mensaje = d.message || ''; }
   else if (kind === 'sub' || kind === 'resub') v.meses = String(d.months || 1);
@@ -1497,13 +1539,16 @@ function ruleVars(kind, d) {
   else if (kind === 'host') v.cantidad = String(d.viewers || 0);
   else if (kind === 'cat' || kind === 'catoff') { v.categoria = d.cat || ''; v.titulo = d.title || ''; }
   else if (kind === 'live') v.titulo = d.title || '';
+  else if (kind === 'bits') { v.nombre = d.user || 'Anónimo'; v.cantidad = String(d.amount || 0); v.mensaje = d.message || ''; }
+  else if (kind === 'hype') v.cantidad = String(d.level || 1);
+  else if (kind === 'adstart') v.cantidad = String(d.dur || 0);
   return v;
 }
 function ruleHit(r, kind, d) {
   if (!r || r.on === false || r.ev !== kind) return false;
   d = d || {};
   if (kind === 'gift') return (Number(d.count) || 1) >= (r.min || 1);
-  if (kind === 'kicks') return (Number(d.amount) || 0) >= (r.min || 1);
+  if (kind === 'kicks' || kind === 'bits') return (Number(d.amount) || 0) >= (r.min || 1);
   if (kind === 'host') return (Number(d.viewers) || 0) >= (r.min || 0);
   if (kind === 'reward') return !r.name || rlow(r.name) === rlow(d.reward);
   if (kind === 'cat') return !r.name || rlow(r.name) === rlow(d.cat);
@@ -1511,7 +1556,7 @@ function ruleHit(r, kind, d) {
   return true;
 }
 function fillVars(t, v, chat) {
-  return String(t == null ? '' : t).replace(/\{(nombre|cantidad|meses|recompensa|mensaje|categor[ií]a|t[ií]tulo)\}/gi, (m, k) => {
+  return String(t == null ? '' : t).replace(/\{(nombre|cantidad|meses|recompensa|mensaje|categor[ií]a|t[ií]tulo|plataforma)\}/gi, (m, k) => {
     k = k.toLowerCase().replace('í', 'i');
     if (chat && k === 'mensaje') return '';      // lo que escribe la gente nunca se repite con tu cuenta en el chat
     return String(v[k] == null ? '' : v[k]).slice(0, 120);
@@ -1577,13 +1622,14 @@ async function ruleExec(steps, v, test, pf) {
   return res;
 }
 // Llegó un evento: se hacen las reglas que le tocan (cada una con su espera entre una y otra)
-async function rulesOn(kind, d, pf) {
+async function rulesOn(kind, d, pf, anyOk) {
+  pf = pf === 'tw' ? 'tw' : 'kick';
   let cfg;
   try { cfg = await ruleCfg(); } catch (e) { return; }
   if (!cfg || cfg.on === false) return;
-  const hits = (cfg.list || []).filter(r => ruleHit(r, kind, d));
+  const hits = (cfg.list || []).filter(r => ruleHit(r, kind, d) && (rulePf(r) ? rulePf(r) === pf : anyOk !== false));
   if (!hits.length) return;
-  const v = ruleVars(kind, d);
+  const v = ruleVars(kind, d, pf);
   await Promise.all(hits.map(async r => {
     if (r.cd && !(await redis('SET', 'rcd:' + r.id, '1', 'NX', 'EX', r.cd))) return;   // todavía está en su espera
     let out;
@@ -1619,7 +1665,7 @@ function later(p) {
   } catch (e) {}
   return false;
 }
-const RULE_SAMPLE = { nombre: 'Prueba', cantidad: '100', meses: '3', recompensa: 'CLIPS', mensaje: 'mensaje de prueba', categoria: 'Slots & Casino', titulo: 'Título de prueba' };
+const RULE_SAMPLE = { nombre: 'Prueba', cantidad: '100', meses: '3', recompensa: 'CLIPS', mensaje: 'mensaje de prueba', categoria: 'Slots & Casino', titulo: 'Título de prueba', plataforma: 'Kick' };
 async function rulesApi(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -1636,7 +1682,7 @@ async function rulesApi(req, res) {
     // si tus dos celulares lo vieron, solo cuenta una vez
     const fp = crypto.createHash('sha1').update(kind + '|' + JSON.stringify(dd)).digest('hex').slice(0, 16);
     if (!(await redis('SET', 'rf:' + fp, '1', 'NX', 'EX', 20))) return send(res, 200, { ok: true, dup: true });
-    const p = rulesOn(kind, dd).catch(() => {});
+    const p = rulesOn(kind, dd, 'kick').catch(() => {});
     if (!later(p)) await p;
     return send(res, 200, { ok: true });
   }
@@ -1644,11 +1690,12 @@ async function rulesApi(req, res) {
     const r = cleanRule(Object.assign({}, b.rule || {}, { on: true }), 0);
     if (!r) return send(res, 200, { ok: false, error: 'La regla no tiene pasos' });
     const v = Object.assign({}, RULE_SAMPLE);
-    if (r.min && /^(gift|kicks|host)$/.test(r.ev)) v.cantidad = String(r.min);
+    if (r.min && /^(gift|kicks|host|bits)$/.test(r.ev)) v.cantidad = String(r.min);
+    if (rulePf(r) === 'tw') v.plataforma = 'Twitch';
     if (r.name && r.ev === 'reward') v.recompensa = r.name;
     if (r.name && (r.ev === 'cat' || r.ev === 'catoff')) v.categoria = r.ev === 'cat' ? r.name : 'IRL';
     let out;
-    try { out = await ruleExec(r.steps, v, true); } catch (e) { out = { ok: false, error: e.message, chats: [] }; }
+    try { out = await ruleExec(r.steps, v, true, rulePf(r) || 'kick'); } catch (e) { out = { ok: false, error: e.message, chats: [] }; }
     return send(res, 200, out);
   }
   let cfg = await ruleCfg(true);
