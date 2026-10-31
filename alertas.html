@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1218">
+<title>Alertas Studio · MarioTQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Onest:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+/* ==================================================================
+   ALERTAS STUDIO · tus alertas de Kick y Twitch, a tu gusto
+   Alertas   cada alerta: texto, imagen, sonido, volumen, variaciones
+   Archivos  tus sonidos, GIFs, imágenes y videos (se empareja su volumen solo)
+   Ajustes   volumen general, voz, dónde salen, cómo se ven, pausar
+   Enlaces   el link para OBS / IRL Plus Chat y la meta de subs
+   Mismo diseño que el BRB Studio (Bebas Neue + Onest).
+   ================================================================== */
+:root{--night:#0f1218;--panel:#161a22;--panel2:#1d222c;--panel3:#262c38;--line:#29303c;--line2:#363e4c;--ink:#eceff4;--mute:#8d95a5;--mute2:#6c7484;
+  --go:#53fc18;--tw:#9146ff;--amber:#ffc24b;--sky:#5ab0ff;--red:#ff5a5a;--disp:"Bebas Neue",Impact,"Arial Narrow",sans-serif;--safeB:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--night);color:var(--ink);font:15px/1.5 Onest,"Segoe UI",Roboto,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
+.wrap{max-width:960px;margin:0 auto;padding:0 16px calc(96px + var(--safeB))}
+header{position:sticky;top:0;z-index:20;background:rgba(15,18,24,.92);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.hd{max-width:960px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.wm{font-family:var(--disp);font-size:34px;line-height:1;letter-spacing:.02em}
+.wm i{font-style:normal;color:var(--go)}
+.hd small{color:var(--mute);font-size:13px}
+.hd .sp{flex:1}
+.sv{font-size:12.5px;color:var(--mute);white-space:nowrap}.sv.err{color:#ff8a80}.sv.ok{color:var(--go)}
+@media (max-width:520px){.hd small{display:none}}
+nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:25;background:rgba(19,23,30,.97);border-top:1px solid var(--line);display:flex;padding:6px 6px calc(6px + var(--safeB))}
+nav.tabs button{flex:1;min-height:58px;border:0;background:transparent;color:var(--mute);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:12px;font-weight:600;border-radius:12px}
+nav.tabs button svg{width:24px;height:24px}
+nav.tabs button.on{color:var(--ink);background:var(--panel2)}
+@media (min-width:900px){
+  nav.tabs{position:sticky;top:61px;bottom:auto;max-width:960px;margin:0 auto;background:var(--night);border:0;padding:14px 16px 0;gap:6px}
+  nav.tabs button{flex:0 0 auto;flex-direction:row;min-height:42px;padding:0 18px;font-size:15px;gap:8px}
+  nav.tabs button svg{width:20px;height:20px}
+  .wrap{padding-bottom:48px}
+}
+.sec{margin:20px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card+.card{margin-top:12px}
+h2{font-size:19px;font-weight:700;margin:0 0 4px}
+h3{font-size:15px;font-weight:700;margin:0 0 10px}
+.sub{margin:0 0 14px;color:var(--mute);font-size:14px;max-width:62ch}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.btn{min-height:44px;padding:0 16px;border-radius:12px;border:1px solid var(--line2);background:var(--panel2);color:var(--ink);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+.btn:hover{background:var(--panel3)}.btn:disabled{opacity:.4;cursor:default}
+.btn.pri{background:var(--go);border-color:var(--go);color:#0b0e0f;font-weight:700}
+.btn.tw{background:var(--tw);border-color:var(--tw);color:#fff}
+.btn.dng{background:transparent;border-color:#5a2b2b;color:#ff8a80}
+.btn.sm{min-height:36px;padding:0 12px;font-size:14px;border-radius:10px}
+.btn.wide{width:100%}
+label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:14px}
+label.f span.h{color:var(--mute);font-weight:500;font-size:13px}
+input[type=text],input[type=number],input[type=url],select,textarea{min-height:44px;width:100%;background:var(--night);border:1px solid var(--line2);border-radius:10px;padding:0 12px;color:var(--ink);font-size:15px;outline:none}
+textarea{padding:10px 12px;min-height:70px;resize:vertical}
+input:focus,select:focus,textarea:focus{border-color:var(--sky)}
+input[type=range]{width:100%;accent-color:var(--go)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.seg{display:flex;background:var(--night);border:1px solid var(--line2);border-radius:12px;padding:3px;gap:3px}
+.seg button{flex:1;min-height:40px;border:0;border-radius:9px;background:transparent;color:var(--mute);font-weight:600;font-size:14px;white-space:nowrap}
+.seg button.on{background:var(--panel3);color:var(--ink)}
+.seg button.on.kk{background:var(--go);color:#0b0e0f}.seg button.on.tw{background:var(--tw);color:#fff}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:54px;padding:8px 0;border-top:1px solid var(--line)}
+.sw:first-child{border-top:0}
+.sw b{display:block;font-weight:600}.sw small{display:block;color:var(--mute);font-size:13px;font-weight:400}
+.tg{width:50px;height:30px;border-radius:999px;background:#3a414e;position:relative;flex:none;border:0;transition:background .2s}
+.tg::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:left .2s}
+.tg.on{background:var(--go)}.tg.on::after{left:23px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{min-height:36px;padding:0 13px;border-radius:999px;border:1px solid var(--line2);background:var(--panel2);color:var(--ink);font-size:14px;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.chip.on{border-color:var(--go);background:rgba(83,252,24,.12)}
+.note{font-size:13.5px;color:var(--mute);margin-top:8px}
+.ok{color:var(--go)}.bad{color:#ff8a80}
+/* ---- lista de alertas ---- */
+.al{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);cursor:pointer}
+.al+.al{margin-top:8px}
+.al .ai{flex:none;width:46px;height:46px;border-radius:13px;display:grid;place-items:center;background:var(--ac,#53fc18);color:#0e0f13;overflow:hidden}
+.al .ai svg{width:60%;height:60%}.al .ai img,.al .ai video{width:100%;height:100%;object-fit:cover}
+.al.tw .ai{color:#fff}
+.al .at{flex:1;min-width:0}
+.al .at b{display:block;font-weight:700}
+.al .at small{display:block;color:var(--mute);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.al.off{opacity:.55}
+.al .go{color:var(--mute);font-size:22px}
+/* ---- editor ---- */
+.ed{position:fixed;inset:0;z-index:40;background:var(--night);overflow:auto;-webkit-overflow-scrolling:touch}
+.ed .eh{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(15,18,24,.95);border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}
+.ed .eh b{flex:1;font-size:17px}
+.ed .eb{max-width:760px;margin:0 auto;padding:14px 16px 120px}
+.ed .edR > .card:first-child{margin-top:12px}
+/* en la compu: la vista a la izquierda (siempre a la vista) y las opciones a la derecha */
+@media (min-width:1100px){
+  .ed .eb{max-width:1240px;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:22px;align-items:start;padding-bottom:60px}
+  .ed .edL{position:sticky;top:70px}
+  .ed .edL .stage{height:380px}
+  .ed .edL .stage .sc{transform:scale(.8)}
+  .ed .edR > .card:first-child{margin-top:0}
+  .wrap{max-width:1100px}
+  #alList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  #alList .al+.al{margin-top:0}
+}
+.stage{position:relative;height:260px;border-radius:16px;overflow:hidden;border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#2a3340,#151a22 60%,#24303a);}
+.stage::before{content:"";position:absolute;inset:0;background:repeating-conic-gradient(rgba(255,255,255,.03) 0 25%,transparent 0 50%) 0 0/24px 24px}
+.stage .sc{position:relative;transform:scale(.62);transform-origin:center}
+.stage .lbl{position:absolute;left:10px;top:8px;font-size:11px;font-weight:800;letter-spacing:.1em;color:rgba(255,255,255,.5);text-transform:uppercase}
+.picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:8px}
+.pk{position:relative;aspect-ratio:1;border-radius:14px;border:2px solid transparent;background:var(--panel2);display:grid;place-items:center;overflow:hidden;padding:0;color:#0e0f13}
+.pk.on{border-color:var(--go);box-shadow:0 0 0 3px rgba(83,252,24,.2)}
+.pk .tile{position:absolute;left:50%;top:9%;transform:translateX(-50%);width:56%;aspect-ratio:1;border-radius:12px;display:grid;place-items:center;background:var(--ac)}
+.pk .tile svg{width:66%;height:66%}
+.pk img,.pk video{width:100%;height:100%;object-fit:cover}
+.pk span{position:absolute;left:0;right:0;bottom:0;font-size:10.5px;font-weight:700;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.75));padding:8px 4px 3px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.snds{display:flex;flex-direction:column;gap:6px}
+.sn{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:12px;border:1px solid var(--line);background:var(--panel)}
+.sn.on{border-color:var(--go);background:rgba(83,252,24,.08)}
+.sn .pl{flex:none;width:38px;height:38px;border-radius:50%;border:0;background:var(--panel3);color:var(--ink);display:grid;place-items:center;font-size:14px}
+.sn .nm{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sn .nm small{display:block;color:var(--mute);font-weight:500;font-size:12px}
+.sn .pk2{flex:none}
+.vars .vr{border:1px solid var(--line2);border-radius:12px;padding:10px;margin-top:8px;background:var(--panel2)}
+.toast{position:fixed;left:50%;bottom:calc(84px + var(--safeB));transform:translateX(-50%);z-index:60;background:#1d232d;border:1px solid var(--line2);padding:10px 16px;border-radius:12px;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:92vw}
+.files .fi{display:flex;align-items:center;gap:12px;padding:10px;border-radius:12px;background:var(--panel);border:1px solid var(--line)}
+.files .fi+.fi{margin-top:8px}
+.files .th{flex:none;width:52px;height:52px;border-radius:10px;background:var(--panel3);display:grid;place-items:center;overflow:hidden;font-size:22px}
+.files .th img,.files .th video{width:100%;height:100%;object-fit:cover}
+.drop{display:block;cursor:pointer;border:2px dashed var(--line2);border-radius:14px;padding:22px;text-align:center;color:var(--mute)}
+.drop b{display:block;color:var(--ink);font-size:16px}
+.url{font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all;background:var(--night);border:1px solid var(--line2);border-radius:10px;padding:10px}
+.gate{max-width:520px;margin:40px auto;padding:0 16px}
+.mini{width:100%;aspect-ratio:16/9;border:1px solid var(--line2);border-radius:12px;background:linear-gradient(135deg,#2a3340,#151a22 60%,#24303a)}
+</style>
+</head>
+<body>
+<header><div class="hd"><span class="wm">ALERTAS <i>STUDIO</i></span><small>Kick y Twitch a tu gusto</small><span class="sp"></span><span class="sv" id="sv"></span></div></header>
+
+<div id="gate" class="gate" hidden>
+  <div class="card">
+    <h2>Falta tu clave 🔑</h2>
+    <p class="sub">Es la misma del feed. Abre este estudio desde el feed (⚙ → Alertas) o pega aquí tu «Enlace para tus celulares».</p>
+    <label class="f">Enlace o clave<input type="text" id="gateIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://mariiotq.github.io/kick-feed/?key=…"></label>
+    <button class="btn pri wide" id="gateGo" style="margin-top:12px">Entrar</button>
+  </div>
+</div>
+
+<nav class="tabs" id="tabs" hidden>
+  <button data-t="al" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>Alertas</button>
+  <button data-t="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Archivos</button>
+  <button data-t="aj"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>Ajustes</button>
+  <button data-t="en"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>Enlaces</button>
+</nav>
+
+<main class="wrap" id="main" hidden>
+  <section id="t-al" class="sec">
+    <div class="seg" id="pfSeg"><button data-pf="kick" class="on kk">Kick</button><button data-pf="tw">Twitch</button></div>
+    <div id="pauseNote" class="card" style="margin-top:12px;border-color:#5a4a1b" hidden><b>⏸ Tus alertas están en pausa</b><div class="note" style="margin-top:2px">Se prenden otra vez en Ajustes.</div></div>
+    <div id="alList" style="margin-top:14px"></div>
+    <p class="note">Toca una para cambiar su texto, imagen, sonido y volumen. Desde el feed puedes repetir cualquiera (↻ junto a la hora).</p>
+  </section>
+
+  <section id="t-fi" class="sec" hidden>
+    <div class="card">
+      <h2>Tus sonidos e imágenes</h2>
+      <p class="sub">Sube MP3, WAV u OGG (hasta 1.2 MB) y GIF, PNG, JPG, WEBP, WEBM o MP4 (hasta 3 MB). Al subir un sonido se mide qué tan fuerte suena y se empareja con los demás.</p>
+      <label class="drop" id="drop"><b>＋ Subir archivos</b>o arrástralos aquí<input type="file" id="fileIn" multiple accept="audio/*,image/gif,image/png,image/jpeg,image/webp,video/webm,video/mp4" hidden></label>
+      <div class="note" id="upNote"></div>
+    </div>
+    <div class="files" id="fiList" style="margin-top:12px"></div>
+  </section>
+
+  <section id="t-aj" class="sec" hidden>
+    <div class="card" id="ajCard"></div>
+  </section>
+
+  <section id="t-en" class="sec" hidden>
+    <div class="card" id="enCard"></div>
+    <div class="card" id="goalCard"></div>
+  </section>
+</main>
+
+<div class="ed" id="ed" hidden></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="alertas-comun.js"></script>
+<script>
+(function(){
+'use strict';
+var A=window.ALC, API=A.API, Q=new URLSearchParams(location.search);
+var KEY=(function(){ var v=(Q.get('key')||'').trim(); try{ if (v) localStorage.setItem('kickfeed.key', v); else v=localStorage.getItem('kickfeed.key')||''; }catch(e){} return v; })();
+if (Q.get('key')) try{ history.replaceState(null, '', location.pathname+location.hash); }catch(e){}
+A.injectCss();
+var $=function(id){ return document.getElementById(id); }, esc=A.esc;
+var CFG=null, FILES={}, PF='kick', ED=null, saveT=0, BASE=location.href.replace(/[^/]*([?#].*)?$/, '');
+function toast(t){ var e=$('toast'); e.textContent=t; e.hidden=false; clearTimeout(toast.t); toast.t=setTimeout(function(){ e.hidden=true; }, 2600); }
+function sv(t, c){ var e=$('sv'); e.textContent=t||''; e.className='sv'+(c?' '+c:''); }
+function post(a, body){
+  return fetch(API+'?a='+a, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(Object.assign({key:KEY}, body||{}))})
+    .then(function(r){ return r.json(); }).catch(function(){ return {ok:false, error:'Sin conexión con tu servidor'}; });
+}
+function load(){
+  sv('Cargando…');
+  return fetch(API+'?a=cfg', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+    if (!j || !j.ok) throw new Error((j && j.error) || 'No contestó');
+    CFG=j.cfg; FILES=j.files||{}; sv(''); paint();
+  }).catch(function(e){ sv('⚠ '+e.message, 'err'); });
+}
+function save(now){
+  clearTimeout(saveT); sv('Guardando…');
+  saveT=setTimeout(function(){
+    post('save', {cfg:CFG}).then(function(j){ if (j && j.ok){ CFG=j.cfg; FILES=j.files||FILES; sv('Guardado ✓', 'ok'); if (!ED) paintList(); } else sv('⚠ '+((j&&j.error)||'No se guardó'), 'err'); });
+  }, now ? 0 : 700);
+}
+function pfName(pf){ return pf==='tw' ? 'Twitch' : 'Kick'; }
+function types(pf){ return A.TYPES.filter(function(t){ return !A.ONLY[t] || A.ONLY[t]===pf; }); }
+function sample(t, pf){
+  var n={sub:1, resub:14, gift:5, kicks:500, bits:1000, raid:34, follow:0, tip:'$100 MXN', reward:'Hidratarse'}[t];
+  var m={resub:'¡Ya casi 2 años con Mario!', kicks:'¡Saludos desde Zapopan! 🛵', bits:'vamos jefe', tip:'Pa los tacos 🌮', reward:'¡Toma agua!'}[t]||'';
+  return {k:t, pf:pf, u:pf==='tw' ? 'ViewerTw' : 'Pepe_GDL', n:n, m:m};
+}
+function thumb(sp){
+  var v=String(sp.img||'');
+  if (/^b:/.test(v) && v!=='b:nada') return A.iconSvg(v.slice(2));
+  if (/^[fu]:/.test(v)){ var u=esc(A.mediaUrl(v)), f=/^f:/.test(v) && FILES[v.slice(2)]; return f && f.kind==='video' ? '<video src="'+u+'" muted></video>' : '<img src="'+u+'" alt="">'; }
+  return '<span style="font-size:20px">'+A.EMO[sp.k]+'</span>';
+}
+function paint(){ paintList(); paintFiles(); paintAj(); paintEn(); }
+function paintList(){
+  if (!CFG) return;
+  $('pauseNote').hidden=CFG.on!==false;
+  $('alList').innerHTML=types(PF).map(function(t){
+    var x=CFG.pf[PF][t], sp=A.spec(CFG, {k:t, pf:PF, n:0});
+    return '<div class="al'+(x.on?'':' off')+(PF==='tw'?' tw':'')+'" data-t="'+t+'" style="--ac:'+(x.color||A.PFC[PF])+'"><span class="ai">'+thumb(sp)+'</span>'+
+      '<span class="at"><b>'+A.EMO[t]+' '+A.NAMES[t]+(x.tts ? ' <small style="display:inline;color:var(--mute)">· 🗣️</small>' : '')+(x.vars && x.vars.length ? ' <small style="display:inline;color:var(--mute)">· '+(x.vars.length+1)+' variaciones</small>' : '')+'</b><small>'+esc(A.fill(x.text, sample(t, PF)))+'</small></span>'+
+      '<button class="tg'+(x.on?' on':'')+'" data-on="'+t+'" aria-label="Prender o apagar"></button><span class="go">›</span></div>';
+  }).join('');
+}
+$('alList').addEventListener('click', function(ev){
+  var tg=ev.target.closest('[data-on]');
+  if (tg){ ev.stopPropagation(); var x=CFG.pf[PF][tg.getAttribute('data-on')]; x.on=!x.on; paintList(); save(); return; }
+  var r=ev.target.closest('.al'); if (r) openEd(r.getAttribute('data-t'));
+});
+$('pfSeg').addEventListener('click', function(ev){ var b=ev.target.closest('button'); if (!b) return; PF=b.getAttribute('data-pf');
+  Array.prototype.forEach.call(this.children, function(x){ x.className=x===b ? 'on '+(PF==='tw'?'tw':'kk') : ''; }); paintList(); });
+
+/* ---------------- editor de una alerta ---------------- */
+function openEd(t){ ED={t:t, pf:PF, vi:-1}; paintEd(); $('ed').hidden=false; document.body.style.overflow='hidden'; }
+function closeEd(){ ED=null; $('ed').hidden=true; document.body.style.overflow=''; paintList(); }
+function cur(){ var x=CFG.pf[ED.pf][ED.t]; return ED.vi>=0 ? x.vars[ED.vi] : x; }
+function hasAmt(t){ return /^(gift|kicks|bits|raid|resub)$/.test(t); }
+function hasMsg(t){ return /^(resub|kicks|bits|tip|reward)$/.test(t); }
+function paintEd(){
+  var t=ED.t, pf=ED.pf, x=CFG.pf[pf][t], c=cur(), isVar=ED.vi>=0;
+  var unit={gift:'subs', kicks:'Kicks', bits:'bits', raid:'viewers', resub:'meses'}[t]||'';
+  var h='<div class="eh"><button class="btn sm" id="edBack">‹ Listo</button><b>'+A.EMO[t]+' '+A.NAMES[t]+' · '+pfName(pf)+'</b></div><div class="eb">';
+  h+='<div class="edL"><div class="stage"><span class="lbl">Así se ve</span><div class="sc" id="edPrev"></div></div>';
+  h+='<div class="row" style="margin-top:10px"><button class="btn grow" id="edHere">▶ Ver y oír aquí</button><button class="btn pri grow" id="edLive">📺 Probar en el stream</button></div>';
+  // variaciones (pestañas)
+  h+='<div class="chips" style="margin-top:14px"><button class="chip'+(isVar?'':' on')+'" data-vi="-1">Normal</button>'+
+     (x.vars||[]).map(function(v, i){ return '<button class="chip'+(ED.vi===i?' on':'')+'" data-vi="'+i+'">'+A.nfmt(v.min)+'+ '+esc(unit)+'</button>'; }).join('')+
+     (hasAmt(t) && (x.vars||[]).length<6 ? '<button class="chip" id="vAdd">＋ Variación</button>' : '')+'</div></div><div class="edR">';
+  h+='<div class="card" style="margin-top:12px">';
+  if (!isVar){
+    h+='<div class="sw"><span><b>Prendida</b><small>Si la apagas, esta no sale (las demás sí)</small></span><button class="tg'+(x.on?' on':'')+'" data-f="on"></button></div>';
+    if (hasAmt(t) && t!=='resub') h+='<label class="f" style="margin-top:8px">Solo desde<span class="h">Menos que esto no sale alerta (0 = todas)</span><input type="number" min="0" data-f="min" value="'+(x.min||0)+'"></label>';
+  } else {
+    h+='<label class="f">Cuando sea de<span class="h">'+esc(unit)+' o más: usa esto en lugar de lo normal (lo que dejes vacío se queda como lo normal)</span><input type="number" min="1" data-f="min" value="'+c.min+'"></label>'+
+       '<button class="btn dng sm" id="vDel" style="margin-top:8px">Quitar esta variación</button>';
+  }
+  h+='</div>';
+  // texto
+  h+='<div class="card"><h3>Texto</h3><label class="f">Primera línea<input type="text" data-f="text" maxlength="120" value="'+esc(c.text||'')+'" placeholder="'+(isVar?esc(x.text):'')+'"></label>'+
+     '<label class="f" style="margin-top:10px">Segunda línea<input type="text" data-f="sub" maxlength="160" value="'+esc(c.sub||'')+'" placeholder="'+(isVar?esc(x.sub):'')+'"></label>'+
+     '<div class="chips" style="margin-top:10px">'+A.VARS[t].map(function(v){ return '<button class="chip" data-var="{'+v+'}">{'+v+'}</button>'; }).join('')+'</div>'+
+     '<p class="note">Toca uno para ponerlo donde estás escribiendo. El nombre sale en color y la cantidad en amarillo.</p></div>';
+  if (!isVar){
+    var tw=x.ttsWhat||(hasMsg(t)?'msg':'alerta');
+    h+='<div class="card"><h3>🗣️ Voz (TTS)</h3><div class="sw"><span><b>Leer en voz</b><small>Con la voz de Google, después del sonido. El volumen y cuántas letras lee están en Ajustes.</small></span><button class="tg'+(x.tts?' on':'')+'" data-f="tts"></button></div>'+
+      (x.tts ? '<div style="margin-top:8px;font-weight:600;font-size:14px">Qué lee</div><div class="seg" id="ttsW">'+
+        (hasMsg(t) ? [['msg','Su mensaje'],['alerta','La alerta'],['ambos','Las dos']] : [['alerta','La alerta']]).map(function(o){ return '<button data-v="'+o[0]+'"'+(tw===o[0]?' class="on"':'')+'>'+o[1]+'</button>'; }).join('')+'</div>'+
+        '<p class="note">'+(hasMsg(t) ? 'Su mensaje: lee tal cual lo que escribió (si no dejó mensaje, no lee nada). La alerta: lee la primera línea.' : 'Aquí no hay mensaje: lee la primera línea, p. ej. «'+esc(A.fill(x.text, sample(t,pf)))+'».')+'</p>' : '')+'</div>';
+  }
+  // imagen
+  h+='<div class="card"><h3>Imagen</h3><div class="picks" id="imgPicks">'+
+     (isVar ? '<button class="pk'+(!c.img?' on':'')+'" data-img=""><b style="color:var(--mute);font-size:12px">La normal</b></button>' : '')+
+     Object.keys(A.IMG_NAMES).map(function(k){ var v='b:'+k; return '<button class="pk'+(c.img===v?' on':'')+'" data-img="'+v+'" style="--ac:'+(x.color||A.PFC[pf])+'">'+(k==='nada' ? '<b style="color:var(--mute);font-size:22px">∅</b>' : '<span class="tile" style="color:'+(pf==='tw'?'#fff':'#0e0f13')+'">'+A.iconSvg(k)+'</span>')+'<span>'+A.IMG_NAMES[k]+'</span></button>'; }).join('')+
+     Object.keys(FILES).filter(function(id){ return FILES[id].kind!=='audio'; }).map(function(id){ var f=FILES[id], v='f:'+id, u=esc(A.mediaUrl(v));
+       return '<button class="pk'+(c.img===v?' on':'')+'" data-img="'+v+'">'+(f.kind==='video'?'<video src="'+u+'" muted></video>':'<img src="'+u+'" alt="">')+'<span>'+esc(f.name)+'</span></button>'; }).join('')+
+     '</div><label class="f" style="margin-top:10px">O un link (GIF de GIPHY/Tenor, imagen o video)<input type="url" id="imgUrl" placeholder="https://media.giphy.com/…/giphy.gif" value="'+(/^u:/.test(c.img||'')?esc(c.img.slice(2)):'')+'"></label>'+
+     '<p class="note">¿Tienes un GIF o video tuyo? Súbelo en «Archivos» y aparece aquí.</p></div>';
+  // sonido
+  var snds=Object.keys(A.SND_NAMES).map(function(k){ return {v:'b:'+k, n:A.SND_NAMES[k], s:k==='nada'?'':'De la app · volumen parejo'}; })
+    .concat(Object.keys(FILES).filter(function(id){ return FILES[id].kind==='audio'; }).map(function(id){ return {v:'f:'+id, n:FILES[id].name, s:'Tuyo · '+(FILES[id].norm<1 ? 'emparejado al '+Math.round(FILES[id].norm*100)+'%' : 'volumen parejo')}; }));
+  if (isVar) snds.unshift({v:'', n:'El normal', s:'El mismo de la alerta normal'});
+  h+='<div class="card"><h3>Sonido</h3><div class="snds">'+snds.map(function(s){
+      return '<div class="sn'+((c.snd||'')===s.v?' on':'')+'" data-snd="'+esc(s.v)+'">'+(s.v && s.v!=='b:nada' ? '<button class="pl" data-play="'+esc(s.v)+'">▶</button>' : '<span class="pl" style="background:transparent">—</span>')+'<span class="nm">'+esc(s.n)+'<small>'+esc(s.s)+'</small></span></div>'; }).join('')+
+     '</div><label class="f" style="margin-top:10px">O un link a un MP3<input type="url" id="sndUrl" placeholder="https://…/sonido.mp3" value="'+(/^u:/.test(c.snd||'')?esc(c.snd.slice(2)):'')+'"></label>'+
+     '<label class="f" style="margin-top:12px">Volumen de esta alerta: <span id="volN">'+(c.vol!=null?c.vol:x.vol)+'%</span><input type="range" min="0" max="100" step="5" data-f="vol" value="'+(c.vol!=null?c.vol:x.vol)+'"></label>'+
+     '<p class="note">Todos los sonidos ya suenan parejo (los de la app y los que subes). Esto es por si quieres una más bajita o más fuerte.</p></div>';
+  // más
+  h+='<div class="card"><h3>Más</h3><label class="f">Cuánto dura en pantalla: <span id="durN">'+(c.dur!=null?c.dur:x.dur)+' s</span><input type="range" min="3" max="20" step="1" data-f="dur" value="'+(c.dur!=null?c.dur:x.dur)+'"></label>';
+  if (!isVar){
+    h+='<label class="f" style="margin-top:8px">Cómo entra<select data-f="anim">'+[['pop','Brinca'],['sube','Sube'],['zoom','Zoom'],['gira','Gira']].map(function(o){ return '<option value="'+o[0]+'"'+(x.anim===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join('')+'</select></label>'+
+       '<div style="margin-top:12px;font-weight:600;font-size:14px">Color</div><div class="chips" style="margin-top:6px">'+
+       [['',pfName(pf)],['#ffd23f','Dorado'],['#ff4d8d','Rosa'],['#3fd0ff','Azul'],['#ff7a1a','Naranja'],['#ffffff','Blanco']].map(function(o){ return '<button class="chip'+((x.color||'')===o[0]?' on':'')+'" data-color="'+o[0]+'"><i style="width:14px;height:14px;border-radius:4px;background:'+(o[0]||A.PFC[pf])+'"></i>'+o[1]+'</button>'; }).join('')+'</div>';
+  }
+  h+='</div>';
+  h+='<button class="btn wide" id="edCopy" style="margin-top:12px">Copiar esta alerta a '+pfName(pf==='tw'?'kick':'tw')+'</button>';
+  h+='</div></div>';
+  $('ed').innerHTML=h;
+  if (A.ONLY[t]) $('edCopy').hidden=true;
+  edPrev(); bindEd();
+}
+function edPrev(){
+  var x=CFG.pf[ED.pf][ED.t], sp=A.spec(CFG, sample(ED.t, ED.pf), ED.vi);
+  var el=A.build(sp, sample(ED.t, ED.pf), CFG, FILES, API); el.classList.remove('anim-'+(sp.anim||'pop'));
+  var box=$('edPrev'); box.innerHTML=''; box.appendChild(el);
+  return {sp:sp, el:el, x:x};
+}
+var LASTF=null;
+function bindEd(){
+  var t=ED.t, x=CFG.pf[ED.pf][t];
+  $('edBack').onclick=closeEd;
+  var ed=$('ed');
+  Array.prototype.forEach.call(ed.querySelectorAll('input[data-f],select[data-f]'), function(el){
+    var f=el.getAttribute('data-f');
+    el.addEventListener('focus', function(){ if (el.type==='text') LASTF=el; });
+    el.addEventListener(el.type==='range' ? 'input' : el.tagName==='SELECT' ? 'change' : 'input', function(){
+      var c=cur(), v=el.value;
+      if (f==='min' || f==='vol' || f==='dur') v=Number(v)||0;
+      c[f]=v;
+      if (f==='vol') $('volN').textContent=v+'%';
+      if (f==='dur') $('durN').textContent=v+' s';
+      if (f==='min' && ED.vi>=0){ /* el chip se pinta al salir */ }
+      edPrev(); save();
+    });
+    if (f==='min' && ED.vi>=0) el.addEventListener('change', function(){ x.vars.sort(function(a,b){ return a.min-b.min; }); ED.vi=x.vars.indexOf(cur()); paintEd(); });
+  });
+  Array.prototype.forEach.call(ed.querySelectorAll('.tg[data-f]'), function(b){ b.onclick=function(){ var f=b.getAttribute('data-f'); x[f]=!x[f]; if (f==='tts' && x.tts && !x.ttsWhat) x.ttsWhat=hasMsg(t)?'msg':'alerta'; save(); if (f==='tts') paintEd(); else b.classList.toggle('on', !!x[f]); }; });
+  if ($('ttsW')) $('ttsW').onclick=function(ev){ var b=ev.target.closest('button'); if (!b) return; x.ttsWhat=b.getAttribute('data-v'); save(); paintEd(); };
+  ed.querySelectorAll('[data-var]').forEach(function(b){ b.onclick=function(){
+    var inp=LASTF || ed.querySelector('input[data-f="text"]'), v=b.getAttribute('data-var'), s=inp.selectionStart!=null ? inp.selectionStart : inp.value.length;
+    inp.value=inp.value.slice(0,s)+v+inp.value.slice(inp.selectionEnd!=null?inp.selectionEnd:s); inp.dispatchEvent(new Event('input')); inp.focus(); }; });
+  ed.querySelectorAll('[data-vi]').forEach(function(b){ b.onclick=function(){ ED.vi=Number(b.getAttribute('data-vi')); paintEd(); }; });
+  if ($('vAdd')) $('vAdd').onclick=function(){
+    var last=(x.vars||[]).slice(-1)[0], base={gift:5, kicks:500, bits:1000, raid:20, resub:12}[t]||10;
+    x.vars=x.vars||[]; x.vars.push({min: last ? last.min*2 : base, text:'', sub:'', img:'', snd:'', vol:null, norm:1, dur:null}); ED.vi=x.vars.length-1; paintEd(); save(); };
+  if ($('vDel')) $('vDel').onclick=function(){ x.vars.splice(ED.vi,1); ED.vi=-1; paintEd(); save(); };
+  ed.querySelectorAll('[data-img]').forEach(function(b){ b.onclick=function(){ cur().img=b.getAttribute('data-img'); $('imgUrl').value=''; paintEd(); save(); }; });
+  $('imgUrl').addEventListener('change', function(){ var v=this.value.trim(); if (/^https:\/\//.test(v)){ cur().img='u:'+v; paintEd(); save(); } else if (v) toast('Pon un link que empiece con https://'); });
+  ed.querySelectorAll('.sn[data-snd]').forEach(function(r){ r.onclick=function(ev){
+    var p=ev.target.closest('[data-play]'), v=r.getAttribute('data-snd');
+    if (p){ ev.stopPropagation(); var f=/^f:/.test(v) && FILES[v.slice(2)]; A.playSnd({snd:v, vol:cur().vol!=null?cur().vol:x.vol, norm:f?f.norm:1}, CFG, 1, API); return; }
+    var c=cur(); c.snd=v; c.norm=/^f:/.test(v) && FILES[v.slice(2)] ? (FILES[v.slice(2)].norm||1) : 1; $('sndUrl').value=''; paintEd(); save(); }; });
+  $('sndUrl').addEventListener('change', function(){ var v=this.value.trim(); if (!/^https:\/\//.test(v)){ if (v) toast('Pon un link que empiece con https://'); return; }
+    var c=cur(); c.snd='u:'+v; c.norm=1; save(); paintEd();
+    fetch(v).then(function(r){ return r.arrayBuffer(); }).then(A.measure).then(function(n){ c.norm=n; save(); toast('🔊 Volumen emparejado'); })
+      .catch(function(){ toast('Ese link no deja medir su volumen: si suena muy fuerte, bájale aquí o súbelo en «Archivos»'); }); });
+  ed.querySelectorAll('[data-color]').forEach(function(b){ b.onclick=function(){ x.color=b.getAttribute('data-color'); paintEd(); save(); }; });
+  $('edHere').onclick=function(){
+    var p=edPrev(); p.el.classList.add('anim-'+(p.sp.anim||'pop'));
+    var s=sample(t, ED.pf);
+    A.playSnd(p.sp, CFG, 1, API).then(function(){
+      var tx=A.ttsText(p.sp, s);
+      if (!tx) return p.sp.tts ? toast('🗣️ No hay nada que leer con este ajuste') : null;
+      return A.say(tx, CFG).then(function(seg){ if (!(seg>0)) toast('🔇 La voz salió en silencio: revisa su volumen en Ajustes'); })
+                           .catch(function(e){ toast('⚠ La voz no salió · '+e.message); });
+    });
+  };
+  $('edLive').onclick=function(){
+    var b=this; b.disabled=true;
+    post('test', {al:sample(t, ED.pf), vi:ED.vi}).then(function(j){ b.disabled=false; toast(j && j.ok ? '📺 Mandada a tu OBS (y a donde tengas el player)' : '⚠ '+((j&&j.error)||'No se pudo')); });
+  };
+  $('edCopy').onclick=function(){
+    var to=ED.pf==='tw'?'kick':'tw', copy=JSON.parse(JSON.stringify(x));
+    if (!copy.color) copy.color='';
+    CFG.pf[to][t]=copy; save(); toast('✓ Copiada a '+pfName(to));
+  };
+}
+
+/* ---------------- archivos ---------------- */
+function kb(n){ return n>=1e6 ? (n/1e6).toFixed(1)+' MB' : Math.round(n/1e3)+' KB'; }
+function paintFiles(){
+  var ids=Object.keys(FILES).sort(function(a,b){ return FILES[b].at-FILES[a].at; });
+  var used=ids.reduce(function(s,k){ return s+(FILES[k].size||0); }, 0);
+  $('upNote').textContent=ids.length ? 'Usas '+kb(used)+' de 40 MB · '+ids.length+' de 60 archivos' : '';
+  $('fiList').innerHTML=!ids.length ? '<div class="card note" style="text-align:center">Todavía no subes nada. Mientras, tus alertas usan los sonidos y dibujos de la app.</div>' : ids.map(function(id){
+    var f=FILES[id], v='f:'+id, u=esc(A.mediaUrl(v));
+    var th=f.kind==='audio' ? '🔊' : f.kind==='video' ? '<video src="'+u+'" muted></video>' : '<img src="'+u+'" alt="">';
+    return '<div class="fi"><span class="th">'+th+'</span><span class="grow"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(f.name)+'</b><small class="note" style="margin:0">'+
+      (f.kind==='audio' ? 'Sonido' : f.kind==='video' ? 'Video' : 'Imagen')+' · '+kb(f.size)+(f.kind==='audio' ? ' · '+(f.norm<1 ? 'emparejado al '+Math.round(f.norm*100)+'%' : 'volumen parejo') : '')+'</small></span>'+
+      (f.kind==='audio' ? '<button class="btn sm" data-fp="'+id+'">▶</button>' : '')+'<button class="btn sm dng" data-fd="'+id+'">Borrar</button></div>';
+  }).join('');
+}
+$('fiList').addEventListener('click', function(ev){
+  var p=ev.target.closest('[data-fp]'), d=ev.target.closest('[data-fd]');
+  if (p){ var f=FILES[p.getAttribute('data-fp')]; A.playSnd({snd:'f:'+p.getAttribute('data-fp'), vol:80, norm:f.norm||1}, CFG, 1, API); }
+  if (d){ var id=d.getAttribute('data-fd');
+    if (d.dataset.c!=='1'){ d.dataset.c='1'; d.textContent='¿Seguro?'; setTimeout(function(){ d.dataset.c=''; d.textContent='Borrar'; }, 3000); return; }
+    var inUse=JSON.stringify(CFG).indexOf('f:'+id)>=0;
+    post('fdel', {id:id}).then(function(j){ if (j && j.ok){ delete FILES[id]; paintFiles(); if (inUse){ load(); toast('Borrado: las alertas que lo usaban regresan a lo de la app'); } else toast('Borrado'); } }); }
+});
+function b64(buf){ var s='', b=new Uint8Array(buf), i, c=0x8000; for (i=0;i<b.length;i+=c) s+=String.fromCharCode.apply(null, b.subarray(i, i+c)); return btoa(s); }
+function upFiles(list){
+  var arr=Array.prototype.slice.call(list||[]); if (!arr.length) return;
+  var i=0;
+  (function one(){
+    if (i>=arr.length){ $('upNote').textContent='✓ Listo'; return load(); }
+    var f=arr[i++], type=(f.type||'').toLowerCase();
+    if (!type && /\.mp3$/i.test(f.name)) type='audio/mpeg';
+    $('upNote').textContent='Subiendo «'+f.name+'»…';
+    f.arrayBuffer().then(function(buf){
+      var norm=/^audio\//.test(type) ? A.measure(buf.slice(0)) : Promise.resolve(1);
+      return norm.then(function(n){ return post('up', {name:f.name.replace(/\.[a-z0-9]+$/i,''), type:type, data:b64(buf), norm:n}); });
+    }).then(function(j){ if (!j || !j.ok) toast('⚠ «'+f.name+'»: '+((j&&j.error)||'no se subió')); else FILES[j.id]=j.file; one(); })
+      .catch(function(){ toast('⚠ No se pudo leer «'+f.name+'»'); one(); });
+  })();
+}
+$('fileIn').addEventListener('change', function(){ upFiles(this.files); this.value=''; });
+['dragover','dragenter'].forEach(function(e){ $('drop').addEventListener(e, function(ev){ ev.preventDefault(); this.style.borderColor='var(--go)'; }); });
+$('drop').addEventListener('dragleave', function(){ this.style.borderColor=''; });
+$('drop').addEventListener('drop', function(ev){ ev.preventDefault(); this.style.borderColor=''; upFiles(ev.dataTransfer.files); });
+
+/* ---------------- ajustes ---------------- */
+function seg(k, opts){ return '<div class="seg" data-k="'+k+'">'+opts.map(function(o){ return '<button data-v="'+o[0]+'"'+(String(CFG[k])===String(o[0])?' class="on"':'')+'>'+o[1]+'</button>'; }).join('')+'</div>'; }
+function paintAj(){
+  if (!CFG) return;
+  $('ajCard').innerHTML='<div class="sw"><span><b>Alertas prendidas</b><small>Apágalas un rato sin cambiar nada (p. ej. si vas a grabar algo)</small></span><button class="tg'+(CFG.on!==false?' on':'')+'" id="ajOn"></button></div>'+
+    '<label class="f" style="margin-top:10px">Volumen general: <span id="ajVolN">'+CFG.vol+'%</span><input type="range" min="0" max="100" step="5" id="ajVol" value="'+CFG.vol+'"></label>'+
+    '<label class="f" style="margin-top:12px">Volumen de la voz (mensajes): <span id="ajTtsN">'+CFG.ttsVol+'%</span><input type="range" min="0" max="100" step="5" id="ajTts" value="'+CFG.ttsVol+'"></label>'+
+    '<label class="f" style="margin-top:12px">La voz lee hasta: <span id="ajMaxN">'+CFG.ttsMax+' letras</span><input type="range" min="40" max="300" step="20" id="ajMax" value="'+CFG.ttsMax+'"></label>'+
+    /* v78: con qué habla, probarla antes de salir al aire, y el filtro */
+    '<div style="margin-top:16px;font-weight:600;font-size:14px">🗣️ Con qué habla</div>'+
+    seg('ttsMotor', [['auto','Automático'],['celular','Voz del aparato'],['servidor','Voz del servidor']])+
+    '<p class="sub" style="margin:6px 0 0">Automático usa la voz del aparato si la tiene (al instante y sin internet, como en tu celular) y si no, la arma tu servidor. En OBS de la compu casi siempre toca la del servidor.</p>'+
+    '<label class="f" style="margin-top:12px">Voz del servidor<select id="ajVoz">'+A.VOCES.map(function(v){ return '<option value="'+v[0]+'"'+(((CFG.ttsVoz||'mia')===v[0])?' selected':'')+'>'+v[1]+'</option>'; }).join('')+'</select></label>'+
+    '<label class="f" style="margin-top:12px">Qué tan rápido lee (voz del aparato): <span id="ajRateN">'+CFG.ttsRate+'×</span><input type="range" min="0.6" max="2" step="0.1" id="ajRate" value="'+CFG.ttsRate+'"></label>'+
+    '<button class="btn wide" id="ajVozT" style="margin-top:10px">▶ Probar la voz aquí</button>'+
+    '<p class="sub" id="ajVozR" style="margin:6px 0 0">Tócalo antes de salir al aire para saber si va a hablar.</p>'+
+    '<div class="sw" style="margin-top:16px"><span><b>Palabras que no se leen</b><small>Vacío = lee todo tal cual. Si agregas una palabra, solo se calla esa y el resto del mensaje sí se lee.</small></span><button class="tg'+(CFG.ttsFiltro!==false?' on':'')+'" id="ajFil"></button></div>'+
+    '<textarea id="ajBl" rows="3" style="margin-top:8px" placeholder="vacío: se lee todo. Ej: palabra1, palabra2">'+esc((CFG.ttsBl||A.TTS_GRO).join(', '))+'</textarea>'+
+    '<div style="margin-top:14px;font-weight:600;font-size:14px">Dónde salen</div>'+seg('pos', [['arriba','Arriba'],['centro','En medio'],['abajo','Abajo']])+
+    '<div style="margin-top:12px;font-weight:600;font-size:14px">Tamaño</div>'+seg('size', [['chica','Chicas'],['normal','Normales'],['grande','Grandes']])+
+    '<div style="margin-top:12px;font-weight:600;font-size:14px">Estilo</div>'+seg('look', [['tarjeta','Tarjeta'],['limpio','Limpio'],['neon','Neón']])+
+    '<label class="f" style="margin-top:12px">Espera entre una y otra: <span id="ajGapN">'+CFG.gap+' s</span><input type="range" min="0" max="5" step="0.5" id="ajGap" value="'+CFG.gap+'"></label>'+
+    '<button class="btn wide" id="ajSkip" style="margin-top:14px">⏭ Saltar la que está sonando</button>';
+  $('ajOn').onclick=function(){ CFG.on=CFG.on===false; this.classList.toggle('on', CFG.on!==false); save(); paintList(); };
+  [['ajVol','vol','ajVolN','%'],['ajTts','ttsVol','ajTtsN','%'],['ajMax','ttsMax','ajMaxN',' letras'],['ajGap','gap','ajGapN',' s']].forEach(function(z){
+    $(z[0]).oninput=function(){ CFG[z[1]]=Number(this.value); $(z[2]).textContent=this.value+z[3]; save(); }; });
+  Array.prototype.forEach.call($('ajCard').querySelectorAll('.seg'), function(sg){ sg.onclick=function(ev){ var b=ev.target.closest('button'); if (!b) return; CFG[sg.getAttribute('data-k')]=b.getAttribute('data-v'); paintAj(); save(); }; });
+  $('ajVoz').onchange=function(){ CFG.ttsVoz=this.value; save(); };
+  $('ajRate').oninput=function(){ CFG.ttsRate=Number(this.value); $('ajRateN').textContent=this.value+'×'; save(); };
+  $('ajFil').onclick=function(){ CFG.ttsFiltro=CFG.ttsFiltro===false; this.classList.toggle('on', CFG.ttsFiltro!==false); save(); };
+  $('ajBl').onchange=function(){ var l=this.value.split(/[,\n]+/).map(function(w){ return w.trim().toLowerCase(); }).filter(Boolean); CFG.ttsBl=l.length?l:null; save(); };
+  $('ajVozT').onclick=function(){
+    var b=this, r=$('ajVozR'); b.disabled=true; r.textContent='Probando…'; r.style.color='';
+    var cel=(CFG.ttsMotor||'auto')!=='servidor' && A.ttsVocesCel().length>0;
+    A.say('Prueba de voz. Así se va a oír el mensaje de quien te mande Kicks.', CFG, 1).then(function(seg){
+      if (seg>0){ r.textContent='✓ Sí habla · usó '+(cel?'la voz del aparato':'la voz del servidor'); r.style.color='#53fc18'; }
+      else { r.textContent='🔇 Salió en silencio: súbele a «Volumen de la voz»'; r.style.color='#ffb020'; }
+    }).catch(function(e){ r.textContent='✗ No habló · '+e.message; r.style.color='#ff5a4f'; }).then(function(){ b.disabled=false; });
+  };
+  $('ajSkip').onclick=function(){ post('skip').then(function(j){ toast(j && j.ok ? '⏭ Listo' : '⚠ No se pudo'); }); };
+}
+
+/* ---------------- enlaces ---------------- */
+var GO={pf:'kick', est:'bloques', meta:10, tit:'Meta de subs', ap:20, de:60, ci:true};
+function goalUrl(test){
+  var q=[]; if (GO.pf==='tw') q.push('pf=tw'); if (GO.est!=='texto') q.push('estilo='+GO.est); q.push('meta='+GO.meta);
+  if (GO.tit && GO.tit!=='Meta de subs') q.push('titulo='+encodeURIComponent(GO.tit));
+  if (!GO.ci) q.push('ciclo=0'); else { if (GO.ap!==20) q.push('aparece='+GO.ap); if (GO.de!==60) q.push('descansa='+GO.de); }
+  if (test) q.push('siempre=1');
+  return BASE+'subgoal.html?'+q.join('&');
+}
+function copy(t){ (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function(){ toast('📋 Copiado'); }, function(){ toast('Mantén presionado el link para copiarlo'); }); }
+function pcLink(){ return BASE+'alertas.html?key='+encodeURIComponent(KEY); }
+function paintEn(){
+  var pl=BASE+'alertas-player.html';
+  $('enCard').innerHTML='<h2>Tus alertas en OBS</h2><p class="sub">Agrega una «Fuente de navegador» con este link, de 1920×1080 (o el tamaño de tu stream), arriba de todo en tus escenas. Salen las de Kick y las de Twitch.</p>'+
+    '<div class="url">'+esc(pl)+'</div><div class="row" style="margin-top:8px"><button class="btn sm" data-cp="'+esc(pl)+'">📋 Copiar</button><a class="btn sm" href="'+esc(pl)+'?demo=1" target="_blank" rel="noopener">Ver de prueba</a></div>'+
+    '<h3 style="margin-top:18px">En IRL Plus Chat (para oírlas en tu cel)</h3><p class="sub" style="margin-bottom:8px">El mismo link, más bajito y sin estorbar la pantalla:</p>'+
+    '<div class="url">'+esc(pl+'?vol=60&oculto=1')+'</div><div class="row" style="margin-top:8px"><button class="btn sm" data-cp="'+esc(pl+'?vol=60&oculto=1')+'">📋 Copiar</button></div>'+
+    '<p class="note">Si solo quieres las de una plataforma en algún lugar, agrégale <b>?pf=kick</b> o <b>?pf=tw</b>.</p>'+
+    '<h3 style="margin-top:18px">💻 Abrir este Studio en tu compu</h3><p class="sub" style="margin-bottom:8px">Copia este link y ábrelo en la compu (o mándatelo por WhatsApp/Telegram). Ya trae tu clave: no lo compartas con nadie.</p>'+
+    '<div class="row"><button class="btn sm pri" data-cp="'+esc(pcLink())+'">📋 Copiar link para la compu</button></div>'+
+    '<p class="note">En la compu también puedes arrastrar tus sonidos y GIFs directo a «Archivos».</p>';
+  var g='<h2>Meta de subs (OBS)</h2><p class="sub">Arma el link de tu letrero: aparece un rato, se va otro rato (para que la imagen quede limpia) y solo sale cuando estás en vivo en su plataforma.</p>'+
+    '<div class="seg" id="goPf"><button data-v="kick" class="'+(GO.pf==='kick'?'on kk':'')+'">Kick</button><button data-v="tw" class="'+(GO.pf==='tw'?'on tw':'')+'">Twitch</button></div>'+
+    '<div style="margin-top:12px;font-weight:600;font-size:14px">Estilo</div><div class="seg" id="goEst">'+[['bloques','Bloques'],['anillo','Anillo'],['barra','Barra'],['texto','Texto']].map(function(o){ return '<button data-v="'+o[0]+'"'+(GO.est===o[0]?' class="on"':'')+'>'+o[1]+'</button>'; }).join('')+'</div>'+
+    '<div class="grid2" style="margin-top:12px"><label class="f">Meta<input type="number" id="goMeta" min="1" max="999" value="'+GO.meta+'"></label><label class="f">Título<input type="text" id="goTit" maxlength="40" value="'+esc(GO.tit)+'"></label></div>'+
+    '<div class="sw" style="margin-top:6px"><span><b>Aparecer y desaparecer</b><small>Con cada sub nueva aparece al momento</small></span><button class="tg'+(GO.ci?' on':'')+'" id="goCi"></button></div>'+
+    (GO.ci ? '<div class="grid2"><label class="f">Se ve (segundos)<input type="number" id="goAp" min="5" max="600" value="'+GO.ap+'"></label><label class="f">Descansa (segundos)<input type="number" id="goDe" min="5" max="1800" value="'+GO.de+'"></label></div>' : '')+
+    '<div class="url" style="margin-top:12px">'+esc(goalUrl())+'</div><div class="row" style="margin-top:8px"><button class="btn sm" data-cp="'+esc(goalUrl())+'">📋 Copiar</button></div>'+
+    '<div style="margin-top:12px;font-weight:600;font-size:14px">Así se ve (en la prueba sale aunque no estés en vivo)</div>'+
+    '<iframe class="mini" style="margin-top:6px;'+(GO.est==='anillo'?'aspect-ratio:1;max-width:320px':'aspect-ratio:600/170')+'" src="'+esc(goalUrl(true))+'" title="Meta de subs"></iframe>'+
+    '<p class="note">Tamaño en OBS: <b>'+(GO.est==='anillo' ? '400×400' : GO.est==='texto' ? '600×100' : '600×170')+'</b>. Súmale o réstale desde el feed (★ o tus Atajos).</p>';
+  $('goalCard').innerHTML=g;
+  $('goPf').onclick=function(ev){ var b=ev.target.closest('button'); if (b){ GO.pf=b.getAttribute('data-v'); paintEn(); } };
+  $('goEst').onclick=function(ev){ var b=ev.target.closest('button'); if (b){ GO.est=b.getAttribute('data-v'); paintEn(); } };
+  $('goCi').onclick=function(){ GO.ci=!GO.ci; paintEn(); };
+  [['goMeta','meta',1,999],['goAp','ap',5,600],['goDe','de',5,1800]].forEach(function(z){ var e=$(z[0]); if (e) e.onchange=function(){ GO[z[1]]=Math.max(z[2], Math.min(z[3], Number(this.value)||z[2])); paintEn(); }; });
+  $('goTit').onchange=function(){ GO.tit=this.value.trim()||'Meta de subs'; paintEn(); };
+}
+document.addEventListener('click', function(ev){ var c=ev.target.closest('[data-cp]'); if (c) copy(c.getAttribute('data-cp')); });
+
+/* ---------------- pestañas y arranque ---------------- */
+$('tabs').addEventListener('click', function(ev){ var b=ev.target.closest('button'); if (!b) return;
+  Array.prototype.forEach.call(this.children, function(x){ x.classList.toggle('on', x===b); });
+  ['al','fi','aj','en'].forEach(function(t){ $('t-'+t).hidden=t!==b.getAttribute('data-t'); }); window.scrollTo(0,0); });
+function start(){ $('gate').hidden=true; $('tabs').hidden=false; $('main').hidden=false; load(); }
+$('gateGo').onclick=function(){ var v=$('gateIn').value.trim(), m=/[?&]key=([^&#]+)/.exec(v); KEY=decodeURIComponent(m ? m[1] : v); try{ localStorage.setItem('kickfeed.key', KEY); }catch(e){} if (KEY) start(); };
+if (KEY) start(); else $('gate').hidden=false;
+if (Q.get('t')==='en') document.querySelector('#tabs [data-t="en"]').click();
+window.alertasStudio={ get cfg(){ return CFG; }, openEd:openEd };
+})();
+</script>
+</body>
+</html>
