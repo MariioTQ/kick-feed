@@ -1251,17 +1251,17 @@
      th-clasico  el de siempre (lista)            th-tarjetas  tarjetas con ícono de color, compactas
      th-cristal  el de Claude: fondo con luz verde (Kick) y morada (Twitch), vidrio esmerilado y círculos que brillan */
   /* --- Tarjetas (compactas) --- */
-  body.th-tarjetas.fcard .item{margin:3px 6px;padding:6px 8px 6px 7px;gap:8px;border-radius:10px}
-  body.th-tarjetas.fcard .item .ic{width:26px;height:26px;border-radius:8px;font-size:13px}
-  body.th-tarjetas.fcard .item .ic svg{width:15px;height:15px}
-  body.th-tarjetas.fcard .item .ic img{width:16px;height:16px}
-  body.th-tarjetas.fcard .item .line{padding-top:2px}
-  body.th-tarjetas.fcard .item .sub{margin-top:1px}
-  body.th-tarjetas.fcard .item .msg{margin-top:3px;padding:4px 8px}
-  body.th-tarjetas .pin{margin:4px 6px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:#161927}
-  body.th-tarjetas #chatbox #pins .pin{border-bottom:1px solid rgba(255,255,255,.07)}
-  body.th-tarjetas #chatList .cm.evt{border-radius:10px;margin:4px 2px}
-  body.th-tarjetas #chatList .cm.first,body.th-tarjetas #chatList .cm.hlm,body.th-tarjetas #chatList .cm.bitsm,body.th-tarjetas #chatList .cm.hlu{border-radius:10px}
+  body:is(.th-tarjetas,.th-grafito).fcard .item{margin:3px 6px;padding:6px 8px 6px 7px;gap:8px;border-radius:10px}
+  body:is(.th-tarjetas,.th-grafito).fcard .item .ic{width:26px;height:26px;border-radius:8px;font-size:13px}
+  body:is(.th-tarjetas,.th-grafito).fcard .item .ic svg{width:15px;height:15px}
+  body:is(.th-tarjetas,.th-grafito).fcard .item .ic img{width:16px;height:16px}
+  body:is(.th-tarjetas,.th-grafito).fcard .item .line{padding-top:2px}
+  body:is(.th-tarjetas,.th-grafito).fcard .item .sub{margin-top:1px}
+  body:is(.th-tarjetas,.th-grafito).fcard .item .msg{margin-top:3px;padding:4px 8px}
+  body:is(.th-tarjetas,.th-grafito) .pin{margin:4px 6px;border:1px solid rgba(255,255,255,.07);border-radius:12px;background:#161927}
+  body:is(.th-tarjetas,.th-grafito) #chatbox #pins .pin{border-bottom:1px solid rgba(255,255,255,.07)}
+  body:is(.th-tarjetas,.th-grafito) #chatList .cm.evt{border-radius:10px;margin:4px 2px}
+  body:is(.th-tarjetas,.th-grafito) #chatList .cm.first,body:is(.th-tarjetas,.th-grafito) #chatList .cm.hlm,body:is(.th-tarjetas,.th-grafito) #chatList .cm.bitsm,body:is(.th-tarjetas,.th-grafito) #chatList .cm.hlu{border-radius:10px}
   /* --- Cristal --- */
   body.th-cristal{--bg:#0a0d14;--panel:rgba(255,255,255,.055);--line:rgba(255,255,255,.085);
     background:radial-gradient(520px 420px at -12% 22%,rgba(83,252,24,.16),transparent 65%),radial-gradient(560px 520px at 112% 78%,rgba(145,70,255,.22),transparent 65%),#0a0d14;background-attachment:fixed}
@@ -1304,7 +1304,7 @@
   #cpanel .dsc .mk.c i{border-bottom:1px solid rgba(255,255,255,.07);border-radius:0;height:20px}
   #cpanel .dsc .mk.c i b{background:transparent;width:10px;height:10px;border-radius:50%;box-shadow:inset 0 0 0 2px var(--a)}
   #cpanel .dsc .mk.t{background:#0e0f13}
-  #cpanel .dsc .mk.t i{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);padding:0 4px;height:21px}
+  #cpanel .dsc .mk:is(.t,.m) i{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);padding:0 4px;height:21px}
   #cpanel .dsc .mk.g{background:radial-gradient(90px 70px at 0 0,rgba(83,252,24,.25),transparent 70%),radial-gradient(90px 90px at 100% 100%,rgba(145,70,255,.35),transparent 70%),#0a0d14}
   #cpanel .dsc .mk.g i{border-bottom:1px solid rgba(255,255,255,.06);border-radius:0;height:21px}
   #cpanel .dsc .mk.g i b{border-radius:50%;box-shadow:0 0 0 2px color-mix(in srgb,var(--a) 30%,transparent),0 0 8px var(--a)}
@@ -1312,6 +1312,21 @@
   #cpanel .dsc .mk.g .bt{background:rgba(255,255,255,.1)}
   #cpanel .dsc .dt b{display:block;font-size:16px}
   #cpanel .dsc .dt small{display:block;color:var(--dim);font-size:12.5px;margin-top:3px;line-height:1.35}
+  /* Grafito: usa el mismo acomodo de Tarjetas, con superficies mates y menos brillo. */
+  body.th-grafito{--bg:#060708;--panel:#0c0e11;--line:#282c32;--txt:#f2f3f5;--dim:#a6adb8}
+  body.th-grafito #bar,body.th-grafito #chatIn{background:#0c0e11}
+  body.th-grafito.fcard:not(.transparent) .item:not(.chan){background:#0c0e11;border-color:#282c32}
+  body.th-grafito.fcard .item:not(.sys,.gap,.signal) .ic{
+    background:#202327;
+    background:color-mix(in srgb,var(--accent,#a6adb8) 18%,#0c0e11);
+    color:var(--accent,#a6adb8);box-shadow:none;
+  }
+  body.th-grafito #chatTxt,body.th-grafito #chatEmo,body.th-grafito #chatQr,body.th-grafito #chatGrid{background:#0c0e11}
+  body.th-grafito #chatTxt::placeholder{color:var(--dim);opacity:1}
+  body.th-grafito #chatSend{background:#6aef45}
+  #cpanel .dsc .mk.m{background:#060708}
+  #cpanel .dsc .mk.m i{background:#0c0e11;border-color:#282c32}
+  #cpanel .dsc .mk.m i b{background:#202327;background:color-mix(in srgb,var(--a) 24%,#0c0e11)}
   body.oled{--bg:#000;background:#000}
   body.oled #bar,body.oled #chatIn,body.oled #apanel .adock,body.oled #filters.set,body.oled #cpanel,body.oled #filters .shd,body.oled #tpanel,body.oled #tpanel .ph{background:#000}
   body.oled #cpanel .ph{background:rgba(0,0,0,.96)}
@@ -4909,8 +4924,9 @@
   // v76: 🎨 el diseño de la app (⚙ → Diseño). Si venías de «la lista de antes», te quedas con el Clásico
   var THEMES=[['tarjetas','Tarjetas','Cada evento con su cuadrito de color, compacto. Ventanitas y chat a juego.','t'],
               ['cristal','Cristal','El de Claude: luz verde de Kick y morada de Twitch de fondo, vidrio esmerilado y círculos que brillan.','g'],
-              ['clasico','Clásico','El de siempre: la lista sencilla.','c']];
-  function themeOf(){ var t=CC.theme; if (t==='clasico' || t==='tarjetas' || t==='cristal') return t; return CC.fstyle==='list' ? 'clasico' : 'tarjetas'; }
+              ['clasico','Clásico','El de siempre: la lista sencilla.','c'],
+              ['grafito','Grafito','Tarjetas mates, iconos sin brillo y texto secundario más claro.','m']];
+  function themeOf(){ var t=CC.theme; if (THEMES.some(function(x){ return x[0]===t; })) return t; return CC.fstyle==='list' ? 'clasico' : 'tarjetas'; }
   function themeApply(){
     var th=DUO ? 'clasico' : themeOf();
     THEMES.forEach(function(x){ document.body.classList.toggle('th-'+x[0], th===x[0]); });
