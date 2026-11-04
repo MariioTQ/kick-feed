@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guardia del chat · MarioTQ</title>
+<style>
+/* ==================================================================
+   🛡 GUARDIA DEL CHAT (v79)
+   Vive como fuente de navegador en tu OBS de IRLHosting (prendido 24/7),
+   en su propia escena «Guardia del chat», que nunca sale al aire.
+   Lee el chat de Kick y de Twitch directo (como IRL Plus Chat) y se lo
+   manda a tu servidor en tandas: cada ~20 s, o al momento si es un
+   comando de tus mods o spam. Así Kick y Twitch ya no tienen que avisarle
+   a Vercel de CADA mensaje. Si esta página se cae, tu servidor lo nota y
+   vuelve a prender esos avisos solo: nada deja de funcionar.
+   No hay que instalar nada. El link lo copias desde la app (⚙ → Servidor
+   y diagnóstico → Guardia del chat) o la app la agrega sola a tu OBS.
+   ?oculto=1  no enseña el recuadro (por si la pones en una escena al aire)
+   ================================================================== */
+:root{--bg:#0f1218;--card:#171b23;--line:#2a313d;--ink:#eceff4;--mute:#8d95a5;--ok:#53fc18;--tw:#a970ff;--bad:#ff5a5f;--warn:#ffcc00}
+html,body{margin:0;background:transparent;font-family:"Segoe UI",Roboto,system-ui,sans-serif;color:var(--ink)}
+body.oculto #box{display:none}
+#box{margin:8px;max-width:340px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.35}
+#box b{font-size:14px}
+.r{display:flex;justify-content:space-between;gap:10px;margin-top:6px}
+.r span:last-child{color:var(--mute);text-align:right}
+.ok{color:var(--ok)!important}.bad{color:var(--bad)!important}.warn{color:var(--warn)!important}
+#err{margin-top:6px;color:var(--bad);font-size:12px}
+</style>
+</head>
+<body>
+<div id="box">
+  <b>🛡 Guardia del chat</b>
+  <div class="r"><span>Kick</span><span id="sk">conectando…</span></div>
+  <div class="r"><span>Twitch</span><span id="st">conectando…</span></div>
+  <div class="r"><span>Tu servidor</span><span id="ss">…</span></div>
+  <div class="r"><span>Avisos de chat a Vercel</span><span id="sh">…</span></div>
+  <div class="r"><span>OBS</span><span id="so">…</span></div>
+  <div id="err"></div>
+</div>
+<script>
+(function(){
+'use strict';
+var Q=new URLSearchParams(location.search);
+var W=Q.get('w')||'', API=(Q.get('api')||'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,'');
+var VER='81';
+if (Q.get('oculto')==='1') document.body.classList.add('oculto');
+var $=function(id){ return document.getElementById(id); };
+function err(t){ $('err').textContent=t||''; }
+function hhmm(t){ var d=new Date(t); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2); }
+if (!W){ err('Falta el link completo (copia el de la app: ⚙ → Servidor y diagnóstico → Guardia del chat).'); return; }
+
+var CFG=null, QUEUE=[], sending=false, lastSend=0, fast=false, flushT=0, backoff=0, dead=false;
+var K={ws:null, up:false, since:0, n:0, last:0, retry:0, sub:false}, T={ws:null, up:false, since:0, n:0, last:0, retry:0, pong:0};
+var SEENK=new Set(), HOSTS={};                   // un mismo mensaje puede llegar por dos canales de Kick: una sola vez
+function seenK(id){ if (SEENK.has(id)) return true; SEENK.add(id); if (SEENK.size>3000) SEENK.delete(SEENK.values().next().value); return false; }
+// 🎬 OBS: la guardia vive dentro de tu OBS, así que sabe la escena y si estás transmitiendo al momento
+var OBS={scene:'', on:null, sent:'', has:!!window.obsstudio};
+
+/* ---------------- antispam (igual que tu servidor) ---------------- */
+var LOOK=(function(){ var m={}; function add(f,t){ Array.from(f).forEach(function(c,i){ m[c]=t[i]; }); }
+  add('ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ','abcdefghijklmnopqrstuvwyz'); add('авсеһіјкмнорѕтухԁԛԝүёї','abcehijkmhopstyxdqwyei');
+  add('αβεικνορτυχ','abeikvoptux'); add('@4$50137','aassoiet'); return m; })();
+function spamNorm(s){
+  s=String(s||'').replace(/\[emote:\d+:[^\]]*\]/g,' ');
+  try{ s=s.normalize('NFKC'); }catch(e){}
+  s=s.toLowerCase();
+  try{ s=s.normalize('NFD').replace(/[̀-ͯ]/g,''); }catch(e){}
+  s=Array.from(s).map(function(c){ return LOOK[c]||c; }).join('');
+  return s.replace(/[^a-z0-9]+/g,'');
+}
+var SPAM=[];
+function spamHit(t){ var n=spamNorm(t); if (n.length<5) return false; for (var i=0;i<SPAM.length;i++) if (n.indexOf(SPAM[i])!==-1) return true; return false; }
+
+/* ---------------- hablar con tu servidor ---------------- */
+function post(a, body){
+  return fetch(API+'/api/chatin'+(a?'?a='+a:''), {method:'POST', headers:{'Content-Type':'text/plain'}, body:JSON.stringify(Object.assign({w:W, v:VER}, body||{})), cache:'no-store', credentials:'omit'})
+    .then(function(r){ return r.json().then(function(j){ j.__st=r.status; return j; }); });
+}
+function loadCfg(){
+  return post('cfg').then(function(j){
+    if (j.__st===403){ dead=true; err(j.error||'Este link ya no sirve: cópialo otra vez desde la app.'); paint(); throw new Error('link'); }
+    if (!j.ok) throw new Error(j.error||'sin respuesta');
+    CFG=j; SPAM=(j.spam && j.spam.on!==false ? j.spam.list||[] : []).map(spamNorm).filter(function(x){ return x.length>=5; });
+    return j;
+  });
+}
+function stat(o){ return {up:o.up, upFor:o.up ? Date.now()-o.since : 0, n:o.n}; }
+function flushSoon(ms){ clearTimeout(flushT); flushT=setTimeout(flush, ms); }
+function flush(){
+  clearTimeout(flushT); flushT=0;
+  if (dead) return;
+  if (sending){ flushSoon(1000); return; }
+  sending=true;
+  var batch=QUEUE.splice(0, 300);
+  var body={st:{kick:stat(K), tw:stat(T)}, msgs:batch};
+  if (OBS.has && (OBS.scene || OBS.on!==null)) body.obs={scene:OBS.scene, on:OBS.on};
+  var osent=OBS.scene+'|'+OBS.on;
+  post('', body).then(function(j){
+    OBS.sent=osent;
+    if (j.__st===403){ dead=true; err(j.error||'Este link ya no sirve.'); return; }
+    if (!j.ok) throw new Error(j.error||'error');
+    backoff=0; lastSend=Date.now(); fast=!!j.want; err('');
+    $('ss').textContent='✓ '+hhmm(lastSend); $('ss').className='ok';
+    var h=j.hooks||{};
+    $('sh').textContent='Kick '+(h.kick==='off'?'apagado ✓':'prendido')+' · Twitch '+(h.tw==='off'?'apagado ✓':'prendido');
+    $('sh').className=(h.kick==='off'||h.tw==='off')?'ok':'';
+  }).catch(function(e){
+    QUEUE=batch.concat(QUEUE).slice(-600);          // no se pierde nada: se reintenta
+    backoff=Math.min(60000, (backoff||2000)*2);
+    $('ss').textContent='sin respuesta (reintento)'; $('ss').className='bad';
+  }).then(function(){
+    sending=false;
+    if (dead) return;
+    if (backoff) return flushSoon(backoff);
+    if (QUEUE.length) flushSoon(fast ? 3000 : 20000);
+  });
+}
+// cada mensaje: a la fila. Comandos de tus mods y spam: al momento
+function push(item, urgent){
+  QUEUE.push(item); if (QUEUE.length>600) QUEUE.shift();
+  if (urgent) flushSoon(250);
+  else if (QUEUE.length>=150) flushSoon(100);
+  else if (!flushT) flushSoon(fast ? 3000 : 20000);
+}
+// «sigo viva»: si en 55 s no se mandó nada, se manda el estado solo
+setInterval(function(){ if (!dead && !sending && Date.now()-lastSend>55000) flush(); paint(); }, 5000);
+setInterval(function(){ if (!dead) loadCfg().catch(function(){}); }, 10*60000);   // tu lista de spam, por si la cambias
+
+/* ---------------- Kick (Pusher, como su página) ---------------- */
+function kickConnect(){
+  if (dead || !CFG) return;
+  var key=CFG.kick && CFG.kick.key, cl=(CFG.kick && CFG.kick.cluster)||'us2', room=CFG.kick && CFG.kick.chatroom, cid=CFG.kick && CFG.kick.channel;
+  if (!key || !room){ K.up=false; $('sk').textContent='sin llave de Kick (reintento)'; return setTimeout(function(){ loadCfg().then(kickConnect, function(){ setTimeout(kickConnect, 60000); }); }, 60000); }
+  var ws; try{ ws=new WebSocket('wss://ws-'+cl+'.pusher.com/app/'+key+'?protocol=7&client=js&version=8.4.0&flash=false'); }catch(e){ return kickRetry(); }
+  K.ws=ws; K.sub=false; K.last=Date.now();
+  ws.onmessage=function(ev){
+    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
+    K.last=Date.now();
+    if (m.event==='pusher:connection_established'){
+      var chs=['chatrooms.'+room+'.v2', 'chatrooms.'+room, 'chatroom_'+room];
+      if (cid) chs.push('channel.'+cid, 'channel_'+cid);
+      chs.forEach(function(c){ ws.send(JSON.stringify({event:'pusher:subscribe', data:{auth:'', channel:c}})); });
+      return; }
+    if (m.event==='pusher_internal:subscription_succeeded'){ if (m.channel==='chatrooms.'+room+'.v2' || !m.channel){ K.up=true; K.since=Date.now(); K.retry=0; paint(); } return; }
+    if (/StreamHost(ed)?Event$/.test(m.event||'')){                 // 🚀 te hicieron raid en Kick (aunque tu app esté cerrada)
+      var hd=m.data; if (typeof hd==='string'){ try{ hd=JSON.parse(hd); }catch(e){ return; } }
+      var hu=String((hd && (hd.host_username||hd.hostUsername))||'').slice(0,40), hv=Number(hd && (hd.number_viewers||hd.numberViewers))||0;
+      var hk=hu.toLowerCase()+':'+hv; if (!hu || (HOSTS[hk] && Date.now()-HOSTS[hk]<120000)) return; HOSTS[hk]=Date.now();
+      push({pf:'kick', host:{user:hu, viewers:hv, message:String((hd && hd.optional_message)||'').slice(0,200)}}, true); return; }
+    if (/RewardRedeemedEvent$/.test(m.event||'')){                  // 🎯 recompensas de Kick: tus reglas aunque la app esté cerrada
+      var rd=m.data; if (typeof rd==='string'){ try{ rd=JSON.parse(rd); }catch(e){ return; } }
+      if (!rd) return;
+      var rk='rw:'+(rd.id||((rd.username||'')+':'+(rd.reward_title||rd.title||'')+':'+Math.floor(Date.now()/5000)));
+      if (seenK(rk)) return;
+      push({pf:'kick', reward:{user:String(rd.username||'').slice(0,40), reward:String(rd.reward_title||rd.title||'').slice(0,80), input:String(rd.user_input||'').slice(0,300)}}, true); return; }
+    if (m.event==='pusher:ping'){ ws.send(JSON.stringify({event:'pusher:pong', data:{}})); return; }
+    if (m.event==='pusher:error'){ var d=m.data; if (typeof d==='string'){ try{ d=JSON.parse(d); }catch(e){} } err('Kick: '+JSON.stringify(d).slice(0,120)); return; }
+    if (/SubscriptionEvent$/.test(m.event||'')){                    // v81 · 🔁 resub compartida: su alerta (si Kick no la avisó)
+      var sd=m.data; if (typeof sd==='string'){ try{ sd=JSON.parse(sd); }catch(e){ return; } }
+      var su=String((sd && sd.username)||'').slice(0,40), sm=Number(sd && sd.months)||1;
+      if (!su || sm<2 || seenK('sub:'+su.toLowerCase()+':'+sm)) return;
+      setTimeout(function(){ push({pf:'kick', resub:{user:su, months:sm}}, true); }, 20000);   // 20 s: por si Kick sí la avisa
+      return; }
+    if (!/ChatMessageEvent/.test(m.event||'')) return;
+    var x=m.data; if (typeof x==='string'){ try{ x=JSON.parse(x); }catch(e){ return; } }
+    if (!x || !x.id || !x.sender || seenK(String(x.id))) return;
+    var s=x.sender||{}, idt=s.identity||{}, md=x.metadata||{};
+    var p={ message_id:String(x.id), created_at:x.created_at||new Date().toISOString(), content:String(x.content||'').slice(0,600),
+            sender:{ username:String(s.username||'').slice(0,40), user_id:Number(s.id)||0, identity:{ username_color:idt.color||'', badges:(idt.badges||[]).slice(0,10) } } };
+    if (x.type==='reply' && md.original_message) p.replies_to={ message_id:String(md.original_message.id||''), sender:{username:String((md.original_sender||{}).username||'')}, content:String(md.original_message.content||'').slice(0,200) };
+    K.n++;
+    var badges=p.sender.identity.badges, mod=badges.some(function(b){ return b && /^(moderator|broadcaster)$/.test(b.type); });
+    push({pf:'kick', p:p}, (/^\s*!/.test(p.content) && mod) || (!badges.length && spamHit(p.content)));
+  };
+  ws.onclose=function(ev){ if (K.ws!==ws) return; K.up=false; K.ws=null; paint(); kickRetry(ev && ev.code); };
+  ws.onerror=function(){ try{ ws.close(); }catch(e){} };
+}
+function kickRetry(code){
+  K.retry++;
+  var ms=Math.min(60000, 2000*Math.pow(2, Math.min(5, K.retry-1)));
+  if (code>=4000 && code<4100) { ms=60000; loadCfg().catch(function(){}); }   // la llave cambió: se pide la nueva
+  setTimeout(kickConnect, ms);
+}
+setInterval(function(){                                // el ping: si Kick no contesta en 75 s, se reconecta
+  var ws=K.ws; if (!ws || ws.readyState!==1) return;
+  try{ ws.send(JSON.stringify({event:'pusher:ping', data:{}})); }catch(e){}
+  if (Date.now()-K.last>75000){ try{ ws.close(); }catch(e){} }
+}, 30000);
+
+/* ---------------- Twitch (IRC, sin cuenta: solo lee) ---------------- */
+function tagVal(v){ return String(v||'').replace(/\\(.)/g, function(_, c){ return c==='s'?' ':c===':'?';':c==='r'?'\r':c==='n'?'\n':c; }); }
+function frags(text, em){
+  if (!em) return [{type:'text', text:text}];
+  var cp=Array.from(text), spots=[];
+  em.split('/').forEach(function(g){ var p=g.split(':'); if (p.length<2) return; p[1].split(',').forEach(function(r){ var a=r.split('-'); spots.push({id:p[0], s:Number(a[0]), e:Number(a[1])}); }); });
+  spots.sort(function(a,b){ return a.s-b.s; });
+  var out=[], i=0;
+  spots.forEach(function(sp){ if (!(sp.s>=i && sp.e>=sp.s && sp.e<cp.length)) return;
+    if (sp.s>i) out.push({type:'text', text:cp.slice(i, sp.s).join('')});
+    var t=cp.slice(sp.s, sp.e+1).join(''); out.push({type:'emote', text:t, emote:{id:sp.id}}); i=sp.e+1; });
+  if (i<cp.length) out.push({type:'text', text:cp.slice(i).join('')});
+  return out;
+}
+function twLine(line){
+  if (!line) return;
+  if (line.indexOf('PING')===0){ T.ws.send('PONG'+line.slice(4)); return; }
+  var tags={}, rest=line;
+  if (rest[0]==='@'){ var sp=rest.indexOf(' '); rest.slice(1, sp).split(';').forEach(function(kv){ var i=kv.indexOf('='); tags[kv.slice(0,i)]=tagVal(kv.slice(i+1)); }); rest=rest.slice(sp+1); }
+  var m=rest.match(/^:(\S+?)(?:!\S+)? (\S+)((?: [^:\s]\S*)*)(?: :([\s\S]*))?$/); if (!m) return;
+  var cmd=m[2];
+  if (cmd==='PONG'){ T.pong=Date.now(); return; }
+  if (cmd==='366' || cmd==='ROOMSTATE'){ if (!T.up){ T.up=true; T.since=Date.now(); T.retry=0; paint(); } return; }
+  if (cmd==='RECONNECT'){ try{ T.ws.close(); }catch(e){} return; }
+  if (cmd!=='PRIVMSG') return;
+  var nick=m[1], text=m[4]||'';
+  var act=text.match(/^\u0001ACTION ([\s\S]*)\u0001$/); if (act) text=act[1];
+  if (!tags.id) return;
+  var badges=(tags.badges||'').split(',').filter(Boolean).map(function(b){ var p=b.split('/'); return {set_id:p[0], id:p[1]||'', info:''}; });
+  var bi={}; (tags['badge-info']||'').split(',').forEach(function(b){ var p=b.split('/'); if (p[0]) bi[p[0]]=p[1]||''; });
+  badges.forEach(function(b){ if (bi[b.set_id]) b.info=bi[b.set_id]; });
+  var e={ message_id:tags.id, chatter_user_login:nick, chatter_user_name:tags['display-name']||nick, chatter_user_id:tags['user-id']||'',
+          color:tags.color||'', badges:badges, message:{text:text.slice(0,900), fragments:frags(text.slice(0,900), tags.emotes)} };
+  if (tags['reply-parent-msg-id']) e.reply={ parent_message_id:tags['reply-parent-msg-id'], parent_user_name:tags['reply-parent-display-name']||'', parent_user_login:tags['reply-parent-user-login']||'', parent_message_body:(tags['reply-parent-msg-body']||'').slice(0,200) };
+  if (tags.bits) e.cheer={bits:Number(tags.bits)||0};
+  T.n++;
+  var mod=badges.some(function(b){ return /^(moderator|broadcaster)$/.test(b.set_id); });
+  push({pf:'tw', e:e}, (/^\s*!/.test(text) && mod) || (!badges.length && spamHit(text)));
+}
+function twConnect(){
+  if (dead || !CFG) return;
+  var login=String((CFG.tw && CFG.tw.login)||'').toLowerCase().replace(/[^a-z0-9_]/g,'');
+  if (!login){ $('st').textContent='sin canal'; return; }
+  var ws; try{ ws=new WebSocket('wss://irc-ws.chat.twitch.tv:443'); }catch(e){ return twRetry(); }
+  T.ws=ws; T.pong=Date.now();
+  ws.onopen=function(){ ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands'); ws.send('PASS SCHMOOPIIE'); ws.send('NICK justinfan'+Math.floor(10000+Math.random()*80000)); ws.send('JOIN #'+login); };
+  ws.onmessage=function(ev){ String(ev.data||'').split('\r\n').forEach(function(l){ try{ twLine(l); }catch(e){} }); };
+  ws.onclose=function(){ if (T.ws!==ws) return; T.up=false; T.ws=null; paint(); twRetry(); };
+  ws.onerror=function(){ try{ ws.close(); }catch(e){} };
+}
+function twRetry(){ T.retry++; setTimeout(twConnect, Math.min(60000, 2000*Math.pow(2, Math.min(5, T.retry-1)))); }
+setInterval(function(){                                // si Twitch no contesta el PING en 15 s, se reconecta
+  var ws=T.ws; if (!ws || ws.readyState!==1) return;
+  var sent=Date.now(); try{ ws.send('PING :guardia'); }catch(e){}
+  setTimeout(function(){ if (T.ws===ws && T.pong<sent){ try{ ws.close(); }catch(e){} } }, 15000);
+}, 60000);
+
+function obsSet(scene, on){
+  if (scene!=null) OBS.scene=String(scene).slice(0,120);
+  if (on!=null) OBS.on=!!on;
+  var el=$('so'); el.textContent=(OBS.scene ? OBS.scene : '…')+(OBS.on===true ? ' · 🔴 transmitiendo' : OBS.on===false ? ' · sin transmitir' : ''); el.className=OBS.on ? 'ok' : '';
+  if (OBS.scene+'|'+OBS.on!==OBS.sent) flushSoon(400);      // cambió: tu app lo ve al momento
+}
+if (OBS.has){
+  try{ window.obsstudio.getCurrentScene(function(sc){ if (sc && sc.name) obsSet(sc.name, null); }); }catch(e){}
+  try{ window.obsstudio.getStatus(function(st){ if (st) obsSet(null, !!st.streaming); }); }catch(e){}
+  window.addEventListener('obsSceneChanged', function(ev){ var d=ev && ev.detail; if (d && d.name) obsSet(d.name, null); });
+  window.addEventListener('obsStreamingStarted', function(){ obsSet(null, true); });
+  window.addEventListener('obsStreamingStopped', function(){ obsSet(null, false); });
+} else $('so').textContent='solo dentro de OBS';
+function paint(){
+  [['sk',K],['st',T]].forEach(function(z){ var el=$(z[0]), o=z[1];
+    el.textContent=o.up ? '✓ leyendo · '+o.n+' msj' : (o.ws ? 'conectando…' : 'reconectando…'); el.className=o.up?'ok':'warn'; });
+}
+loadCfg().then(function(){ kickConnect(); twConnect(); flushSoon(3000); }, function(e){
+  if (dead) return; err('No pude hablar con tu servidor ('+(e&&e.message)+'). Reintento en 1 min.');
+  setTimeout(function(){ location.reload(); }, 60000);
+});
+window.guardia={ K:K, T:T, queue:QUEUE, flush:flush };
+})();
+</script>
+</body>
+</html>
