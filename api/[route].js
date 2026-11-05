@@ -1510,6 +1510,22 @@ async function rtKeyGet() {
   } catch (e) {}
   return c || null;
 }
+// 💬 v83 · el widget de chat para OBS (chat-obs.html): público y solo lectura.
+// Lo mismo que ya es público en kick.com y Twitch: la llave del chat de Kick y las imágenes de las
+// insignias de Twitch. Nada de spam, tokens ni claves. El CDN de Vercel lo guarda 1 h: casi no gasta.
+async function chatObsApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  let k = null, bid = '', twb = {};
+  try { k = await rtKeyGet(); } catch (e) {}
+  try {
+    if (TW_ID && TW_SECRET) { bid = await twMe(); if (bid) { const m = await twBadgeMap(bid); for (const x in m) twb[x] = m[x][0]; } }
+  } catch (e) {}
+  return send(res, 200, { ok: !!k, v: 1,
+    kick: { slug: CHANNEL, chatroom: String(process.env.KICK_CHATROOM || '6635680'), key: k ? k.app_key : '', cluster: k ? k.cluster : 'us2' },
+    tw: { login: String(process.env.TWITCH_LOGIN || CHANNEL), id: bid }, twb },
+    undefined, k ? 'public, max-age=600, s-maxage=3600, stale-while-revalidate=86400' : 'no-store');
+}
 async function chatInApi(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -3131,6 +3147,7 @@ module.exports = async function handler(req, res) {
     if (route === 'realtime') return await realtimeKey(req, res);
     if (route === 'rt') return await rtApi(req, res);
     if (route === 'chatin') return await chatInApi(req, res);
+    if (route === 'chatobs') return await chatObsApi(req, res);
     if (route === 'health') return await healthApi(req, res);
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'modcmd') return await modCmdApi(req, res);
