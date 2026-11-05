@@ -88,12 +88,12 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - `mod` (moderar en Kick), `chat` (escribir)
   - `obs`, `rules`, `modcmd`, `moments`, `goal`, `viewers`, `chatters`, `prefs`, `spam`
   - `chatin` (guardia), `chatobs` (widget de chat, público), `health`, `rt` (Ably), `realtime`
-  - `rewards` (v83: recompensas y canjes), `kick` (v83: permisos de tu cuenta de Kick)
+  - `rewards` (v84: recompensas y canjes), `kick` (v84: permisos de tu cuenta de Kick)
   - `tw` (todo lo de Twitch con `?a=`: status, now, send, mod, chan, cats, poll, pred, ads, badges, clips…)
   - `login` / `callback` (Kick OAuth con PKCE), `twlogin` / `twcallback`, `status`, `debug` (con clave)
 - `alertas.js`: alertas y voz (`?a=cfg|f|fdel|fire|poll|save|skip|test|tts|up|object`).
 - `brb.js`: el BRB.
-- `_rt.js`: publicar en Ably. El guion bajo es para que Vercel no lo convierta en ruta. Usa un solo canal, `kf`, con los mensajes `ev`, `goal`, `tw`, `sync`, `al`, `alcfg`, `brb`, `ping`, `obs` y `rw` (v83: canjes pendientes).
+- `_rt.js`: publicar en Ably. El guion bajo es para que Vercel no lo convierta en ruta. Usa un solo canal, `kf`, con los mensajes `ev`, `goal`, `tw`, `sync`, `al`, `alcfg`, `brb`, `ping`, `obs` y `rw` (v84: canjes pendientes).
 
 **`pruebas/`:** las pruebas automáticas (ver su `LEEME.md`). No se publican en Vercel (`.vercelignore`).
 
@@ -132,14 +132,14 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - `emo:<pf>`: hasta cuándo dura el modo solo emotes.
   - `plan` y `plancd:*`: el plan del día.
 
-## Recompensas y canjes (v83, cómo están hechas)
+## Recompensas y canjes (v84, cómo están hechas)
 
 - ⚙ → En vivo → 🎯 Recompensas (`index.html`, página `rwm`). Ruta `/api/rewards` (con clave): `list`, `pend`, `save`, `del`, `res` (✓/✕) y `copy` («Pasar esta recompensa a la app»).
 - Solo APIs oficiales: Kick `/public/v1/channels/rewards…` y Twitch `/helix/channel_points/custom_rewards…`. Solo se cambian (y se aceptan o rechazan sus canjes) las que creó la app; las demás salen con 🔒. «Pasar a la app» crea una igual, apagada y con «(app)» en el nombre.
 - Canjes pendientes: llegan por los avisos oficiales (Kick `channel.reward.redemption.updated`, nuevo en `EVENTS`, `SUBS_VER` 5; Twitch `…redemption.add` con `status: unfulfilled` y `…redemption.update`, `TW_SUBS_VER` 2). Salen en el feed con ✓ / ✕ (Kick como evento `rwpend`; Twitch en la misma línea del canje con `pend`), en la barra (🎯, `pRwp`, se puede mover o mandar a ⋯) y en Ajustes. Se quitan solos si se resuelven en Kick o en Twitch.
 - El aviso de canjes de Kick también corre tus reglas «Canjean una recompensa» (misma huella `rf:` que la guardia y la app: una sola vez).
 - Redis: `rwmine` (ids de las que creó la app), `rwp` (zset de pendientes, máx. 100, los de más de 3 días no salen), `rwpAt` (cuándo cambió; sale en `/api/events` como `rwa`). Ably: mensaje `rw`.
-- v83 también arregló `rwRefund` de Kick: Kick manda en `data` la lista de los que NO pudo (antes decía «Te devolví tus puntos» aunque no se hubieran devuelto).
+- v84 también arregló `rwRefund` de Kick: Kick manda en `data` la lista de los que NO pudo (antes decía «Te devolví tus puntos» aunque no se hubieran devuelto).
 
 ## Reglas automáticas (cómo están hechas)
 
@@ -169,9 +169,9 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 
 ## Pendiente (empieza por aquí)
 
-1. ~~**Botón para volver a conectar Kick**~~ **hecho en v83.** ⚙ → Plataformas → Kick dice qué permisos faltan (`/api/kick`, compara `SCOPES` con `tok.scope`) y abre `/api/login`. «Revisar todo» también avisa (`kscope`).
-2. **Sesión de Kick («modo Kick.bot»)**, como está en «Decisiones»: primero la prueba de Cloudflare desde Vercel, luego guardar la sesión, la vigilancia, VIP y solo emotes de Kick en la app. Explícame paso a paso cómo copiar mi `session_token` desde la computadora (o haz algo más fácil, como un marcador que la copie).
-3. **Sección «🎯 Recompensas»** — **hecha en v83 con las APIs oficiales** (ver «Recompensas y canjes» abajo). Lo de la sesión de Kick no se hizo. Lo que se pidió: En Kick conviene usar la sesión (punto 2) para poder manejar todas, no solo las de la app. La idea:
+1. ~~**Botón para volver a conectar Kick**~~ **hecho en v84.** ⚙ → Plataformas → Kick dice qué permisos faltan (`/api/kick`, compara `SCOPES` con `tok.scope`) y abre `/api/login`. «Revisar todo» también avisa (`kscope`).
+2. **No se hizo (v84):** Claude no construye la parte de la sesión de kick.com. Mientras Kick no tenga VIP ni modo solo emotes en su API oficial, esas dos cosas en Kick siguen con Streamer.bot (en Twitch ya las hace la app). Lo que se había pedido: **Sesión de Kick («modo Kick.bot»)**, como está en «Decisiones»: primero la prueba de Cloudflare desde Vercel, luego guardar la sesión, la vigilancia, VIP y solo emotes de Kick en la app. Explícame paso a paso cómo copiar mi `session_token` desde la computadora (o haz algo más fácil, como un marcador que la copie).
+3. **Sección «🎯 Recompensas»** — **hecha en v84 con las APIs oficiales** (ver «Recompensas y canjes» abajo). Lo de la sesión de Kick no se hizo. Lo que se pidió: En Kick conviene usar la sesión (punto 2) para poder manejar todas, no solo las de la app. La idea:
    - **Lista de Kick y Twitch** (ya existe `rewardsList()` en `/api/rules?a=rewards`). Con crear, editar (título, costo, descripción, color, pide texto, se acepta solo o queda pendiente), pausar, prender y apagar, y borrar.
    - **Kick:** `GET/POST /public/v1/channels/rewards`, `PATCH/DELETE /public/v1/channels/rewards/{id}`. Campos: `title` (máx 50), `cost`, `description` (máx 200), `is_enabled`, `is_paused`, `is_user_input_required`, `should_redemptions_skip_request_queue`, `background_color`.
    - **Twitch:** `GET/POST/PATCH/DELETE /helix/channel_points/custom_rewards`. Solo se pueden editar las que creó esta app (`only_manageable_rewards=true`); las otras se ven, pero con candado.
@@ -199,7 +199,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - 115: lista de VIP temporales en la app (días que quedan, quitar antes).
 - 116: aviso en Telegram cuando se acaba un VIP Rey.
 - 117: hecha (widget de chat para OBS, `chat-obs.html`).
-- 118: hecha en v83 (la app crea sus recompensas y maneja sus canjes).
+- 118: hecha en v84 (la app crea sus recompensas y maneja sus canjes).
 
 ## Historial corto
 
@@ -214,4 +214,5 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - Flechas del 2.º renglón de la barra.
   - Respaldo de 7TV.
   - Puente a Streamer.bot.
-- **v83:** botón para volver a conectar Kick (con permisos que faltan), sección 🎯 Recompensas (Kick y Twitch, APIs oficiales), canjes pendientes con ✓ / ✕ en el feed y 🎯 en la barra, aviso oficial de canjes de Kick, arreglo de «devolver puntos» en Kick.
+- **v83:** widget de chat para OBS (`chat-obs.html`) y su editor Chat Studio (`chat-studio.html`, ⚙ → Chat → «Chat para OBS»).
+- **v84:** botón para volver a conectar Kick (con permisos que faltan), sección 🎯 Recompensas (Kick y Twitch, APIs oficiales), canjes pendientes con ✓ / ✕ en el feed y 🎯 en la barra, aviso oficial de canjes de Kick, arreglo de «devolver puntos» en Kick.
