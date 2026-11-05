@@ -103,6 +103,24 @@ const ids=p=>p.evaluate(()=>[...document.querySelectorAll('#chat .m')].map(d=>d.
   ok(!page.errs.length, 'sin errores en Chat Studio '+page.errs.join(' | '));
   await ctx.close(); }
 
+/* ===== 3. la app: ⚙ → Chat → «Chat para OBS» abre Chat Studio con tu clave ===== */
+{ const ctx=await b.newContext({viewport:{width:390,height:800}}); const S={};
+  await ablyRoutes(ctx, S);
+  await ctx.addInitScript(()=>{ window.WebSocket=function(){ return {readyState:0,send(){},close(){}}; }; window.WebSocket.OPEN=1; });
+  await ctx.route(/^https:\/\/(?!kick-feed-mariotq)/, r=>r.fulfill({status:404,headers:H,body:''}));
+  await ctx.route('https://kick-feed-mariotq.vercel.app/**', r=>r.fulfill({status:200,headers:H,contentType:'application/json',body:'{"ok":true}'}));
+  const page=await ctx.newPage(); const errs=[]; page.on('pageerror',e=>errs.push(String(e)));
+  await page.goto('file://'+RAIZ+'/index.html?keep=0&key=K3y'); await W(2500);
+  await page.evaluate(()=>document.getElementById('gear').click()); await W(400);
+  const row=await page.evaluate(()=>{ const r=[...document.querySelectorAll('#filters .chip')].find(x=>/Chat para OBS/.test(x.textContent)); return r ? r.textContent : ''; });
+  ok(/Chat Studio/.test(row), 'en ⚙ → Chat está «Chat para OBS»');
+  const pop=page.waitForEvent('popup',{timeout:5000}).catch(()=>null);
+  await page.evaluate(()=>[...document.querySelectorAll('#filters .chip')].find(x=>/Chat para OBS/.test(x.textContent)).click());
+  const pp=await pop;
+  ok(pp && /chat-studio\.html\?key=K3y$/.test(pp.url()), 'y abre Chat Studio con tu clave: '+(pp && pp.url().replace(/^.*\//,'')));
+  ok(!errs.length, 'sin errores en la app '+errs.join(' | '));
+  await ctx.close(); }
+
 await b.close(); srv.close();
 console.log(fails ? fails+' FALLAS' : 'TODO BIEN');
 process.exit(0);
