@@ -78,6 +78,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - `alertas.html`: Alertas Studio. `alertas-player.html`: el player (OBS e IRL Plus Chat). `alertas-comun.js`: código compartido de las alertas y la voz.
 - `subgoal.html`: letrero de la meta (`?estilo=anillo|barra|bloques`, `?pf=tw`, `?meta=10`).
 - `brb.html`: BRB Studio. `brb-player.html`: el player de clips en OBS.
+- `chat-obs.html`: widget de chat Kick + Twitch para OBS (sí sale al aire). Lee directo de Pusher e IRC como la guardia; al servidor solo le pide una vez `/api/chatobs`. Opciones por el link (`?tam=`, `?fade=`, `?max=`, `?prueba=1`…).
 
 **`api/` (funciones de Vercel):**
 
@@ -86,7 +87,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - `events`, `list`, `channel`, `categories`
   - `mod` (moderar en Kick), `chat` (escribir)
   - `obs`, `rules`, `modcmd`, `moments`, `goal`, `viewers`, `chatters`, `prefs`, `spam`
-  - `chatin` (guardia), `health`, `rt` (Ably), `realtime`
+  - `chatin` (guardia), `chatobs` (widget de chat, público), `health`, `rt` (Ably), `realtime`
   - `tw` (todo lo de Twitch con `?a=`: status, now, send, mod, chan, cats, poll, pred, ads, badges, clips…)
   - `login` / `callback` (Kick OAuth con PKCE), `twlogin` / `twcallback`, `status`, `debug` (con clave)
 - `alertas.js`: alertas y voz (`?a=cfg|f|fdel|fire|poll|save|skip|test|tts|up|object`).
@@ -171,7 +172,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
      - Twitch ya trae `status` en `channel.channel_points_custom_reward_redemption.add` (`unfulfilled` = pendiente), y existe `…redemption.update`.
      - En Kick, la guardia ve `RewardRedeemedEvent` por Pusher. Hay que revisar en la documentación oficial si ya existe un webhook de canjes (`channel.reward.redemption.updated`) para tenerlo con la app cerrada.
    - **Pasar mis recompensas viejas:** botón «Pasar esta recompensa a la app», que crea una igual desde la app (y así ya se puede aceptar, rechazar y devolver puntos) y me dice que borre la vieja en el panel.
-4. **Widget de chat para OBS** (`chat-obs.html`). Todo lo que necesita está en `CONTEXTO-WIDGET-CHAT.md`, en la raíz del repo.
+4. ~~**Widget de chat para OBS** (`chat-obs.html`)~~ **hecho.** Está en `main`: `chat-obs.html` + la ruta pública `/api/chatobs` (llave del chat de Kick e insignias de Twitch, con caché de 1 h). El encargo original quedó en `CONTEXTO-WIDGET-CHAT.md`. El editor (Chat Studio, `chat-studio.html`) está en la rama `claude/obs-chat-widget-uwi08w`, todavía sin subir a `main`.
 5. Cuando funcione la sesión de Kick, quitar de la app los textos que mencionan Streamer.bot como necesario. Las acciones que tenía allá y ya están en la app: timeout y contra ataque, solo emotes (Twitch), destaca mi mensaje, aviso al cambiar a la escena Offline, plan.
 
 ## Ideas numeradas (seguir la numeración)
@@ -187,7 +188,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - 114: hecha en parte en v82 (timeout, contra ataque, destacar, solo emotes).
 - 115: lista de VIP temporales en la app (días que quedan, quitar antes).
 - 116: aviso en Telegram cuando se acaba un VIP Rey.
-- 117: widget de chat para OBS.
+- 117: hecha (widget de chat para OBS, `chat-obs.html`).
 - 118: que la app cree sus propias recompensas (para aceptar, rechazar y devolver puntos).
 
 ## Historial corto
