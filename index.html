@@ -1340,6 +1340,18 @@
   .item .ub.conf{background:#ffb020;border-color:#ffb020;color:#0e0f13}
   .item .ub.busy{opacity:.5}
   .item .ub.done{border-color:transparent;color:#8dff5c;cursor:default;padding:3px 0}
+  /* v83 · 🎯 canjes pendientes: ✓ / ✕ en el feed, en Recompensas y el contador de la barra */
+  .item .ub.done.rj{color:#ff7a7a}
+  .rwb{display:flex;gap:6px;margin-top:4px;justify-content:flex-end}
+  .rwb button{border:0;border-radius:8px;padding:5px 11px;font:inherit;font-size:14px;font-weight:800;cursor:pointer;line-height:1.1}
+  .rwb button.ok{background:#34c759;color:#0e0f13}
+  .rwb button.no{background:#2a2f3a;color:#ff7a7a}
+  .rwb button.no.conf{background:#ff453a;color:#fff;font-size:12px}
+  .rwb button:disabled{opacity:.55}
+  #cpanel .rwpi .rwb{margin:0 0 0 8px;flex:none}
+  #cpanel i.rwc{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:middle;box-shadow:0 0 0 1px rgba(255,255,255,.25)}
+  #pRwp{color:#ffb020;border-color:rgba(255,176,32,.6);background:rgba(255,176,32,.12);cursor:pointer}
+  body.hb-rwp #pRwp,body.hm-rwp #pRwp,html.duo #pRwp{display:none!important}
   #cpanel a.op{color:inherit;text-decoration:none}
   #feed .item .rp{display:inline-block;margin:-4px 5px -4px 0;padding:3px 6px;border-radius:7px;border:1px solid transparent;
                    font:700 14px/14px "Inter","Segoe UI",Roboto,system-ui,sans-serif;cursor:pointer;color:var(--dim);white-space:nowrap;vertical-align:-1px}
@@ -1505,7 +1517,7 @@
 (function(){
   "use strict";
 
-  var VERSION = '82 · 5 nov 2026';   // se muestra abajo en el engrane ⚙
+  var VERSION = '83 · 5 nov 2026';   // se muestra abajo en el engrane ⚙
   // v74 · 🟣 Twitch (multistream): chat junto con Kick, a dónde escribir (K, T o los dos), subs/bits/raids, encuestas y predicciones, Hype Train, anuncios, metas aparte y aviso si se cae una
   // v73 · 🎞 BRB a la mano (botón y página), respuestas rápidas que salen sobre los clips unos segundos, y el lector no lee «Alexa», «Siri»…
   // v71 · 🎞 BRB en los Atajos: siguiente clip, pausa, sonido, mensaje y playlist de tu BRB Studio (brb.html)
@@ -2510,7 +2522,7 @@
       '</div>'+
       '<div class="right"><div class="t">'+(ev.al && !DUO && (typeof CC==='undefined' || CC.alRp!==false) && CFG.key && CFG.api ? '<span class="rp" title="Repetir la alerta">↻</span>' : '')+hhmm(ev.ts)+'</div>'+
         (ev.type==='signal' || ev.type==='poll' || ev.type==='chan' ? '<div class="x">✕</div>' : '')+
-        unbanBtn(ev)+
+        unbanBtn(ev)+rwpBtn(ev)+
       '</div>';
 
     // Moderación: al tocar se abre lo que escribió la persona.
@@ -2535,8 +2547,11 @@
         });
       };
     }
+    // v83: ✓ aceptar / ✕ rechazar un canje pendiente (rechazar pide otro toque)
+    var $rb=el.querySelector('.rwb');
+    if ($rb) Array.prototype.forEach.call($rb.querySelectorAll('button'), function(b){ b.onclick=function(e){ e.stopPropagation(); rwBtnTap(b, ev.rwp); }; });
     // v65: deshacer el timeout o ban que dio un mod (pide otro toque)
-    var $ub=el.querySelector('.ub');
+    var $ub=el.querySelector('.ub:not(.done)');
     if ($ub && !ev.unban.done){
       var ubT=0;
       $ub.onclick=function(e){
@@ -2687,6 +2702,7 @@
         if (o.msg && !prev.msg) prev.msg=o.msg;
         if (o.al && !prev.al) prev.al=o.al;
         if (o.unban && o.unban.id && !(prev.unban && prev.unban.id)) prev.unban=o.unban;
+        if (o.rwp && o.rwp.id && !(prev.rwp && prev.rwp.id)) prev.rwp=o.rwp;     // v83
         saveLog(true); refreshEl(prev);
         return null;
       }
@@ -2723,6 +2739,7 @@
     if (o.ic) ev.ic=o.ic;
     if (o.fold) ev.fold=1;
     if (o.unban && o.unban.id) ev.unban=o.unban;
+    if (o.rwp && o.rwp.id) ev.rwp=o.rwp;                 // v83: canje pendiente (con ✓ / ✕)
     if (o.al) ev.al=o.al;                                // v76: con esto se puede repetir su alerta
     if (o.al && o.al.pf==='kick' && (o.al.k==='raid' || o.al.k==='tip' || (o.al.k==='resub' && o.fireAl)) && Date.now()-ts < 90000 && !DUO && CFG.key && CFG.api)
       apiPost('/api/alertas?a=fire', {al:o.al});
@@ -4104,6 +4121,9 @@
         if (PL.kind==='moms') setTimeout(reloadList, 250);
         return addEvent({type:'chan', ic:'📍', html:(d.src==='app' && lc(u)===ME ? 'Marcaste un momento' : nm(u)+' marcó un momento')+(d.t!=null ? ' en el <b>'+fmtUptime(d.t,0)+'</b>' : ''),
                          sub: d.t!=null ? null : 'Fuera de vivo', msg: d.note ? esc(d.note) : null, ck:'mom:'+e.id, src:'api', ts:ts});
+      case 'rwpend':                                   // v83 · 🎯 canje de Kick pendiente: con ✓ / ✕
+        return addEvent({type:'reward', ic:'⏳', html:nm(u)+' canjeó <b>'+esc(d.reward||'')+'</b>', sub:nfmt(d.cost)+' puntos · pendiente', msg:d.input ? esc(d.input) : null,
+                         ck:'rwp:'+d.rid, src:'api', ts:ts, rwp:{pf:'kick', id:String(d.rid||''), can:!!d.can}});
       case 'sb':                                       // v82 · 🤖 Streamer.bot no pudo
         return addEvent({type:'mod', ic:'🤖', html:'Streamer.bot: <b>'+esc(d.act||'acción')+'</b>'+(d.user ? ' · '+nm(d.user) : ''), sub:'⚠ '+esc(d.error||'No se pudo'), ck:'sb:'+e.id, src:'api', ts:ts});
       case 'rule': {
@@ -4205,6 +4225,7 @@
     return fetch(url,{cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
       if (!j || !j.ok) throw new Error((j&&j.error)||'respuesta rara');
       if (typeof j.pat==='number') prefsCheck(j.pat);   // ¿cambiaste algo en el otro celular?
+      if (j.rwa && typeof RW!=='undefined' && RW && j.rwa!==RW.rwa){ RW.rwa=j.rwa; rwLoadSoon(); }   // v83: ¿cambiaron los canjes pendientes?
       if (j.rat && typeof rlCfg==='function' && (rlCfg().at||0) < j.rat && !RL.busy) rlLoad(true);   // ¿cambiaron tus reglas en el otro celular?
       var got=0;
       (j.events||[]).forEach(function(e){
@@ -4283,6 +4304,7 @@
       if (typeof d.on==='boolean' && OB && OB.st && OB.st.stream){ OB.st.stream.on=d.on; }
       if (d.scene) sceneSeen(d.scene); else scenePaint();
     }
+    else if (name==='rw'){ if (typeof rwLoadSoon==='function') rwLoadSoon(); }   // v83: cambió la lista de canjes pendientes
     else if (name==='sync'){
       if (typeof d.pat==='number') prefsCheck(d.pat);
       if (d.rat && typeof rlCfg==='function' && (rlCfg().at||0) < d.rat && !RL.busy) rlLoad(true);
@@ -5902,7 +5924,7 @@
   $nav.querySelector('.ok').onclick=function(){ document.body.classList.remove('navadj'); if (navBackCp) openCpanel(); };
   function openCpanel(){ $filt.classList.remove('open'); closeList(); if (graphOpen) closeGraph(); closeTitle(); vgClose(); cpModes(); usFromOpts=false; paintCpanel(); $cpanel.classList.add('show'); document.body.classList.add('cpopen'); cpAnim(); }
   // el panel completo tiene varias páginas: chat, usuarios, antispam, barra y OBS
-  function cpModes(){ $cpanel.classList.remove('spam','users','barm','obsm','tilem','subp','evm','mixm','qrm','cmdm','rulem','landm','ttsm','bicm','brbm','pfm','twm','alm','dsm'); document.body.classList.remove('barcfg'); obsPageStop(); }
+  function cpModes(){ $cpanel.classList.remove('spam','users','barm','obsm','tilem','subp','evm','mixm','qrm','cmdm','rulem','landm','ttsm','bicm','brbm','pfm','twm','alm','dsm','rwm'); document.body.classList.remove('barcfg'); obsPageStop(); }
   function closeCpanel(){ cpModes(); $cpanel.classList.remove('show'); document.body.classList.remove('cpopen'); cpFrom=false; usFromOpts=false; if (typeof fabPaint==='function' && $fab) fabPaint(); }
   // en el encabezado: "‹" regresa a Ajustes; lo demás (o Listo) cierra todo
   function cpHeadTap(ev){ var back=cpFrom && ev && ev.target && ev.target.closest && ev.target.closest('.bk'); closeCpanel(); if (back){ $filt.classList.add('open'); setPaint(); } }
@@ -6033,6 +6055,7 @@
     ['bits','💎','Bits de Twitch','Sale cuando estás en vivo en Twitch · tócalo para ver quién mandó','pBits'],
     ['ad','📺','Anuncio de Twitch','Sale solo mientras corre un anuncio, con la cuenta regresiva','pAd'],
     ['twm','🟣','Twitch','Encuestas, predicciones y anuncios de Twitch','twBtn'],
+    ['rwp','🎯','Canjes pendientes','Sale solo cuando hay canjes por aceptar o rechazar · tócalo para verlos','pRwp'],   // v83
     ['bela','📶','Bitrate','Siempre hasta la derecha · solo sale si tu enlace trae Belabox','pBela']];
   var BSIZE={n:['Normal',1], g:['Grande',1.2], xg:['Muy grande',1.4]};
   // v70: el orden (▲ ▼) y lo que va en los puntitos ⋯. El bitrate no se mueve: siempre hasta la derecha.
@@ -7359,8 +7382,8 @@
                                     ck:'twbits:'+lc(u)+':'+d.amount, src:'api', ts:ts, al:AL('bits','tw',u,d.amount,twcPlain(d.message))});
       case 'raid': return addEvent({type:'host', ic:'🚀', html:P+nm(u)+' te hizo raid', sub:plural(d.viewers||0,'viewer','viewers')+' · Twitch', ck:'twraid:'+lc(u), src:'api', ts:ts, al:AL('raid','tw',u,d.viewers||0)});
       case 'follow': return addEvent({type:'follow', html:P+nm(u)+' te siguió', sub:'Twitch', ck:'twfollow:'+lc(u), src:'api', ts:ts, al:AL('follow','tw',u,0)});
-      case 'reward': return addEvent({type:'reward', html:P+nm(u)+' canjeó <b>'+esc(d.reward||'')+'</b>', sub:nfmt(d.cost)+' puntos · Twitch', msg:d.input ? esc(d.input) : null,
-                                      ck:'twrw:'+lc(u)+':'+lc(d.reward), src:'api', ts:ts});
+      case 'reward': return addEvent({type:'reward', ic:d.pend ? '⏳' : null, html:P+nm(u)+' canjeó <b>'+esc(d.reward||'')+'</b>', sub:nfmt(d.cost)+' puntos · Twitch'+(d.pend ? ' · pendiente' : ''), msg:d.input ? esc(d.input) : null,
+                                      ck:'twrw:'+lc(u)+':'+lc(d.reward), src:'api', ts:ts, rwp:d.pend && d.rid ? {pf:'tw', id:String(d.rid), can:!!d.can} : null});   // v83: pendiente, con ✓ / ✕
       case 'ban': {
         if (d.spam) return null;                                  // es el timeout del antispam (ya salió arriba)
         var exp=parseFuture(d.expires_at), mins=exp ? Math.max(1,(exp-ts)/60000) : 0;
@@ -7646,12 +7669,12 @@
     var cp=document.getElementById('alCp'); if (cp) cp.onclick=function(){ (navigator.clipboard ? navigator.clipboard.writeText(pl) : Promise.reject()).then(function(){ apToast('📋 Link copiado'); }, function(){ apToast('Mantén presionado el link para copiarlo'); }); };
     document.getElementById('cpHead').onclick=cpHeadTap;
   }
-  function openPfPage(){ cpOpen('pfm'); pfPagePaint(); twStatus().then(pfPagePaint); }
+  function openPfPage(){ cpOpen('pfm'); pfPagePaint(); twStatus().then(pfPagePaint); kickStatus().then(pfPagePaint); }
   function pfPagePaint(){
     if (!$cpanel.classList.contains('pfm')) return;
     var s=TW.st, me=s && s.me, bot=s && s.bot, link=function(as){ return CFG.api+'/api/twlogin?key='+encodeURIComponent(CFG.key)+(as?'&as='+as:''); };
     $cpanel.innerHTML=cpHeadHtml('Plataformas')+'<div class="cpb">'+
-      '<div class="lb2" style="margin-top:14px">'+pfChip('kick')+' Kick</div><div class="grp"><div class="op fixed" style="opacity:1"><span>Conectado: <b>'+esc(CFG.slug)+'</b><small>Subs, Kicks, chat, moderación y todo lo de siempre</small></span></div></div>'+
+      '<div class="lb2" style="margin-top:14px">'+pfChip('kick')+' Kick</div><div class="grp">'+kickPfHtml()+'</div>'+
       '<div class="lb2">'+pfChip('tw')+' Twitch</div><div class="grp">'+
         opRow('tw','Usar Twitch en esta app','Su chat junto con el de Kick (con su marquita T) y sus avisos en el feed', CC.tw!==false)+
         (s && s.configured===false ? '<div class="nt" style="margin:0 12px 10px">Faltan las claves de Twitch en Vercel.</div>' :
@@ -7666,10 +7689,186 @@
     var tg=$cpanel.querySelector('.op[data-k="tw"]'); if (tg) tg.onclick=function(){ CC.tw=CC.tw===false; saveCC(); if (CC.tw!==false) twcStart(); else twcStop(); chatRepaint(); pfPagePaint(); };
     var go=document.getElementById('pfTwGo'); if (go) go.onclick=function(){ window.open(link(''), '_blank'); apToast('Al terminar en Twitch, regresa aquí'); setTimeout(function(){ twStatus().then(pfPagePaint); }, 15000); };
     var bg=document.getElementById('pfBotGo'); if (bg) bg.onclick=function(){ window.open(link('bot'), '_blank'); apToast('Entra con la cuenta de tu bot en Twitch'); };
+    var kg=document.getElementById('pfKGo'); if (kg) kg.onclick=function(){ window.open(CFG.api+'/api/login', '_blank'); apToast('Al terminar en Kick, regresa aquí'); setTimeout(function(){ kickStatus().then(pfPagePaint); }, 15000); };   // v83
     Array.prototype.forEach.call($cpanel.querySelectorAll('.seg[data-k] button'), function(b){ b.onclick=function(){
       var k=b.parentNode.getAttribute('data-k'); CC[k]=b.getAttribute('data-v'); saveCC(); chatToPaint(); pfPagePaint(); }; });
   }
 
+  /* ============================================================
+     v83 · 🔑 KICK en ⚙ → Plataformas: qué permisos le faltan y el botón para volver a conectar
+     ============================================================ */
+  var KST={me:null, ok:false, err:''};
+  function kickStatus(){
+    if (!CFG.api || !CFG.key || DUO) return Promise.resolve();
+    return apiPost('/api/kick', {a:'status'}).then(function(j){ if (j && j.ok){ KST.me=j.me; KST.ok=true; KST.err=''; } else KST.err=(j && j.error) || ''; });
+  }
+  function kickPfHtml(){
+    var me=KST.me, miss=(me && me.missing) || [];
+    if (!KST.ok) return '<div class="op lk" id="pfKGo"><span>Conectado: <b>'+esc(CFG.slug)+'</b><small>'+(KST.err ? '⚠ '+esc(KST.err)+' · tócalo para volver a conectar' : 'Revisando permisos…')+'</small></span><span class="ch">›</span></div>';
+    var h='<div class="op lk" id="pfKGo"><span>'+(me ? 'Conectado: <b>'+esc(me.name||CFG.slug)+'</b>' : '<b>Conectar mi cuenta de Kick</b>')+'<small>'+
+      (!me ? 'Se abre la página oficial de Kick: autorizas y listo' : miss.length ? '⚠ Faltan '+miss.length+' permisos: tócalo para volver a conectar' : 'Volver a conectar Kick · tiene todos los permisos')+'</small></span><span class="ch">›</span></div>';
+    if (me && miss.length) h+='<div class="nt" style="margin:0 12px 11px">Le falta: <b>'+miss.map(function(x){ return esc(x.t); }).join('</b>, <b>')+'</b>.'+
+      (me.rw ? ' Sin los de recompensas no se ven ni se manejan tus recompensas de Kick (⚙ → Recompensas).' : '')+
+      ' Si después de autorizar siguen faltando, palomea esos permisos en tu app de Kick (kick.com → Ajustes → Developer) y vuelve a conectar.</div>';
+    return h;
+  }
+
+  /* ============================================================
+     v83 · 🎯 RECOMPENSAS (⚙ → Recompensas) y CANJES PENDIENTES
+     Tus recompensas de Kick y de Twitch: verlas, crearlas, cambiarlas, pausarlas,
+     prenderlas o apagarlas y borrarlas. Kick y Twitch solo dejan cambiar las que
+     creó la app (y aceptar o rechazar sus canjes): las demás salen con 🔒 y se
+     pueden «pasar a la app». Los canjes pendientes salen en el feed con ✓ / ✕ y
+     en la barra (🎯 y cuántos). Se quitan solos aunque los resuelvas en Kick o Twitch.
+     ============================================================ */
+  var RW={list:[], err:{}, pend:[], ok:false, busy:false, edit:null, rwa:0, loadT:0, reqAt:0};
+  function rwpCount(){ return RW.pend.filter(function(x){ return x.can; }).length; }
+  function rwPendLoad(){
+    if (!CFG.api || !CFG.key || DUO) return Promise.resolve();
+    var at=Date.now();
+    return apiPost('/api/rewards', {a:'pend'}).then(function(j){ if (j && j.ok){ RW.pend=j.pend||[]; RW.ok=true; RW.reqAt=at; rwSync(); } });
+  }
+  function rwLoadSoon(){ clearTimeout(RW.loadT); RW.loadT=setTimeout(function(){ if ($cpanel.classList.contains('rwm') && !RW.edit) rwListLoad(); else rwPendLoad(); }, 700); }
+  function rwListLoad(){
+    if (!CFG.api || !CFG.key || DUO) return Promise.resolve();
+    var at=Date.now(); RW.busy=true; rwPaint();
+    return apiPost('/api/rewards', {a:'list'}).then(function(j){
+      RW.busy=false;
+      if (j && j.ok){ RW.list=j.list||[]; RW.err=j.err||{}; RW.pend=j.pend||[]; RW.ok=true; RW.reqAt=at; rwSync(); }
+      else RW.err={all:(j && j.error) || 'Tu servidor no contestó'};
+      rwPaint();
+    });
+  }
+  // el feed y la barra según la lista de pendientes (lo que ya no está, se resolvió en otro lado)
+  function rwSync(){
+    var ids={}, ch=false; RW.pend.forEach(function(x){ ids[x.pf+':'+x.id]=1; });
+    LOG.forEach(function(e){ if (e.rwp && !e.rwp.done && !ids[e.rwp.pf+':'+e.rwp.id] && e.ts < RW.reqAt-15000){ e.rwp.done='gone'; ch=true; refreshEl(e); } });
+    if (ch) saveLog(true);
+    rwPillPaint();
+    if ($cpanel.classList.contains('rwm') && !RW.edit) rwPaint();
+  }
+  function rwpBtn(ev){
+    var r=ev.rwp; if (!r || !r.id || DUO) return '';
+    if (r.done) return '<div class="ub done'+(r.done==='rejected' ? ' rj' : '')+'">'+(r.done==='accepted' ? '✓ Aceptado' : r.done==='rejected' ? '✕ Rechazado' : '✓ Ya se resolvió')+'</div>';
+    if (!r.can) return '<div class="ub done" title="Esta recompensa no la creó la app: resuélvela en '+(r.pf==='tw' ? 'Twitch' : 'Kick')+'">🔒 pendiente</div>';
+    return '<div class="rwb"><button class="ok" data-rw="1" title="Aceptar">✓</button><button class="no" data-rw="0" title="Rechazar y devolver los puntos">✕</button></div>';
+  }
+  function rwDone(pf, id, st){
+    RW.pend=RW.pend.filter(function(x){ return !(x.pf===pf && x.id===id); });
+    var ch=false;
+    LOG.forEach(function(e){ if (e.rwp && e.rwp.pf===pf && e.rwp.id===id && !e.rwp.done){ e.rwp.done=st||'gone'; ch=true; refreshEl(e); } });
+    if (ch) saveLog(true);
+    rwPillPaint(); if ($cpanel.classList.contains('rwm') && !RW.edit) rwPaint();
+  }
+  function rwBtnTap(b, r){
+    if (!r || b.disabled) return;
+    var ok=b.getAttribute('data-rw')==='1';
+    var go=function(){
+      b.disabled=true; b.textContent='…';
+      apiPost('/api/rewards', {a:'res', pf:r.pf, id:r.id, ok:ok}).then(function(j){
+        if (j && j.ok){ rwDone(r.pf, r.id, j.gone ? 'gone' : ok ? 'accepted' : 'rejected'); apToast(j.gone ? '✓ Ese canje ya se había resuelto' : ok ? '✓ Canje aceptado' : '✕ Canje rechazado: se le devolvieron sus puntos'); }
+        else { b.disabled=false; b.textContent=ok ? '✓' : '✕'; apToast('⚠ '+((j && j.error) || 'No se pudo'), true); }
+      });
+    };
+    if (ok) go(); else confirmTap1(b, '¿Rechazar?', go);
+  }
+  // 🎯 en la barra: cuántos canjes puedes aceptar o rechazar
+  var $rwpp=document.createElement('span'); $rwpp.className='pill'; $rwpp.id='pRwp'; $rwpp.title='Canjes pendientes'; $rwpp.style.display='none';
+  (function(){ var kc=document.getElementById('pKicks'), st=kc && kc.parentNode; if (st) st.insertBefore($rwpp, kc.nextSibling);
+    if (typeof barOrderApply==='function' && typeof BARC!=='undefined' && BARC){ barOrderApply(); barKey=''; } })();
+  $rwpp.onclick=function(){ cpFrom=false; openRwPage(); };
+  function rwPillPaint(){
+    var n=rwpCount(), vis=n && !DUO ? '' : 'none', t='🎯 '+n;
+    if ($rwpp.textContent!==t) $rwpp.textContent=t;
+    if ($rwpp.style.display!==vis){ $rwpp.style.display=vis; barKey=''; if (typeof morePaint==='function') morePaint(); if (typeof fitBar==='function') fitBar(); }
+  }
+  function openRwPage(){ RW.edit=null; cpOpen('rwm'); rwPaint(); rwListLoad(); }
+  function rwState(x){ return !x.on ? 'Apagada' : x.paused ? 'Pausada' : 'Prendida'; }
+  function rwPaint(){
+    if (!$cpanel.classList.contains('rwm')) return;
+    if (RW.edit) return rwFormPaint();
+    var pend=RW.pend.slice().sort(function(a, b){ return a.at-b.at; });
+    var h=cpHeadHtml('🎯 Recompensas')+'<div class="cpb">';
+    if (RW.err.all) h+='<div class="nt" style="margin-top:14px">⚠ '+esc(RW.err.all)+'</div>';
+    h+='<div class="lb2" style="margin-top:14px">⏳ Canjes pendientes'+(pend.length ? ' ('+pend.length+')' : '')+'</div><div class="grp">'+
+      (pend.length ? pend.map(function(x){ var k=esc(x.pf+'|'+x.id);
+        return '<div class="op fixed rwpi" style="opacity:1"><span>'+pfChip(x.pf)+' <b>'+esc(x.u||'Alguien')+'</b> · '+esc(x.rw||'')+'<small>'+(x.in ? '«'+esc(x.in)+'» · ' : '')+nfmt(x.c)+' puntos · '+hhmm(x.at)+'</small></span>'+
+          (x.can ? '<span class="rwb"><button class="ok" data-rp="'+k+'" data-rw="1">✓</button><button class="no" data-rp="'+k+'" data-rw="0">✕</button></span>' : '<span class="val">🔒 en '+(x.pf==='tw' ? 'Twitch' : 'Kick')+'</span>')+'</div>'; }).join('') +
+        '<div class="nt" style="margin:0 12px 11px">✓ acepta el canje. ✕ lo rechaza y le devuelve sus puntos. Los que tienen 🔒 son de recompensas que no creó la app: esos se resuelven en Kick o en Twitch.</div>'
+      : '<div class="nt" style="margin:10px 12px">'+(RW.busy && !RW.ok ? 'Cargando…' : 'No hay canjes pendientes. Salen aquí, en el feed y en la barra (🎯) cuando una recompensa no «se acepta sola».')+'</div>')+'</div>';
+    ['kick', 'tw'].forEach(function(pf){
+      if (pf==='tw' && !twConnected() && !RW.list.some(function(x){ return x.pf==='tw'; })) return;
+      var L=RW.list.filter(function(x){ return x.pf===pf; }), P=pf==='tw' ? 'Twitch' : 'Kick';
+      h+='<div class="lb2">'+pfChip(pf)+' '+P+'</div><div class="grp">';
+      if (RW.err[pf]) h+='<div class="nt" style="margin:10px 12px">⚠ '+esc(RW.err[pf])+'</div>';
+      else if (!RW.ok && RW.busy) h+='<div class="nt" style="margin:10px 12px">Cargando…</div>';
+      h+=L.map(function(x){ return '<div class="op lk" data-rwe="'+esc(pf+'|'+x.id)+'"><span>'+(x.can ? '' : '🔒 ')+'<i class="rwc" style="background:'+esc(x.color||(pf==='tw' ? '#9146FF' : '#53FC18'))+'"></i>'+esc(x.t)+
+        '<small>'+nfmt(x.c)+' puntos · '+rwState(x)+(x.in ? ' · pide texto' : '')+(x.skip ? ' · se acepta sola' : ' · queda pendiente')+'</small></span><span class="ch">›</span></div>'; }).join('');
+      if (!RW.err[pf]) h+='<div class="op lk" data-rwn="'+pf+'"><span><b>+ Nueva recompensa en '+P+'</b><small>La crea la app: así la cambias y manejas sus canjes desde aquí</small></span><span class="ch">›</span></div>';
+      h+='</div>';
+    });
+    h+='<div class="nt">🔒 = la creaste en el panel de Kick o de Twitch (o con otra app, como Streamer.bot). Kick y Twitch no dejan que otra app la cambie ni acepte o rechace sus canjes. Tócala para «pasarla a la app».</div></div>';
+    $cpanel.innerHTML=h;
+    document.getElementById('cpHead').onclick=cpHeadTap;
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-rp]'), function(b){
+      var k=b.getAttribute('data-rp').split('|'), x=RW.pend.filter(function(p){ return p.pf===k[0] && p.id===k[1]; })[0];
+      b.onclick=function(e){ e.stopPropagation(); rwBtnTap(b, x ? {pf:x.pf, id:x.id} : null); }; });
+    Array.prototype.forEach.call($cpanel.querySelectorAll('.op[data-rwe]'), function(o){ o.onclick=function(){ var k=o.getAttribute('data-rwe').split('|'); RW.edit={pf:k[0], id:k.slice(1).join('|')}; rwPaint(); }; });
+    Array.prototype.forEach.call($cpanel.querySelectorAll('.op[data-rwn]'), function(o){ o.onclick=function(){ RW.edit={pf:o.getAttribute('data-rwn'), id:''}; rwPaint(); }; });
+  }
+  function rwFormPaint(){
+    var e=RW.edit, nw=!e.id, x=nw ? null : RW.list.filter(function(r){ return r.pf===e.pf && r.id===e.id; })[0];
+    if (!nw && !x){ RW.edit=null; return rwPaint(); }
+    var P=e.pf==='tw' ? 'Twitch' : 'Kick', mx=e.pf==='tw' ? 45 : 50;
+    var f=e.f || (e.f = x ? {t:x.t, c:x.c, desc:x.desc||'', color:x.color||(e.pf==='tw' ? '#9146FF' : '#53FC18'), in:!!x.in, skip:!!x.skip, on:!!x.on, paused:!!x.paused}
+                          : {t:'', c:'', desc:'', color:e.pf==='tw' ? '#9146FF' : '#53FC18', in:false, skip:true, on:true, paused:false});
+    var h=cpHeadHtml(pfChip(e.pf)+' '+(nw ? 'Nueva recompensa' : 'Recompensa'))+'<div class="cpb">';
+    if (x && !x.can){
+      h+='<div class="grp" style="margin-top:14px"><div class="op fixed" style="opacity:1"><span>🔒 <b>'+esc(x.t)+'</b><small>'+nfmt(x.c)+' puntos · '+rwState(x)+(x.in ? ' · pide texto' : '')+'</small></span></div>'+
+        '<div class="nt" style="margin:0 12px 11px">Esta la creaste en '+P+' (o con otra app). '+P+' no deja que la app la cambie ni que acepte o rechace sus canjes (tampoco devolver los puntos).</div></div>'+
+        '<button class="bigb" id="rwCopy">Pasar esta recompensa a la app</button>'+
+        '<div class="nt">Se crea una igual desde la app, <b>apagada</b> y con «(app)» en el nombre, para que no salgan dos. Luego: 1) borra la vieja en '+P+'. 2) Aquí abre la nueva, quítale «(app)» del nombre y préndela. Tus reglas la reconocen por su nombre.</div>'+
+        '<button class="bigb sec" id="rwBack">Regresar</button></div>';
+    } else {
+      h+='<div class="grp tf" style="margin-top:14px">'+
+        '<div class="fld"><label>Nombre (hasta '+mx+' letras)</label><input id="rwT" maxlength="'+mx+'" value="'+esc(f.t)+'" placeholder="Ej. Timeout a alguien"></div>'+
+        '<div class="fld"><label>Cuesta (puntos)</label><input id="rwC" type="number" inputmode="numeric" min="1" value="'+esc(f.c)+'" placeholder="Ej. 5000"></div>'+
+        '<div class="fld"><label>Descripción (opcional)</label><input id="rwD" maxlength="200" value="'+esc(f.desc)+'" placeholder="Lo que ven al canjearla"></div>'+
+        '<div class="fld"><label>Color</label><input id="rwK" type="color" value="'+esc(f.color)+'" style="height:42px;padding:3px"></div>'+
+        opRow('in', 'Pide que escriban algo', 'Por ejemplo, a quién mandarle el timeout', f.in)+
+        opRow('skip', 'Se acepta sola', 'Apagado: cada canje queda pendiente hasta que lo aceptes (✓) o rechaces (✕)', f.skip)+
+        opRow('on', 'Prendida', 'Apagada: no sale en tu canal', f.on)+
+        (nw ? '' : opRow('paused', 'Pausada', 'Se ve, pero nadie la puede canjear por ahora', f.paused))+
+        '</div><button class="bigb" id="rwSave">'+(nw ? 'Crear en '+P : 'Guardar')+'</button>'+
+        (nw ? '' : '<button class="bigb dng" id="rwDel">Borrar recompensa</button>')+
+        '<button class="bigb sec" id="rwBack">Cancelar</button>'+
+        (x && / \(app\)$/.test(x.t) ? '<div class="nt">Si ya borraste la vieja en '+P+', quítale «(app)» al nombre y préndela: tus reglas la reconocen por su nombre.</div>' : '<div class="nt">Tus reglas («Canjean una recompensa») la reconocen por su nombre.</div>')+'</div>';
+    }
+    $cpanel.innerHTML=h;
+    document.getElementById('cpHead').onclick=cpHeadTap;
+    var back=function(){ RW.edit=null; rwPaint(); };
+    document.getElementById('rwBack').onclick=back;
+    var cp=document.getElementById('rwCopy');
+    if (cp) cp.onclick=function(){ cp.disabled=true; cp.textContent='Creando…';
+      apiPost('/api/rewards', {a:'copy', pf:e.pf, id:e.id}).then(function(j){
+        if (j && j.ok){ apToast('✓ Quedó «'+((j.item && j.item.t)||'')+'» (apagada). Ahora borra la vieja en '+P+'.'); RW.edit=null; rwListLoad(); }
+        else { cp.disabled=false; cp.textContent='Pasar esta recompensa a la app'; apToast('⚠ '+((j && j.error) || 'No se pudo'), true); } }); };
+    if (x && !x.can) return;
+    [['rwT','t'],['rwC','c'],['rwD','desc'],['rwK','color']].forEach(function(p){ var el=document.getElementById(p[0]); if (el) el.oninput=function(){ f[p[1]]=el.value; }; });
+    Array.prototype.forEach.call($cpanel.querySelectorAll('.op[data-k]'), function(o){ o.onclick=function(){ var k=o.getAttribute('data-k'); f[k]=!f[k]; var sw=o.querySelector('.sw'); if (sw) sw.classList.toggle('on', f[k]); }; });
+    document.getElementById('rwSave').onclick=function(){ var b=this;
+      if (!String(f.t||'').trim()){ apToast('Ponle nombre a la recompensa', true); return; }
+      if (!(Number(f.c)>=1)){ apToast('Ponle cuántos puntos cuesta (1 o más)', true); return; }
+      var body={t:f.t, c:Number(f.c), desc:f.desc, color:f.color, in:f.in, skip:f.skip, on:f.on}; if (!nw) body.paused=f.paused;
+      b.disabled=true; b.textContent='Guardando…';
+      apiPost('/api/rewards', {a:'save', pf:e.pf, id:e.id||'', f:body}).then(function(j){
+        if (j && j.ok){ apToast(nw ? '✓ Recompensa creada en '+P : '✓ Guardada'); RW.edit=null; rwListLoad(); }
+        else { b.disabled=false; b.textContent=nw ? 'Crear en '+P : 'Guardar'; apToast('⚠ '+((j && j.error) || 'No se pudo'), true); } }); };
+    var del=document.getElementById('rwDel');
+    if (del) del.onclick=function(){ confirmTap1(del, 'Toca otra vez para borrarla', function(){ del.disabled=true;
+      apiPost('/api/rewards', {a:'del', pf:e.pf, id:e.id}).then(function(j){
+        if (j && j.ok){ apToast('🗑 Recompensa borrada'); RW.edit=null; rwListLoad(); } else { del.disabled=false; del.textContent='Borrar recompensa'; apToast('⚠ '+((j && j.error) || 'No se pudo'), true); } }); }); };
+  }
   /* --- 🟣 Twitch: encuestas, predicciones y anuncios (botón 🟣 de la barra o ⋯) --- */
   var TWP={sched:null, busy:false, err:''};
   function openTwPage(){ cpOpen('twm'); twPagePaint(); twAdsLoad(); }
@@ -9187,6 +9386,7 @@
     moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>',
     alert:'<path d="M4 10v4h3l5 4V6L7 10z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.3 6a8.5 8.5 0 0 1 0 12"/><path d="M20.5 3.5l-1.5 1.5"/>',
     speaker:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+    gift:'<rect x="4" y="10.5" width="16" height="9.5" rx="1.5"/><rect x="3" y="7" width="18" height="3.5" rx="1"/><path d="M12 7v13"/><path d="M12 7C10.6 4.2 7.2 4 7.2 5.8 7.2 7 9.5 7 12 7zm0 0c1.4-2.8 4.8-3 4.8-1.2C16.8 7 14.5 7 12 7z"/>',   // v83: Recompensas
     layers:'<path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12.5l8.5 4.5 8.5-4.5"/><path d="M3.5 16.5l8.5 4.5 8.5-4.5"/>'
   };
   function icoHtml(k, bg){ return '<i class="ico" style="--ib:'+bg+'"><svg viewBox="0 0 24 24" aria-hidden="true">'+(ICO[k]||'')+'</svg></i>'; }
@@ -9200,6 +9400,7 @@
   var $hero=document.createElement('div'); $hero.className='hero';
   var $pfRow=document.createElement('button');      // v74: ⚙ → Plataformas (Kick y Twitch)
   var $alRow=document.createElement('button');      // v76: ⚙ → Alertas (las tuyas, con su Studio)
+  var $rwRow=document.createElement('button');      // v83: ⚙ → Recompensas (Kick y Twitch, con sus canjes pendientes)
   var $mixRow=document.createElement('button'), $evRow=document.createElement('button'), $navRow=document.createElement('button'),
       $syNav=document.createElement('button'), $srvRow=document.createElement('button'), $chatRow=document.createElement('button'), $usRow=document.createElement('button'),
       $cmdRow=document.createElement('button'), $qrRow=document.createElement('button'), $ruleRow=document.createElement('button'), $landRow=document.createElement('button'), $oledRow=document.createElement('button'), $ttsRow=document.createElement('button'), $momRow=document.createElement('button'), $fsRow=document.createElement('button');
@@ -9236,6 +9437,7 @@
     srow($pfRow, {ic:'layers', bg:'#9146ff', t:'Plataformas', d:'Kick y Twitch', val:twConnected() ? (CC.tw===false ? 'Solo Kick' : 'Kick + Twitch') : 'Solo Kick', vc:twConnected() && CC.tw!==false ? 'ok' : '', nav:1});
     srow(tb, {ic:'title', bg:'#ff9f0a', t:'Título y categoría', nav:1});
     srow($alRow, {ic:'alert', bg:'#ff375f', t:'Alertas', d:'Las tuyas: sonidos, imágenes y repetir', nav:1});
+    var rwn=rwpCount(); srow($rwRow, {ic:'gift', bg:'#ff9500', t:'Recompensas', d:'Kick y Twitch · canjes pendientes', val:rwn ? rwn+' pendiente'+(rwn>1?'s':'') : '', vc:rwn ? 'bad' : '', nav:1});
     srow($apRow, {ic:'grid', bg:'#34c759', t:'Atajos', val:String((CC.tiles||[]).length||''), nav:1});
     srow($obsRow, {ic:'obs', bg:'#5e5ce6', t:'OBS', val:obsVal, vc:obsVal==='Conectado'?'ok':'', nav:1});
     var mcc=MC.cfg ? mcCfg() : null; srow($cmdRow, {ic:'cmd', bg:'#ff6b35', t:'Comandos para mods', val:mcc ? (!mcc.cmds.length ? 'Ninguno' : mcc.on!==false ? String(mcc.cmds.length) : 'Apagados') : '', vc:mcc && mcc.cmds.length && mcc.on!==false ? 'ok' : '', nav:1});
@@ -9262,6 +9464,7 @@
     tb.onclick=function(){ openTitle(); tpFrom=true; $tp.classList.add('from'); };
     $pfRow.onclick=function(){ cpFrom=true; openPfPage(); };
     $alRow.onclick=function(){ cpFrom=true; openAlPage(); };
+    $rwRow.onclick=function(){ cpFrom=true; openRwPage(); };
     cb.onclick=function(){ cpFrom=true; openCpanel(); };
     $usRow.onclick=function(){ cpFrom=true; openUsers(false); };
     sb.onclick=function(){ cpFrom=true; openSpam(); };
@@ -9288,7 +9491,7 @@
     ver.className='chip wide ver'; ver.style.cssText='';
     var hd=document.createElement('div'); hd.className='shd'; hd.innerHTML='<b>Ajustes</b><span class="x">Listo</span>';
     hd.querySelector('.x').onclick=function(){ $filt.classList.remove('open'); };
-    var kids=[hd, $hero, sec('En vivo'), grp([$pfRow, tb, $alRow, $apRow, $obsRow, $cmdRow, $ruleRow]), sec('Chat'), grp([$chatRow, cb, $qrRow, $ttsRow, $mixRow, $usRow, sb]),
+    var kids=[hd, $hero, sec('En vivo'), grp([$pfRow, tb, $alRow, $rwRow, $apRow, $obsRow, $cmdRow, $ruleRow]), sec('Chat'), grp([$chatRow, cb, $qrRow, $ttsRow, $mixRow, $usRow, sb]),
               sec('Feed'), grp([$evRow]), sec('Pantalla'), grp([$fsRow, $barRow, $navRow, $landRow, $oledRow]), sec('Tus dos celulares'), grp([$syNav]),
               sec('Avanzado'), grp([$srvRow]), ver];
     // lo que no quedó en ninguna sección (por si algo se agrega después) va al final

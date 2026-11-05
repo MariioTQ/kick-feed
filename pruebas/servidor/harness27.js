@@ -124,7 +124,7 @@ const app=http.createServer((req,res)=>{
   r=await fetch('http://localhost:7702/api/twlogin?key='+encodeURIComponent(key),{redirect:'manual',headers:H}); const tst2=new URL(r.headers.get('location')).searchParams.get('state');
   html=await (await fetch('http://localhost:7702/api/twcallback?code=x&state='+tst2,{headers:H})).text();
   ok(/Twitch conectado/.test(html) && JSON.parse(kv['tw:tok']).user_id==='111', 'tu cuenta de Twitch queda conectada');
-  ok(T.subs.length===24 && T.subs.every(x=>x.transport.callback==='https://kick-feed-mariotq.vercel.app/api/twhook' && x.transport.secret), 'se suscribe a los 24 avisos de Twitch: '+T.subs.length);
+  ok(T.subs.length===25 && T.subs.every(x=>x.transport.callback==='https://kick-feed-mariotq.vercel.app/api/twhook' && x.transport.secret), 'se suscribe a los 25 avisos de Twitch (v83: + canjes resueltos): '+T.subs.length);
   ok(T.calls.some(c=>c.m==='DELETE' && /eventsub/.test(c.path)), 'borra las suscripciones viejas antes');
   ok(T.subs.find(x=>x.type==='channel.follow').condition.moderator_user_id==='111' && T.subs.find(x=>x.type==='channel.raid').condition.to_broadcaster_user_id==='111', 'condiciones especiales (follow, raid)');
   // el bot
