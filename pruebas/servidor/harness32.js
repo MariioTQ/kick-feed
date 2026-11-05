@@ -1,5 +1,5 @@
 const RAIZ=require('path').resolve(__dirname,'../..');   // la carpeta del repo
-// v83 · 🎯 recompensas, canjes pendientes y permisos de Kick (Kick y Twitch simulados)
+// v84 · 🎯 recompensas, canjes pendientes y permisos de Kick (Kick y Twitch simulados)
 const realFetch=global.fetch;
 let patched=null; const calls=[]; global.__calls=calls;
 global.fetch=async (url,opts={})=>{
@@ -90,7 +90,7 @@ global.fetch=async (url,opts={})=>{
     if (url.startsWith('https://api.twitch.tv/helix/chat/settings')){ X.tw.push(m+' /chat/settings '+(opts.body||'')); return J({data:[{}]}); }
     if (url.startsWith('https://api.twitch.tv/helix/users?login=')){ const l=url.split('login=')[1]; X.tw.push('user '+l); return J({data:l==='nadie'?[]:[{id:'4242',login:l}]}); }
     return f0(url,opts); }; }
-// v83 · 🎯 recompensas y canjes (Kick oficial y Twitch Helix) simulados
+// v84 · 🎯 recompensas y canjes (Kick oficial y Twitch Helix) simulados
 { const f0=global.fetch; const KR=global.__KR={list:[{id:'01KOLD1',title:'Vip Mini',cost:5000,description:'7 días',background_color:'#FF0000',is_enabled:true,is_paused:false,is_user_input_required:false,should_redemptions_skip_request_queue:true},{id:'01KOLD2',title:'Timeout a alguien',cost:3000,is_enabled:true,is_user_input_required:true}],owned:new Set(),calls:[],n:0};
   const TR=global.__TR={list:[{id:'twold',title:'Vip Rey',cost:20000,prompt:'',is_enabled:true,is_paused:false},{id:'twmio',title:'Hidratarse',cost:500,is_enabled:true,is_paused:false}],mine:new Set(['twmio']),calls:[],n:0};
   global.fetch=async (url,opts={})=>{ url=String(url); const m=(opts.method||'GET').toUpperCase(); let body=null; if (/channel_points\/custom_rewards|channels\/rewards/.test(url)) try{ body=opts.body?JSON.parse(opts.body):null; }catch(e){}

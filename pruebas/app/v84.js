@@ -1,5 +1,5 @@
 const RAIZ=require('path').resolve(__dirname,'../..');   // la carpeta del repo
-// v83 · 🎯 Recompensas, canjes pendientes (feed, barra y página) y el botón para volver a conectar Kick
+// v84 · 🎯 Recompensas, canjes pendientes (feed, barra y página) y el botón para volver a conectar Kick
 const {chromium}=require('playwright');
 let fails=0; const ok=(c,m)=>{ if(!c) fails++; console.log((c?'PASS ':'FAIL ')+m); };
 const W=ms=>new Promise(r=>setTimeout(r,ms));
@@ -62,8 +62,8 @@ async function mk(vw, vh, cfg, bar){
       if (a==='badges') return J({ok:true,map:{'subscriber/12':['https://static-cdn.jtvnw.net/badges/v1/sub12/2','1 año'],'moderator/1':['https://static-cdn.jtvnw.net/badges/v1/mod/2','Moderator'],'premium/1':['https://static-cdn.jtvnw.net/badges/v1/prime/2','Prime Gaming']}});
       if (a==='clips') return J({ok:true,list:[{id:'TwClip1',title:'Caída en Twitch',at:Date.now()-3600e3,dur:30,views:12,th:'',by:'FanTw',url:'https://clips.twitch.tv/TwClip1'}]});
       return J({ok:true}); }
-    if (u.pathname==='/api/kick'){ S.kickCalls=(S.kickCalls||0)+1; return J(S.kst); }   // v83
-    if (u.pathname==='/api/rewards'){ const a2=body.a||a; S.rwPosts=(S.rwPosts||[]).concat([Object.assign({a:a2}, body)]);   // v83
+    if (u.pathname==='/api/kick'){ S.kickCalls=(S.kickCalls||0)+1; return J(S.kst); }   // v84
+    if (u.pathname==='/api/rewards'){ const a2=body.a||a; S.rwPosts=(S.rwPosts||[]).concat([Object.assign({a:a2}, body)]);   // v84
       if (a2==='list') return J({ok:true,list:S.rw.list,err:S.rw.err||{},pend:S.rw.pend});
       if (a2==='pend') return J({ok:true,pend:S.rw.pend});
       if (a2==='res'){ S.rw.pend=S.rw.pend.filter(x=>!(x.pf===body.pf && x.id===body.id)); return J({ok:true,st:body.ok?'accepted':'rejected'}); }

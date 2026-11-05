@@ -34,7 +34,7 @@ const EVENTS = [
   'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated',
   'chat.message.sent',         // el chat por la vía oficial (respaldo cuando Kick no deja conectar directo)
   'livestream.metadata.updated', // cambio de título o categoría
-  'channel.reward.redemption.updated'   // v83: canjes de recompensas (pendientes, aceptados y rechazados) aunque la app esté cerrada
+  'channel.reward.redemption.updated'   // v84: canjes de recompensas (pendientes, aceptados y rechazados) aunque la app esté cerrada
 ];
 const SUBS_VER = '5';          // si cambia la lista, el servidor se vuelve a suscribir solo
 const KEEP = 4000;          // cuántos eventos se guardan como máximo
@@ -172,7 +172,7 @@ const TW_SCOPES = ['channel:read:subscriptions', 'bits:read', 'moderator:read:fo
   'moderator:manage:chat_messages', 'user:read:chat', 'user:write:chat', 'user:bot', 'channel:bot',
   'moderator:manage:shoutouts', 'moderator:manage:chat_settings', 'channel:manage:raids', 'clips:edit', 'channel:manage:vips'].join(' ');
 const TW_BOT_SCOPES = 'user:read:chat user:write:chat user:bot';
-const TW_SUBS_VER = '2';          // v83: + canjes que se resuelven (redemption.update)
+const TW_SUBS_VER = '2';          // v84: + canjes que se resuelven (redemption.update)
 // [tipo, versión, condición] (B = tu id de Twitch)
 const TW_EVENTS = [
   ['stream.online', '1', B => ({ broadcaster_user_id: B })],
@@ -185,7 +185,7 @@ const TW_EVENTS = [
   ['channel.raid', '1', B => ({ to_broadcaster_user_id: B })],
   ['channel.follow', '2', B => ({ broadcaster_user_id: B, moderator_user_id: B })],
   ['channel.channel_points_custom_reward_redemption.add', '1', B => ({ broadcaster_user_id: B })],
-  ['channel.channel_points_custom_reward_redemption.update', '1', B => ({ broadcaster_user_id: B })],   // v83: se aceptó o rechazó un canje
+  ['channel.channel_points_custom_reward_redemption.update', '1', B => ({ broadcaster_user_id: B })],   // v84: se aceptó o rechazó un canje
   ['channel.poll.begin', '1', B => ({ broadcaster_user_id: B })],
   ['channel.poll.progress', '1', B => ({ broadcaster_user_id: B })],
   ['channel.poll.end', '1', B => ({ broadcaster_user_id: B })],
@@ -453,14 +453,14 @@ async function twHook(req, res) {
       await rtSend('tw', { ad: adv });
       try { await redis('DEL', 'tw:adsch'); } catch (x) {}                     // el próximo cambia: se vuelve a preguntar
       const pr = rulesOn('adstart', { dur, auto: !!e.is_automatic }, 'tw').catch(() => {}); if (!later(pr)) await pr;
-    } else if (type === 'channel.channel_points_custom_reward_redemption.update') {      // v83: lo aceptaron o rechazaron (en la app o en Twitch)
+    } else if (type === 'channel.channel_points_custom_reward_redemption.update') {      // v84: lo aceptaron o rechazaron (en la app o en Twitch)
       const s2 = String(e.status || '').toLowerCase();
       if (s2 && s2 !== 'unfulfilled') { try { await rwpDel('tw', String(e.id || ''), s2 === 'fulfilled' ? 'accepted' : 'rejected'); } catch (x) {} }
     } else {
       const d = twNorm(type, e);
       if (d) {
         d.pf = 'tw';
-        // v83: 🎯 canje que queda pendiente (Twitch lo manda «unfulfilled»): a tu lista, con ✓ / ✕ si la recompensa es de la app
+        // v84: 🎯 canje que queda pendiente (Twitch lo manda «unfulfilled»): a tu lista, con ✓ / ✕ si la recompensa es de la app
         if (d.kind === 'reward' && String(e.status || '').toLowerCase() === 'unfulfilled' && d.rid) {
           try { const mine = await rwMine(); d.can = !!mine['tw:' + d.rwid]; d.pend = 1;
                 await rwpAdd({ pf: 'tw', id: d.rid, rwid: d.rwid, rw: str(d.reward).slice(0, 80), c: d.cost || 0, u: str(d.user).slice(0, 40), uid: d.uid || '', in: str(d.input), at: rt, can: d.can }); } catch (x) {}
@@ -1116,7 +1116,7 @@ async function webhook(req, res) {
   if (Date.now() - CWCHK >= 30000) { const c = cwCheck(null, req); if (!later(c)) await c; }   // v79: ¿se cayó la guardia del chat?
   // Kick puede reintentar el mismo aviso: se guarda una sola vez.
   const fresh = await redis('SET', 'seen:' + msgId, '1', 'NX', 'EX', 7 * 86400);
-  if (fresh && type === 'channel.reward.redemption.updated') {    // v83: 🎯 canjes (pendientes, aceptados o rechazados)
+  if (fresh && type === 'channel.reward.redemption.updated') {    // v84: 🎯 canjes (pendientes, aceptados o rechazados)
     const rt = Date.now();
     try { await kickRedeem(p, rt); } catch (e) { try { await logPush('raw', { at: rt, type: 'canje-error', body: String((e && e.message) || e) }, 40); } catch (e2) {} }
     await redis('SET', 'lastHook', String(rt));
@@ -1781,12 +1781,12 @@ async function rwRefund(pf, v) {
       if (!v._rwid) return false;
       const B = await twMe(); if (!B) return false;
       const r = await helix('PATCH', '/channel_points/custom_rewards/redemptions?broadcaster_id=' + B + '&reward_id=' + encodeURIComponent(v._rwid) + '&id=' + encodeURIComponent(v._rid), { status: 'CANCELED' }, 'b');
-      if (r.ok) { try { await rwpDel('tw', String(v._rid), 'rejected'); } catch (e) {} }   // v83: ya no queda pendiente
+      if (r.ok) { try { await rwpDel('tw', String(v._rid), 'rejected'); } catch (e) {} }   // v84: ya no queda pendiente
       return r.ok;
     }
     const t = await validToken(); if (!t) return false;
     const r = await kickCall('POST', '/channels/rewards/redemptions/reject', t.access_token, { ids: [String(v._rid)] });
-    const ok = r.ok && !rwFailed(r.j).length;                 // v83: Kick manda en «data» los que NO pudo (antes se leía mal)
+    const ok = r.ok && !rwFailed(r.j).length;                 // v84: Kick manda en «data» los que NO pudo (antes se leía mal)
     if (ok) { try { await rwpDel('kick', String(v._rid), 'rejected'); } catch (e) {} }
     return ok;
   } catch (e) { return false; }
@@ -1907,7 +1907,7 @@ async function rewardsList() {
   return out;
 }
 /* ==================================================================
-   v83 · 🎯 RECOMPENSAS de Kick y de Twitch (solo por las APIs oficiales)
+   v84 · 🎯 RECOMPENSAS de Kick y de Twitch (solo por las APIs oficiales)
    Ver, crear, editar, pausar, prender/apagar y borrar. Kick y Twitch solo dejan
    cambiar (y aceptar o rechazar sus canjes) las recompensas que creó esta misma
    app: las demás salen con candado y se pueden «pasar a la app» (se crea una igual).
@@ -2109,7 +2109,7 @@ async function rewardsApi(req, res) {
   if (a === 'copy') return send(res, 200, await rwCopy(pf, id));
   return send(res, 400, { ok: false, error: 'acción rara' });
 }
-/* ---- v83 · 🔑 tu cuenta de Kick: qué permisos le faltan (para el botón «Volver a conectar Kick») ---- */
+/* ---- v84 · 🔑 tu cuenta de Kick: qué permisos le faltan (para el botón «Volver a conectar Kick») ---- */
 const SCOPE_TXT = { 'user:read': 'Ver tu cuenta', 'channel:read': 'Leer tu canal', 'channel:write': 'Cambiar título y categoría', 'events:subscribe': 'Recibir los avisos (subs, follows, canjes…)',
   'kicks:read': 'Ver los Kicks', 'chat:write': 'Escribir en el chat', 'moderation:ban': 'Silenciar y banear', 'moderation:chat_message:manage': 'Borrar mensajes',
   'channel:rewards:read': 'Ver tus recompensas', 'channel:rewards:write': 'Crear y cambiar recompensas, y aceptar o rechazar canjes' };
@@ -2158,7 +2158,7 @@ async function healthApi(req, res) {
       const need = EVENTS.filter(n => !(n === 'chat.message.sent' && hooks.kick === 'off'));
       const miss = need.filter(n => names.indexOf(n) < 0);
       add('kick', !miss.length, miss.length ? 'Kick: faltan ' + miss.length + ' avisos' : 'Kick: los ' + need.length + ' avisos activos' + (hooks.kick === 'off' ? ' (el chat lo lee la guardia)' : ''), miss.join(', '));
-      const ms = kickMissing(t);                                   // v83: permisos que le faltan a tu cuenta de Kick
+      const ms = kickMissing(t);                                   // v84: permisos que le faltan a tu cuenta de Kick
       if (ms.length) add('kscope', false, 'Kick: faltan ' + ms.length + ' permisos (⚙ → Plataformas → Volver a conectar Kick)', ms.map(x => SCOPE_TXT[x] || x).join(', '));
     }
   } catch (e) { add('kick', false, 'Kick: no pude revisar los avisos', e.message); }
@@ -2841,7 +2841,7 @@ async function events(req, res) {
   // v79: lo de Twitch viene en la MISMA consulta (antes eran dos)
   const twOnNow = !!TW_ID && (await twOn());
   const mg = (await redis('MGET', 'live', 'session', 'lastHook', 'prefsAt', 'rulesAt', 'subAdj', 'chatw:hb', 'chatw:hooks', 'rwpAt', ...(twOnNow ? TW_KEYS : []))) || [];
-  const [liveS, seS, lhS, paS, raS, adjS, cwHbS, cwHS, rwaS] = mg;      // v83: + rwpAt (cambió la lista de canjes pendientes)
+  const [liveS, seS, lhS, paS, raS, adjS, cwHbS, cwHS, rwaS] = mg;      // v84: + rwpAt (cambió la lista de canjes pendientes)
   await cwCheck([cwHbS, cwHS], req);
   if (authed) { const vs = vipSweep(); if (!later(vs)) await vs; }                   // v79: ¿se cayó la guardia del chat? se vuelven a prender los avisos
   const pj = v => { try { return v ? JSON.parse(v) : null; } catch (e) { return null; } };
@@ -3324,7 +3324,7 @@ async function callback(req, res) {
       perm(/moderation:ban/, 'Permiso para silenciar y banear desde el chat', 'Ejecuta acciones de moderación para moderadores') +
       perm(/moderation:chat_message:manage/, 'Permiso para borrar mensajes', 'Ejecuta acciones de moderador en mensajes de chat') +
       perm(/chat:write/, 'Permiso para escribir en el chat', 'Escribir en el feed del chat') +
-      perm(/channel:rewards:write/, 'Permiso para tus recompensas y canjes', 'las recompensas del canal (leer y escribir)') +   // v83
+      perm(/channel:rewards:write/, 'Permiso para tus recompensas y canjes', 'las recompensas del canal (leer y escribir)') +   // v84
       perm(/channel:rewards:read/, 'Permiso para ver tus recompensas (salen solas en las reglas)', 'Leer las recompensas del canal') +
       perm(/channel:rewards:write/, 'Permiso para devolver puntos de un canje', 'Administrar las recompensas del canal') +
       '<h1 style="margin-top:22px">🔑 Enlace para tus celulares</h1><p>Ábrelo <b>una vez</b> en cada celular (o pégalo en IRL Plus Chat). Así el feed puede cambiar tu título y categoría. <b>No lo compartas.</b></p>' +
@@ -3393,8 +3393,8 @@ module.exports = async function handler(req, res) {
     if (route === 'chatin') return await chatInApi(req, res);
     if (route === 'chatobs') return await chatObsApi(req, res);
     if (route === 'health') return await healthApi(req, res);
-    if (route === 'rewards') return await rewardsApi(req, res);         // v83: 🎯 recompensas y canjes pendientes
-    if (route === 'kick') return await kickInfoApi(req, res);           // v83: permisos de tu cuenta de Kick
+    if (route === 'rewards') return await rewardsApi(req, res);         // v84: 🎯 recompensas y canjes pendientes
+    if (route === 'kick') return await kickInfoApi(req, res);           // v84: permisos de tu cuenta de Kick
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'modcmd') return await modCmdApi(req, res);
     if (route === 'moments') return await momentsApi(req, res);
