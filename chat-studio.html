@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1218">
+<title>Chat Studio · MarioTQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Onest:wght@400;500;600;700;800;900&family=Inter:wght@700&family=Poppins:wght@700&family=Montserrat:wght@700&family=Nunito:wght@700&family=Roboto:wght@700&family=Rubik:wght@700&family=Baloo+2:wght@700&family=Bangers&family=Comic+Neue:wght@700&display=swap" rel="stylesheet">
+<style>
+/* ==================================================================
+   CHAT STUDIO · tu widget de chat para OBS (chat-obs.html), a tu gusto
+   Diseño, letra, tiempos, qué se muestra y a quién esconder.
+   Ves los cambios aquí al momento; al «Guardar» le llegan a tu OBS por
+   Ably sin refrescar nada ni cambiar el link. Pide tu clave (la del feed).
+   Mismo diseño que Alertas Studio y BRB Studio (Bebas Neue + Onest).
+   ================================================================== */
+:root{--night:#0f1218;--panel:#161a22;--panel2:#1d222c;--panel3:#262c38;--line:#29303c;--line2:#363e4c;--ink:#eceff4;--mute:#8d95a5;
+  --go:#53fc18;--tw:#9146ff;--sky:#5ab0ff;--disp:"Bebas Neue",Impact,"Arial Narrow",sans-serif;--safeB:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--night);color:var(--ink);font:15px/1.5 Onest,"Segoe UI",Roboto,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--sky);outline-offset:2px}
+header{position:sticky;top:0;z-index:20;background:rgba(15,18,24,.92);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.hd{max-width:1240px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.wm{font-family:var(--disp);font-size:34px;line-height:1;letter-spacing:.02em}
+.wm i{font-style:normal;color:var(--go)}
+.hd small{color:var(--mute);font-size:13px}
+.hd .sp{flex:1}
+@media (max-width:520px){.hd small,.bgs .hint{display:none}}
+.wrap{max-width:1240px;margin:0 auto;padding:0 16px calc(110px + var(--safeB))}
+.cols{display:block}
+.prev{position:sticky;top:57px;z-index:10;background:var(--night);padding:12px 0 8px}
+@media (min-width:1000px){
+  .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start}
+  .prev{top:70px;padding-top:20px}
+  .stage{height:520px!important}
+}
+.stage{position:relative;height:210px;border-radius:16px;overflow:hidden;border:1px solid var(--line2)}
+.stage.b0{background:linear-gradient(160deg,#3b4a5c,#1d2a20 60%,#6b5a3a)}
+.stage.b1{background:linear-gradient(160deg,#dfe7ef,#b9c7d2 50%,#f3ead8)}
+.stage.b2{background:linear-gradient(180deg,#7fb2e5 0%,#bfd8ee 45%,#6c6f73 46%,#3c3f43 100%)}
+.stage.b3{background:#0e0f13}
+.stage iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent}
+.bgs{display:flex;gap:6px;align-items:center;margin-top:8px;font-size:13px;color:var(--mute);flex-wrap:wrap}
+.bgs button{width:30px;height:30px;border-radius:8px;border:2px solid var(--line2);padding:0}
+.bgs button.on{border-color:var(--go)}
+.sec{margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card+.card{margin-top:12px}
+h2{font-size:19px;font-weight:700;margin:0 0 4px}
+.sub{margin:0 0 12px;color:var(--mute);font-size:14px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn{min-height:44px;padding:0 16px;border-radius:12px;border:1px solid var(--line2);background:var(--panel2);color:var(--ink);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+.btn:hover{background:var(--panel3)}.btn:disabled{opacity:.4;cursor:default}
+.btn.pri{background:var(--go);border-color:var(--go);color:#0b0e0f;font-weight:700}
+.btn.sm{min-height:36px;padding:0 12px;font-size:14px;border-radius:10px}
+.btn.wide{width:100%}
+.fl{display:block;margin-top:14px}
+.fl:first-of-type{margin-top:0}
+.fl>b{display:flex;justify-content:space-between;align-items:baseline;font-weight:600;font-size:14px;margin-bottom:6px}
+.fl>b output{color:var(--go);font-weight:700}
+.fl small{display:block;color:var(--mute);font-size:13px;margin-top:4px}
+input[type=text],select,textarea{min-height:44px;width:100%;background:var(--night);border:1px solid var(--line2);border-radius:10px;padding:0 12px;color:var(--ink);font-size:15px;outline:none}
+textarea{padding:10px 12px;min-height:80px;resize:vertical}
+input:focus,select:focus,textarea:focus{border-color:var(--sky)}
+input[type=range]{width:100%;accent-color:var(--go);height:28px}
+input[type=color]{width:52px;height:40px;border:1px solid var(--line2);border-radius:10px;background:var(--night);padding:3px;cursor:pointer}
+.seg{display:flex;background:var(--night);border:1px solid var(--line2);border-radius:12px;padding:3px;gap:3px}
+.seg button{flex:1;min-height:40px;border:0;border-radius:9px;background:transparent;color:var(--mute);font-weight:600;font-size:14px;white-space:nowrap;padding:0 6px}
+.seg button.on{background:var(--panel3);color:var(--ink)}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:54px;padding:8px 0;border-top:1px solid var(--line)}
+.sw.first{border-top:0}
+.sw b{display:block;font-weight:600}.sw small{display:block;color:var(--mute);font-size:13px;font-weight:400}
+.tg{width:50px;height:30px;border-radius:999px;background:#3a414e;position:relative;flex:none;border:0;transition:background .2s}
+.tg::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:left .2s}
+.tg.on{background:var(--go)}.tg.on::after{left:23px}
+.fonts{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px}
+.fonts button{min-height:52px;border-radius:12px;border:2px solid var(--line2);background:var(--panel2);font-size:17px;font-weight:700;padding:4px}
+.fonts button.on{border-color:var(--go);background:rgba(83,252,24,.1)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chips button{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--line2);background:var(--panel2);font-size:13.5px;font-weight:600}
+.url{font-family:ui-monospace,Menlo,monospace;font-size:13px;word-break:break-all;background:var(--night);border:1px solid var(--line2);border-radius:10px;padding:10px}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(19,23,30,.97);border-top:1px solid var(--line);padding:10px 16px calc(10px + var(--safeB))}
+.bar .in{max-width:1240px;margin:0 auto;display:flex;gap:10px;align-items:center}
+.bar .st{flex:1;font-size:13.5px;color:var(--mute);min-width:0}
+.bar .st.dirty{color:#ffc24b}.bar .st.ok{color:var(--go)}.bar .st.err{color:#ff8a80}
+.gate{max-width:520px;margin:40px auto;padding:0 16px}
+ol.steps{margin:6px 0 0;padding-left:20px;color:var(--mute);font-size:14px}
+ol.steps li{margin:4px 0}
+ol.steps b{color:var(--ink)}
+</style>
+</head>
+<body>
+<header><div class="hd"><span class="wm">CHAT <i>STUDIO</i></span><small>Tu chat de Kick y Twitch para OBS</small><span class="sp"></span></div></header>
+
+<div id="gate" class="gate" hidden>
+  <div class="card">
+    <h2>Falta tu clave 🔑</h2>
+    <p class="sub">Es la misma del feed. Pega aquí tu «Enlace para tus celulares» o solo la clave.</p>
+    <input type="text" id="gateIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://mariiotq.github.io/kick-feed/?key=…">
+    <button class="btn pri wide" id="gateGo" style="margin-top:12px">Entrar</button>
+    <p class="sub" id="gateErr" style="color:#ff8a80;margin-top:10px"></p>
+  </div>
+</div>
+
+<main class="wrap" id="main" hidden>
+ <div class="cols">
+  <div class="prev">
+    <div class="stage b0" id="stage"><iframe id="pv" title="Vista previa" src="chat-obs.html?prueba=1"></iframe></div>
+    <div class="bgs">Probar sobre:
+      <button class="on" data-bg="b0" style="background:linear-gradient(160deg,#3b4a5c,#6b5a3a)" title="Calle de noche"></button>
+      <button data-bg="b2" style="background:linear-gradient(180deg,#7fb2e5 45%,#4c4f53 46%)" title="Cielo de día"></button>
+      <button data-bg="b1" style="background:#dfe7ef" title="Muy claro"></button>
+      <button data-bg="b3" style="background:#0e0f13" title="Negro"></button>
+      <span class="hint">· mensajes de ejemplo, solo aquí</span>
+    </div>
+  </div>
+
+  <div>
+  <section class="sec card">
+    <h2>🎨 Diseño</h2>
+    <label class="fl"><b>Estilo</b>
+      <div class="seg" data-k="estilo"><button data-v="linea">Renglones</button><button data-v="burbuja">Burbujas</button><button data-v="tarjeta">Tarjetas</button></div></label>
+    <div class="fl"><b>Fondo de cada mensaje <output data-o="fondo"></output></b>
+      <div class="row"><input type="color" data-k="fondoCol" aria-label="Color del fondo"><input type="range" data-k="fondo" min="0" max="1" step="0.05" style="flex:1" aria-label="Qué tan visible es el fondo"></div>
+      <small>0 % = sin fondo (solo el texto con su sombra).</small></div>
+    <label class="fl"><b>Esquinas redondeadas <output data-o="radio"></output></b><input type="range" data-k="radio" min="0" max="30" step="1"></label>
+    <label class="fl"><b>Espacio entre mensajes <output data-o="espacio"></output></b><input type="range" data-k="espacio" min="0" max="20" step="1"></label>
+    <label class="fl"><b>Cómo entran los mensajes</b>
+      <div class="seg" data-k="anim"><button data-v="sube">Suben</button><button data-v="lado">De lado</button><button data-v="aparece">Aparecen</button><button data-v="no">Sin</button></div></label>
+    <div class="sw" style="margin-top:10px"><div><b>Nombre arriba del mensaje</b><small>El nombre en su propio renglón (se ve bien con burbujas y tarjetas).</small></div><button class="tg" data-k="nombreArriba" aria-label="Nombre arriba"></button></div>
+  </section>
+
+  <section class="sec card">
+    <h2>🔤 Letra</h2>
+    <div class="fl"><b>Tipo de letra</b><div class="fonts" id="fonts"></div></div>
+    <label class="fl"><b>Tamaño <output data-o="tam"></output></b><input type="range" data-k="tam" min="12" max="60" step="1"></label>
+    <label class="fl"><b>Grosor del nombre</b>
+      <div class="seg" data-k="peso" data-n="1"><button data-v="400">Normal</button><button data-v="600">Media</button><button data-v="700">Negrita</button><button data-v="900">Extra</button></div></label>
+    <div class="fl"><b>Color del texto</b><div class="row"><input type="color" data-k="colTexto" aria-label="Color del texto"><small style="margin:0">Los nombres usan el color de cada quien (si lo dejas prendido abajo).</small></div></div>
+    <label class="fl"><b>Contorno para que se lea</b>
+      <div class="seg" data-k="sombra" data-n="1"><button data-v="0">Sin</button><button data-v="1">Suave</button><button data-v="2">Fuerte</button></div></label>
+    <label class="fl"><b>Tamaño de los emotes <output data-o="emTam"></output></b><input type="range" data-k="emTam" min="1" max="4" step="0.1"></label>
+  </section>
+
+  <section class="sec card">
+    <h2>⏱ Tiempo y cantidad</h2>
+    <label class="fl"><b>Se desvanecen a los <output data-o="fade"></output></b><input type="range" data-k="fade" min="0" max="300" step="5">
+      <div class="chips" id="fadeChips"><button data-f="10">10 s</button><button data-f="20">20 s</button><button data-f="30">30 s</button><button data-f="60">1 min</button><button data-f="120">2 min</button><button data-f="0">Nunca</button></div></label>
+    <label class="fl"><b>Máximo en pantalla <output data-o="max"></output></b><input type="range" data-k="max" min="1" max="30" step="1"></label>
+    <label class="fl"><b>Los nuevos salen</b>
+      <div class="seg" data-k="arriba"><button data-v="false">Abajo</button><button data-v="true">Arriba</button></div></label>
+  </section>
+
+  <section class="sec card">
+    <h2>👀 Qué se muestra</h2>
+    <label class="fl"><b>Plataformas</b>
+      <div class="seg" data-k="pf"><button data-v="ambas">Kick y Twitch</button><button data-v="kick">Solo Kick</button><button data-v="tw">Solo Twitch</button></div></label>
+    <div class="sw first" style="margin-top:8px"><div><b>Insignias</b><small>Mod, VIP, sub, fundador…</small></div><button class="tg" data-k="insignias" aria-label="Insignias"></button></div>
+    <div class="sw"><div><b>Color de cada nombre</b><small>El que eligió cada quien en Kick o Twitch.</small></div><button class="tg" data-k="colores" aria-label="Colores de nombre"></button></div>
+    <div class="sw"><div><b>Marquita K / T</b><small>Para saber si viene de Kick o de Twitch.</small></div><button class="tg" data-k="kt" aria-label="Marquita K/T"></button></div>
+    <div class="sw"><div><b>Emotes grandes</b><small>Cuando el mensaje es puro emote (1 a 3).</small></div><button class="tg" data-k="grande" aria-label="Emotes grandes"></button></div>
+    <div class="sw"><div><b>Emotes de 7TV, BetterTTV y FFZ</b><small>Además de los de Kick y Twitch.</small></div><button class="tg" data-k="extras" aria-label="Emotes extra"></button></div>
+  </section>
+
+  <section class="sec card">
+    <h2>🙈 Qué se esconde</h2>
+    <div class="sw first"><div><b>Esconder bots</b><small>Los de la lista de abajo.</small></div><button class="tg" data-k="ocultarBots" aria-label="Esconder bots"></button></div>
+    <label class="fl"><b>Tus bots</b><textarea data-k="bots" data-list="1" rows="2" spellcheck="false" autocapitalize="off"></textarea><small>Separados por coma o espacio.</small></label>
+    <div class="sw" style="margin-top:8px"><div><b>Esconder !comandos</b><small>Mensajes que empiezan con «!».</small></div><button class="tg" data-k="cmd" data-inv="1" aria-label="Esconder comandos"></button></div>
+    <div class="sw"><div><b>Esconder mensajes con links</b><small>Para que no salgan páginas al aire.</small></div><button class="tg" data-k="links" aria-label="Esconder links"></button></div>
+    <label class="fl"><b>Personas que no quieres en pantalla</b><textarea data-k="ocultar" data-list="1" rows="3" spellcheck="false" autocapitalize="off" placeholder="usuario1, usuario2"></textarea><small>Siguen en tu chat; solo no salen en el widget. Kick y Twitch juntos.</small></label>
+    <label class="fl"><b>Palabras que esconden el mensaje</b><textarea data-k="palabras" data-lines="1" rows="3" spellcheck="false" autocapitalize="off" placeholder="una por renglón"></textarea><small>Si el mensaje trae alguna, no sale. Una palabra o frase por renglón.</small></label>
+    <small style="display:block;color:var(--mute);font-size:13px;margin-top:10px">Lo que Kick o Twitch borren (o tu antispam) desaparece solo del widget al momento.</small>
+  </section>
+
+  <section class="sec card">
+    <h2>🔗 Para tu OBS</h2>
+    <p class="sub">Este link no lleva tu clave y no cambia nunca: todo lo de aquí le llega solo.</p>
+    <div class="url" id="link"></div>
+    <div class="row" style="margin-top:10px"><button class="btn sm" id="copy">Copiar link</button><button class="btn sm" id="test">Probar en OBS</button></div>
+    <small style="display:block;color:var(--mute);font-size:13px;margin-top:6px">«Probar en OBS» manda 4 mensajes de ejemplo a tu widget. <b style="color:#ffc24b">Si estás en vivo, se ven al aire.</b></small>
+    <ol class="steps">
+      <li>En OBS: <b>+</b> → <b>Navegador</b>, nombre «Chat».</li>
+      <li>Pega el link. Ancho <b>450</b>, alto <b>700</b>.</li>
+      <li>Prende <b>«Actualizar el navegador cuando la escena se active»</b>.</li>
+      <li>Deja <b>vacío</b> el CSS personalizado.</li>
+    </ol>
+  </section>
+  </div>
+ </div>
+</main>
+
+<div class="bar" id="bar" hidden><div class="in">
+  <span class="st" id="st">Cargando…</span>
+  <button class="btn sm" id="undo" disabled>Deshacer</button>
+  <button class="btn pri" id="save" disabled>Guardar</button>
+</div></div>
+
+<script>
+(function(){
+'use strict';
+var Q=new URLSearchParams(location.search);
+var API=(Q.get('api')||'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,'');
+var KEY=(function(){ var v=(Q.get('key')||'').trim(); try{ if (v) localStorage.setItem('kickfeed.key', v); else v=localStorage.getItem('kickfeed.key')||''; }catch(e){} return v; })();
+if (Q.get('key')) try{ history.replaceState(null, '', location.pathname+location.hash); }catch(e){}
+var $=function(id){ return document.getElementById(id); };
+var FONTS=['Segoe UI','Onest','Inter','Poppins','Montserrat','Nunito','Roboto','Rubik','Baloo 2','Bebas Neue','Bangers','Comic Neue'];
+var SET=null, SAVED='', busy=false;
+var LINK=location.href.replace(/[?#].*$/,'').replace(/[^/]*$/,'')+'chat-obs.html';
+
+function post(a, body){
+  return fetch(API+'/api/chatobs?a='+a, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(Object.assign({key:KEY}, body||{})), cache:'no-store'})
+    .then(function(r){ return r.json().then(function(j){ j.__st=r.status; return j; }); });
+}
+function status(t, cls){ var s=$('st'); s.textContent=t; s.className='st'+(cls?' '+cls:''); }
+function dirty(){ var d=JSON.stringify(SET)!==SAVED; $('save').disabled=!d||busy; $('undo').disabled=!d||busy; if (!busy) status(d ? 'Cambios sin guardar · tu OBS sigue igual' : 'Todo guardado ✓', d ? 'dirty' : 'ok'); }
+function preview(){ try{ $('pv').contentWindow.postMessage({chatobsSet:SET}, location.origin); }catch(e){} }
+window.addEventListener('message', function(e){ if (e.origin===location.origin && e.data && e.data.chatobsReady && SET) preview(); });
+
+/* ---------------- los controles: cada uno dice qué ajuste cambia (data-k) ---------------- */
+function fmt(k, v){
+  if (k==='fondo') return Math.round(v*100)+' %';
+  if (k==='tam' || k==='radio' || k==='espacio') return v+' px';
+  if (k==='emTam') return '×'+Number(v).toFixed(1);
+  if (k==='fade') return v>0 ? (v>=60 && v%60===0 ? (v/60)+' min' : v+' s') : 'nunca';
+  if (k==='max') return v+' mensajes';
+  return String(v);
+}
+function paint(){
+  document.querySelectorAll('[data-k]').forEach(function(el){
+    var k=el.getAttribute('data-k'), v=SET[k];
+    if (el.classList.contains('seg')) el.querySelectorAll('button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v')===String(v)); });
+    else if (el.classList.contains('tg')) el.classList.toggle('on', el.hasAttribute('data-inv') ? !v : !!v);
+    else if (el.tagName==='TEXTAREA'){ if (document.activeElement!==el) el.value=(v||[]).join(el.hasAttribute('data-lines') ? '\n' : ', '); }
+    else el.value=v;
+  });
+  document.querySelectorAll('[data-o]').forEach(function(o){ var k=o.getAttribute('data-o'); o.textContent=fmt(k, SET[k]); });
+  document.querySelectorAll('#fonts button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-f')===SET.fuente); });
+}
+function set(k, v){
+  if (k==='estilo'){                                   // al cambiar de estilo se sugiere un fondo que le quede
+    if (v!=='linea' && SET.fondo===0) SET.fondo=0.55;
+    if (v==='linea' && SET.fondo===0.55) SET.fondo=0;
+  }
+  SET[k]=v; paint(); preview(); dirty();
+}
+document.querySelectorAll('.seg[data-k]').forEach(function(el){
+  el.addEventListener('click', function(e){
+    var b=e.target.closest('button'); if (!b) return; e.preventDefault();
+    var v=b.getAttribute('data-v'), k=el.getAttribute('data-k');
+    set(k, el.hasAttribute('data-n') ? Number(v) : v==='true' ? true : v==='false' ? false : v);
+  });
+});
+document.querySelectorAll('.tg[data-k]').forEach(function(el){
+  el.addEventListener('click', function(){ var k=el.getAttribute('data-k'); set(k, !SET[k]); });
+});
+document.querySelectorAll('input[type=range][data-k]').forEach(function(el){
+  el.addEventListener('input', function(){ set(el.getAttribute('data-k'), Number(el.value)); });
+});
+document.querySelectorAll('input[type=color][data-k]').forEach(function(el){
+  el.addEventListener('input', function(){ set(el.getAttribute('data-k'), el.value.toLowerCase()); });
+});
+document.querySelectorAll('textarea[data-k]').forEach(function(el){
+  el.addEventListener('input', function(){
+    var lines=el.hasAttribute('data-lines');
+    var list=el.value.split(lines ? /\n/ : /[\s,]+/).map(function(x){ x=x.trim().toLowerCase(); return lines ? x : x.replace(/^@/,''); }).filter(Boolean);
+    SET[el.getAttribute('data-k')]=list; preview(); dirty();
+  });
+});
+$('fonts').innerHTML=FONTS.map(function(f){ return '<button data-f="'+f+'" style="font-family:\''+f+'\',\'Segoe UI\',system-ui,sans-serif">'+(f==='Segoe UI' ? 'Sistema' : f)+'</button>'; }).join('');
+$('fonts').addEventListener('click', function(e){ var b=e.target.closest('button'); if (b) set('fuente', b.getAttribute('data-f')); });
+$('fadeChips').addEventListener('click', function(e){ var b=e.target.closest('button'); if (b){ e.preventDefault(); set('fade', Number(b.getAttribute('data-f'))); } });
+document.querySelectorAll('.bgs button').forEach(function(b){
+  b.addEventListener('click', function(){ document.querySelectorAll('.bgs button').forEach(function(x){ x.classList.toggle('on', x===b); }); $('stage').className='stage '+b.getAttribute('data-bg'); });
+});
+
+/* ---------------- guardar, deshacer, probar ---------------- */
+$('save').onclick=function(){
+  busy=true; dirty(); status('Guardando…');
+  post('save', {set:SET}).then(function(j){
+    busy=false;
+    if (j.__st===403) return status('Tu clave no sirve: vuelve a entrar desde el feed', 'err');
+    if (!j.ok) throw new Error(j.error||'error');
+    SET=j.set; delete SET.at; SAVED=JSON.stringify(SET); paint(); preview(); dirty();
+    status(j.live ? 'Guardado ✓ · tu OBS ya lo tiene' : 'Guardado ✓ · tu OBS lo toma al refrescar (Ably no contestó)', 'ok');
+  }).catch(function(e){ busy=false; dirty(); status('No se pudo guardar: '+e.message, 'err'); });
+};
+$('undo').onclick=function(){ SET=JSON.parse(SAVED); paint(); preview(); dirty(); };
+$('test').onclick=function(){
+  var b=$('test'); b.disabled=true;
+  post('test').then(function(j){ b.textContent=j.ok ? 'Mandado ✓' : 'No llegó'; }).catch(function(){ b.textContent='No llegó'; })
+    .then(function(){ setTimeout(function(){ b.textContent='Probar en OBS'; b.disabled=false; }, 2500); });
+};
+$('link').textContent=LINK;
+$('copy').onclick=function(){
+  var done=function(){ $('copy').textContent='Copiado ✓'; setTimeout(function(){ $('copy').textContent='Copiar link'; }, 2000); };
+  if (navigator.clipboard) navigator.clipboard.writeText(LINK).then(done, function(){ prompt('Copia el link:', LINK); });
+  else prompt('Copia el link:', LINK);
+};
+window.addEventListener('beforeunload', function(e){ if (SET && JSON.stringify(SET)!==SAVED){ e.preventDefault(); e.returnValue=''; } });
+
+/* ---------------- entrar ---------------- */
+function start(){
+  $('gate').hidden=true;
+  post('get').then(function(j){
+    if (j.__st===403){ $('gate').hidden=false; $('gateErr').textContent='Esa clave no es la de tu feed.'; return; }
+    if (!j.ok) throw new Error(j.error||'error');
+    SET=j.set; delete SET.at; SAVED=JSON.stringify(SET);
+    $('main').hidden=false; $('bar').hidden=false;
+    paint(); preview(); dirty();
+    if (!j.rt) status('Ojo: falta Ably en Vercel; tu OBS tomará los cambios al refrescar', 'err');
+  }).catch(function(e){ $('gate').hidden=false; $('gateErr').textContent='Tu servidor no contestó ('+e.message+'). Intenta otra vez.'; });
+}
+$('gateGo').onclick=function(){ var v=$('gateIn').value.trim(), m=/[?&]key=([^&#]+)/.exec(v); KEY=decodeURIComponent(m ? m[1] : v); try{ localStorage.setItem('kickfeed.key', KEY); }catch(e){} if (KEY) start(); };
+if (KEY) start(); else $('gate').hidden=false;
+})();
+</script>
+</body>
+</html>

@@ -1,1 +1,3 @@
+# lo que instalan las pruebas (npm install): no se sube
 node_modules/
+pruebas/package-lock.json

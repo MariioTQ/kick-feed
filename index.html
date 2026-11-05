@@ -9401,6 +9401,7 @@
   var $pfRow=document.createElement('button');      // v74: ⚙ → Plataformas (Kick y Twitch)
   var $alRow=document.createElement('button');      // v76: ⚙ → Alertas (las tuyas, con su Studio)
   var $rwRow=document.createElement('button');      // v84: ⚙ → Recompensas (Kick y Twitch, con sus canjes pendientes)
+  var $coRow=document.createElement('button');      // v83: ⚙ → Chat para OBS (abre Chat Studio)
   var $mixRow=document.createElement('button'), $evRow=document.createElement('button'), $navRow=document.createElement('button'),
       $syNav=document.createElement('button'), $srvRow=document.createElement('button'), $chatRow=document.createElement('button'), $usRow=document.createElement('button'),
       $cmdRow=document.createElement('button'), $qrRow=document.createElement('button'), $ruleRow=document.createElement('button'), $landRow=document.createElement('button'), $oledRow=document.createElement('button'), $ttsRow=document.createElement('button'), $momRow=document.createElement('button'), $fsRow=document.createElement('button');
@@ -9446,6 +9447,7 @@
     srow($oledRow, {ic:'moon', bg:'#1c1c1e', t:'Fondo negro puro', d:'En pantallas OLED ahorra pila · en este celular', tg:1, on:!!CC.oled});
     srow($fsRow, {ic:'look', bg:'#ff9f0a', t:'Diseño', d:'Cómo se ve toda la app', val:(THEMES.filter(function(x){ return x[0]===themeOf(); })[0]||THEMES[0])[1], nav:1});
     srow($chatRow, {ic:'chat', bg:'#0a84ff', t:'Mostrar el chat', d:'En este celular', tg:1, on:CC.on}); $chatRow.id='setChat';
+    srow($coRow, {ic:'look', bg:'#30b0c7', t:'Chat para OBS', d:'Chat Studio: diseño, letra, tiempos y a quién esconder', nav:1});
     srow(cb, {ic:'look', bg:'#5ac8fa', t:'Opciones del chat', val:CC.fs+' px', nav:1});
     srow($mixRow, {ic:'mix', bg:'rgb('+mixRGB()+')', t:'Chat compartido', val:CC.mix ? mixName() : 'Apagado', vc:CC.mix && mixActive() ? 'ok' : '', nav:1});
     srow($qrRow, {ic:'bolt', bg:'#ffb800', t:'Respuestas rápidas', val:String(qrList().length), nav:1});
@@ -9465,6 +9467,9 @@
     $pfRow.onclick=function(){ cpFrom=true; openPfPage(); };
     $alRow.onclick=function(){ cpFrom=true; openAlPage(); };
     $rwRow.onclick=function(){ cpFrom=true; openRwPage(); };
+    // v83: Chat Studio se abre aparte (con tu clave); si el celular no deja abrir pestañas, se copia el link
+    $coRow.onclick=function(){ var u=alBase()+'chat-studio.html?key='+encodeURIComponent(CFG.key||''), w=null; try{ w=window.open(u, '_blank'); if (w) w.opener=null; }catch(e){}
+      if (!w && navigator.clipboard) navigator.clipboard.writeText(u).then(function(){ apToast('📋 Link de Chat Studio copiado: pégalo en tu navegador (trae tu clave, no lo compartas)'); }, function(){}); };
     cb.onclick=function(){ cpFrom=true; openCpanel(); };
     $usRow.onclick=function(){ cpFrom=true; openUsers(false); };
     sb.onclick=function(){ cpFrom=true; openSpam(); };
@@ -9491,7 +9496,7 @@
     ver.className='chip wide ver'; ver.style.cssText='';
     var hd=document.createElement('div'); hd.className='shd'; hd.innerHTML='<b>Ajustes</b><span class="x">Listo</span>';
     hd.querySelector('.x').onclick=function(){ $filt.classList.remove('open'); };
-    var kids=[hd, $hero, sec('En vivo'), grp([$pfRow, tb, $alRow, $rwRow, $apRow, $obsRow, $cmdRow, $ruleRow]), sec('Chat'), grp([$chatRow, cb, $qrRow, $ttsRow, $mixRow, $usRow, sb]),
+    var kids=[hd, $hero, sec('En vivo'), grp([$pfRow, tb, $alRow, $rwRow, $apRow, $obsRow, $cmdRow, $ruleRow]), sec('Chat'), grp([$chatRow, $coRow, cb, $qrRow, $ttsRow, $mixRow, $usRow, sb]),
               sec('Feed'), grp([$evRow]), sec('Pantalla'), grp([$fsRow, $barRow, $navRow, $landRow, $oledRow]), sec('Tus dos celulares'), grp([$syNav]),
               sec('Avanzado'), grp([$srvRow]), ver];
     // lo que no quedó en ninguna sección (por si algo se agrega después) va al final
