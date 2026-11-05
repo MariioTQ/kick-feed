@@ -1512,19 +1512,56 @@ async function rtKeyGet() {
 }
 // 💬 v83 · el widget de chat para OBS (chat-obs.html): público y solo lectura.
 // Lo mismo que ya es público en kick.com y Twitch: la llave del chat de Kick y las imágenes de las
-// insignias de Twitch. Nada de spam, tokens ni claves. El CDN de Vercel lo guarda 1 h: casi no gasta.
+// insignias de Twitch, y tus ajustes de Chat Studio. Nada de spam, tokens ni claves. El CDN de Vercel lo guarda: casi no gasta.
+// v83 · 🎨 Chat Studio: tus ajustes del widget (diseño, letra, tiempos, a quién esconder).
+// Se guardan con tu clave y le llegan al widget al momento por Ably (sin refrescar OBS).
+const CO_FONTS = ['Segoe UI', 'Onest', 'Inter', 'Poppins', 'Montserrat', 'Nunito', 'Roboto', 'Rubik', 'Baloo 2', 'Bebas Neue', 'Bangers', 'Comic Neue'];
+const CO_BOTS = ['botrix', 'kickbot', 'kicklet', 'blerp', 'tq_bot_irl', 'nightbot', 'streamelements'];
+function coClean(o) {
+  o = o && typeof o === 'object' ? o : {};
+  const n = (v, d, lo, hi) => { v = Number(v); return isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };
+  const b = (v, d) => typeof v === 'boolean' ? v : d;
+  const pick = (v, list, d) => list.indexOf(v) >= 0 ? v : d;
+  const hex = (v, d) => /^#[0-9a-f]{6}$/i.test(String(v || '')) ? String(v).toLowerCase() : d;
+  const names = (v, max) => (Array.isArray(v) ? v : String(v || '').split(/[\s,]+/)).map(x => String(x || '').trim().toLowerCase().replace(/^@/, '').replace(/[^\w.-]/g, '').slice(0, 30)).filter(Boolean).filter((x, i, a) => a.indexOf(x) === i).slice(0, max);
+  const words = v => (Array.isArray(v) ? v : String(v || '').split(/\n|,/)).map(x => String(x || '').trim().toLowerCase().slice(0, 40)).filter(x => x.length >= 2).filter((x, i, a) => a.indexOf(x) === i).slice(0, 100);
+  return {
+    estilo: pick(o.estilo, ['linea', 'burbuja', 'tarjeta'], 'linea'), fuente: pick(o.fuente, CO_FONTS, 'Segoe UI'),
+    tam: Math.round(n(o.tam, 20, 10, 80)), peso: pick(Number(o.peso), [400, 600, 700, 800, 900], 700), colTexto: hex(o.colTexto, '#ffffff'),
+    sombra: pick(Number(o.sombra), [0, 1, 2], 1), fondoCol: hex(o.fondoCol, '#000000'), fondo: Math.round(n(o.fondo, 0, 0, 1) * 100) / 100,
+    radio: Math.round(n(o.radio, 8, 0, 30)), espacio: Math.round(n(o.espacio, 2, 0, 20)), emTam: Math.round(n(o.emTam, 1.6, 1, 4) * 10) / 10,
+    fade: Math.round(n(o.fade, 30, 0, 3600)), max: Math.round(n(o.max, 10, 1, 60)), arriba: b(o.arriba, false),
+    anim: pick(o.anim, ['sube', 'lado', 'aparece', 'no'], 'sube'), nombreArriba: b(o.nombreArriba, false),
+    insignias: b(o.insignias, true), colores: b(o.colores, true), kt: b(o.kt, false), grande: b(o.grande, false), extras: b(o.extras, true),
+    pf: pick(o.pf, ['ambas', 'kick', 'tw'], 'ambas'), ocultarBots: b(o.ocultarBots, true), bots: o.bots === undefined ? CO_BOTS.slice() : names(o.bots, 50),
+    cmd: b(o.cmd, false), links: b(o.links, false), ocultar: names(o.ocultar, 200), palabras: words(o.palabras)
+  };
+}
 async function chatObsApi(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
-  let k = null, bid = '', twb = {};
+  const q = req.query || {}, a = String(q.a || '');
+  if (a === 'get' || a === 'save' || a === 'test') {
+    if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
+    const bd = await readJSONBody(req);
+    if (!(await checkKey(bd.key))) return send(res, 403, { ok: false, error: 'clave' });
+    if (a === 'test') return send(res, 200, { ok: await RT.pub('chatobs', { test: 1 }) });
+    if (a === 'get') return send(res, 200, { ok: true, set: coClean(await getJSON('chatobs:set')), rt: RT.on(), fonts: CO_FONTS });
+    const set = coClean(bd.set); set.at = Date.now();
+    await setJSON('chatobs:set', set);
+    const live = await RT.pub('chatobs', { set });
+    return send(res, 200, { ok: true, set, live });
+  }
+  let k = null, bid = '', twb = {}, set = null;
+  try { set = coClean(await getJSON('chatobs:set')); } catch (e) {}
   try { k = await rtKeyGet(); } catch (e) {}
   try {
     if (TW_ID && TW_SECRET) { bid = await twMe(); if (bid) { const m = await twBadgeMap(bid); for (const x in m) twb[x] = m[x][0]; } }
   } catch (e) {}
   return send(res, 200, { ok: !!k, v: 1,
     kick: { slug: CHANNEL, chatroom: String(process.env.KICK_CHATROOM || '6635680'), key: k ? k.app_key : '', cluster: k ? k.cluster : 'us2' },
-    tw: { login: String(process.env.TWITCH_LOGIN || CHANNEL), id: bid }, twb },
-    undefined, k ? 'public, max-age=600, s-maxage=3600, stale-while-revalidate=86400' : 'no-store');
+    tw: { login: String(process.env.TWITCH_LOGIN || CHANNEL), id: bid }, twb, set },
+    undefined, k ? 'public, max-age=60, s-maxage=60, stale-while-revalidate=86400' : 'no-store');   // 1 min: lo que guardes en Chat Studio se ve aunque refresques OBS
 }
 async function chatInApi(req, res) {
   cors(res);

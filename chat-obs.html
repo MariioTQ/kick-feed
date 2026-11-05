@@ -6,83 +6,119 @@
 <title>Chat para OBS · MarioTQ</title>
 <style>
 /* ==================================================================
-   💬 CHAT PARA OBS (v1) · Kick + Twitch juntos, fondo transparente.
+   💬 CHAT PARA OBS (v2) · Kick + Twitch juntos, fondo transparente.
    Fuente de navegador en tu OBS; SÍ sale al aire.
    Lee el chat directo de Kick (Pusher) y de Twitch (IRC anónimo), como
-   la guardia: tu servidor solo se toca 1 vez al abrir (la llave de Kick
-   y las insignias de Twitch, con caché de 1 hora). Nada por mensaje.
+   la guardia: tu servidor solo se toca 1 vez al abrir (la llave de Kick,
+   las insignias de Twitch y tus ajustes). Nada por mensaje.
    Si Kick o Twitch borran un mensaje (o banean a alguien), desaparece.
 
-   Opciones en el link (todas son opcionales):
-     ?tam=20        tamaño de letra en px
-     ?fade=30       segundos para que un mensaje se desvanezca (0 = nunca)
-     ?max=10        cuántos mensajes como máximo en pantalla
-     ?arriba=1      los nuevos salen arriba (por defecto, abajo)
-     ?insignias=0   sin insignias          ?colores=0  nombres en blanco
-     ?kt=1          marquita K/T           ?grande=1   emotes grandes si es puro emote
-     ?bots=1        enseña a los bots      ?cmd=1      enseña los !comandos
-     ?ocultar=a,b   esconde a esas personas (además de los bots)
-     ?pf=kick | ?pf=tw   solo una plataforma
-     ?extras=0      sin emotes de 7TV, BetterTTV y FFZ
-     ?fondo=0.35    franja oscura detrás de cada mensaje (0 a 1)
-     ?anim=0        sin animación al entrar
-     ?prueba=1      mensajes de ejemplo para acomodarlo en OBS
+   🎨 Todo se cambia desde Chat Studio (chat-studio.html, con tu clave):
+   diseño, letra, tiempos, a quién esconder… y le llega a esta página al
+   momento por Ably, sin refrescar OBS ni cambiar el link.
+
+   El link puede llevar opciones que GANAN sobre Chat Studio (opcional):
+     ?tam=20 ?fade=30 ?max=10 ?arriba=1 ?insignias=0 ?colores=0 ?kt=1
+     ?grande=1 ?bots=1 ?cmd=1 ?ocultar=a,b ?pf=kick|tw ?extras=0
+     ?fondo=0.35 ?anim=0 ?estilo=linea|burbuja|tarjeta
+     ?prueba=1   mensajes de ejemplo para acomodarlo en OBS
    ================================================================== */
-:root{--tam:20px;--fondo:0}
+:root{--tam:20px;--fondo:rgba(0,0,0,0);--fuente:"Segoe UI";--peso:700;--texto:#fff;--radio:8px;--esp:2px;--em:1.6em;--sombra:0 0 2px #000,0 0 3px #000,1px 1px 2px #000}
 html,body{margin:0;height:100%;overflow:hidden;background:transparent}
-body{font-family:"Segoe UI","Inter",Roboto,system-ui,sans-serif;font-size:var(--tam);color:#fff;line-height:1.35}
-#chat{position:fixed;left:0;right:0;bottom:0;display:flex;flex-direction:column;padding:6px 8px;box-sizing:border-box}
+body{font-family:var(--fuente),"Segoe UI",Roboto,system-ui,sans-serif;font-size:var(--tam);color:var(--texto);line-height:1.35}
+#chat{position:fixed;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:flex-start;padding:6px 8px;box-sizing:border-box}
 body.arriba #chat{bottom:auto;top:0}
-.m{padding:2px 6px;margin:1px 0;border-radius:6px;word-wrap:break-word;overflow-wrap:anywhere;
-   background:rgba(0,0,0,var(--fondo));
-   text-shadow:0 0 2px #000,0 0 3px #000,1px 1px 2px #000;
-   transition:opacity .6s ease, transform .6s ease}
-.m.in{animation:entra .25s ease-out}
-body.sinanim .m.in{animation:none}
-@keyframes entra{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-body.arriba .m.in{animation-name:entraA}
-@keyframes entraA{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.m{box-sizing:border-box;max-width:100%;margin:var(--esp) 0;word-wrap:break-word;overflow-wrap:anywhere;text-shadow:var(--sombra);transition:opacity .6s ease}
+/* renglones simples */
+body.linea .m{width:100%;padding:2px 6px;border-radius:var(--radio);background:var(--fondo)}
+/* burbujas: cada mensaje en su globito, del ancho del texto */
+body.burbuja .m{padding:.3em .7em;border-radius:calc(var(--radio) + .4em);background:var(--fondo)}
+/* tarjetas: a lo ancho, con la orilla del color de la plataforma */
+body.tarjeta .m{width:100%;padding:.35em .7em;border-radius:var(--radio);background:var(--fondo);border-left:.25em solid #53fc18}
+body.tarjeta .m[data-pf="tw"]{border-left-color:#a970ff}
+body.narr .n{display:block}
+body.narr .sep{display:none}
+.m.in{animation:sube .3s ease-out}
+body.a-lado .m.in{animation-name:lado}
+body.a-aparece .m.in{animation-name:aparece}
+body.a-no .m.in{animation:none}
+body.arriba.a-sube .m.in{animation-name:baja}
+@keyframes sube{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes baja{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+@keyframes lado{from{opacity:0;transform:translateX(-24px)}to{opacity:1;transform:none}}
+@keyframes aparece{from{opacity:0}to{opacity:1}}
 .m.out{opacity:0}
 .bd img{height:1em;width:auto;vertical-align:-.12em;margin-right:.22em}
-.n{font-weight:700}
-.t{color:#fff}
+.n{font-weight:var(--peso)}
 .me .t{font-style:italic}
-img.em{height:1.6em;width:auto;vertical-align:-.45em;margin:-.15em .05em}
-.big img.em{height:3.2em;vertical-align:middle;margin:.1em .1em}
-.kt{display:inline-block;font-size:.62em;font-weight:800;line-height:1;padding:.22em .32em;border-radius:.3em;margin-right:.35em;vertical-align:.2em;text-shadow:none;color:#0b0d10}
+img.em{height:var(--em);width:auto;vertical-align:middle;margin:-.2em .05em}
+.big img.em{height:calc(var(--em) * 2);margin:.1em .1em}
+.kt{display:inline-block;font-size:.62em;font-weight:800;line-height:1;padding:.22em .32em;border-radius:.3em;margin-right:.35em;vertical-align:.2em;text-shadow:none;color:#0b0d10;font-family:"Segoe UI",system-ui,sans-serif}
 .kt.k{background:#53fc18}.kt.w{background:#a970ff;color:#fff}
 </style>
 </head>
-<body>
+<body class="linea a-sube">
 <div id="chat"></div>
+<script src="rt.js"></script>
 <script>
 (function(){
 'use strict';
-var VER='1';
+var VER='2';
 var Q=new URLSearchParams(location.search);
 var API=(Q.get('api')||'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,'');
-function num(k, d, lo, hi){ var v=Number(Q.get(k)); if (!Q.has(k) || !isFinite(v)) return d; return Math.max(lo, Math.min(hi, v)); }
-var OPT={
-  tam:num('tam', 20, 10, 80), fade:num('fade', 30, 0, 3600), max:Math.round(num('max', 10, 1, 60)),
-  arriba:Q.get('arriba')==='1', badges:Q.get('insignias')!=='0', colors:Q.get('colores')!=='0',
-  kt:Q.get('kt')==='1', big:Q.get('grande')==='1', bots:Q.get('bots')==='1', cmd:Q.get('cmd')==='1',
-  extras:Q.get('extras')!=='0', fondo:num('fondo', 0, 0, 1), anim:Q.get('anim')!=='0', pf:String(Q.get('pf')||'').toLowerCase(),
-  test:Q.get('prueba')==='1'
-};
-var BOTS=['botrix','kickbot','kicklet','blerp','tq_bot_irl','nightbot','streamelements'];
-var HIDE=new Set(BOTS.filter(function(){ return !OPT.bots; }));
-String(Q.get('ocultar')||'').split(',').forEach(function(u){ u=u.trim().toLowerCase().replace(/^@/,''); if (u) HIDE.add(u); });
-var WANT_K=OPT.pf!=='tw', WANT_T=OPT.pf!=='kick';
-
-document.documentElement.style.setProperty('--tam', OPT.tam+'px');
-document.documentElement.style.setProperty('--fondo', String(OPT.fondo));
-if (OPT.arriba) document.body.classList.add('arriba');
-if (!OPT.anim) document.body.classList.add('sinanim');
+var TEST=Q.get('prueba')==='1', FROMPARENT=false;
 var BOX=document.getElementById('chat');
-
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function LSget(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function LSset(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+
+/* ---------------- ajustes: Chat Studio (tu servidor) + lo que traiga el link ---------------- */
+var DEF={estilo:'linea', fuente:'Segoe UI', tam:20, peso:700, colTexto:'#ffffff', sombra:1, fondoCol:'#000000', fondo:0, radio:8, espacio:2, emTam:1.6,
+  fade:30, max:10, arriba:false, anim:'sube', nombreArriba:false, insignias:true, colores:true, kt:false, grande:false, extras:true,
+  pf:'ambas', ocultarBots:true, bots:['botrix','kickbot','kicklet','blerp','tq_bot_irl','nightbot','streamelements'], cmd:false, links:false, ocultar:[], palabras:[]};
+var FONTS={'Onest':'Onest:wght@400;600;700;800;900','Inter':'Inter:wght@400;600;700;800;900','Poppins':'Poppins:wght@400;600;700;800;900',
+  'Montserrat':'Montserrat:wght@400;600;700;800;900','Nunito':'Nunito:wght@400;600;700;800;900','Roboto':'Roboto:wght@400;500;700;900',
+  'Rubik':'Rubik:wght@400;600;700;800;900','Baloo 2':'Baloo+2:wght@400;600;700;800','Bebas Neue':'Bebas+Neue','Bangers':'Bangers','Comic Neue':'Comic+Neue:wght@400;700'};
+function fromUrl(){
+  var o={}, b=function(k){ return Q.get(k)==='1'; };
+  function n(k){ var v=Number(Q.get(k)); return Q.has(k) && isFinite(v) ? v : undefined; }
+  if (n('tam')!==undefined) o.tam=n('tam'); if (n('fade')!==undefined) o.fade=n('fade'); if (n('max')!==undefined) o.max=n('max');
+  if (n('fondo')!==undefined) o.fondo=n('fondo');
+  if (Q.has('arriba')) o.arriba=b('arriba'); if (Q.has('insignias')) o.insignias=Q.get('insignias')!=='0'; if (Q.has('colores')) o.colores=Q.get('colores')!=='0';
+  if (Q.has('kt')) o.kt=b('kt'); if (Q.has('grande')) o.grande=b('grande'); if (Q.has('bots')) o.ocultarBots=!b('bots'); if (Q.has('cmd')) o.cmd=b('cmd');
+  if (Q.has('extras')) o.extras=Q.get('extras')!=='0'; if (Q.get('anim')==='0') o.anim='no';
+  if (/^(kick|tw)$/.test(Q.get('pf')||'')) o.pf=Q.get('pf');
+  if (/^(linea|burbuja|tarjeta)$/.test(Q.get('estilo')||'')) o.estilo=Q.get('estilo');
+  if (Q.get('ocultar')) o.ocultarMas=String(Q.get('ocultar')).split(',');
+  return o;
+}
+var URLSET=fromUrl(), SRVSET=null, S=null, HIDE=new Set(), WORDS=[];
+function hexA(h, a){ var m=/^#?([0-9a-f]{6})$/i.exec(h||''); var v=m ? parseInt(m[1],16) : 0; return 'rgba('+(v>>16&255)+','+(v>>8&255)+','+(v&255)+','+a+')'; }
+var fontsLoaded={};
+function loadFont(f){
+  if (!FONTS[f] || fontsLoaded[f]) return; fontsLoaded[f]=1;
+  var l=document.createElement('link'); l.rel='stylesheet'; l.href='https://fonts.googleapis.com/css2?family='+FONTS[f]+'&display=swap'; document.head.appendChild(l);
+}
+function apply(set){
+  if (set) SRVSET=set;
+  var s={}, k; for (k in DEF) s[k]=DEF[k];
+  if (SRVSET) for (k in SRVSET) if (k in DEF) s[k]=SRVSET[k];
+  for (k in URLSET) if (k in DEF) s[k]=URLSET[k];
+  S=s;
+  HIDE=new Set((s.ocultarBots ? s.bots : []).concat(s.ocultar, URLSET.ocultarMas||[]).map(function(u){ return String(u||'').trim().toLowerCase().replace(/^@/,''); }).filter(Boolean));
+  WORDS=(s.palabras||[]).map(function(w){ return String(w).toLowerCase(); }).filter(Boolean);
+  var r=document.documentElement.style;
+  loadFont(s.fuente);
+  r.setProperty('--tam', s.tam+'px'); r.setProperty('--fuente', '"'+s.fuente+'"'); r.setProperty('--peso', String(s.peso));
+  r.setProperty('--texto', s.colTexto); r.setProperty('--fondo', hexA(s.fondoCol, s.fondo)); r.setProperty('--radio', s.radio+'px');
+  r.setProperty('--esp', s.espacio+'px'); r.setProperty('--em', s.emTam+'em');
+  r.setProperty('--sombra', s.sombra===0 ? 'none' : s.sombra===2 ? '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 4px #000,2px 2px 3px #000' : '0 0 2px #000,0 0 3px #000,1px 1px 2px #000');
+  document.body.className=[s.estilo, 'a-'+s.anim, s.arriba ? 'arriba' : '', s.nombreArriba ? 'narr' : ''].join(' ');
+  // los mensajes que ya están en pantalla: se vuelven a pintar (y se van los que ahora se esconden)
+  Array.prototype.slice.call(BOX.children).forEach(function(d){ if (!d._o) return; if (hidden(d._o.user, d._o.text, d._o.pf)) return kill(d); paint(d); });
+  trim();
+}
+var WANT=function(pf){ return S.pf==='ambas' || S.pf===pf; };
 
 /* ---------------- colores de nombre (aclarados si no se leen, como en la app) ---------------- */
 var TWDEF=['#FF0000','#0000FF','#008000','#B22222','#FF7F50','#9ACD32','#FF4500','#2E8B57','#DAA520','#D2691E','#5F9EA0','#1E90FF','#FF69B4','#8A2BE2','#00FF7F'], RC={};
@@ -99,13 +135,12 @@ function readable(c){
 
 /* ---------------- insignias ---------------- */
 var KBADGE={"broadcaster":"data:image/svg+xml,%3Csvg version=%221.1%22 xmlns=%22http://www.w3.org/2000/svg%22 x=%220px%22 y=%220px%22 viewBox=%220 0 16 16%22 xml:space=%22preserve%22 width=%2216%22 height=%2216%22%3E%3Cg id=%22Badge_Chat_host%22%3E%3ClinearGradient id=%22badge-host-gradient-1%22 gradientUnits=%22userSpaceOnUse%22 x1=%224%22 y1=%22180.5864%22 x2=%224%22 y2=%22200.6666%22 gradientTransform=%22matrix(1 0 0 1 0 -182)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23FF1CD2;%22/%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23B20DFF;%22/%3E%3C/linearGradient%3E%3Crect x=%223.2%22 y=%229.6%22 style=%22fill:url(%23badge-host-gradient-1);%22 width=%221.6%22 height=%221.6%22/%3E%3ClinearGradient id=%22badge-host-gradient-2%22 gradientUnits=%22userSpaceOnUse%22 x1=%228%22 y1=%22180.5864%22 x2=%228%22 y2=%22200.6666%22 gradientTransform=%22matrix(1 0 0 1 0 -182)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23FF1CD2;%22/%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23B20DFF;%22/%3E%3C/linearGradient%3E%3Cpolygon style=%22fill:url(%23badge-host-gradient-2);%22 points=%226.4,9.6 9.6,9.6 9.6,8 11.2,8 11.2,1.6 9.6,1.6 9.6,0 6.4,0 6.4,1.6 4.8,1.6 4.8,8 6.4,8 %22/%3E%3ClinearGradient id=%22badge-host-gradient-3%22 gradientUnits=%22userSpaceOnUse%22 x1=%222.4%22 y1=%22180.5864%22 x2=%222.4%22 y2=%22200.6666%22 gradientTransform=%22matrix(1 0 0 1 0 -182)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23FF1CD2;%22/%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23B20DFF;%22/%3E%3C/linearGradient%3E%3Crect x=%221.6%22 y=%226.4%22 style=%22fill:url(%23badge-host-gradient-3);%22 width=%221.6%22 height=%223.2%22/%3E%3ClinearGradient id=%22badge-host-gradient-4%22 gradientUnits=%22userSpaceOnUse%22 x1=%2212%22 y1=%22180.5864%22 x2=%2212%22 y2=%22200.6666%22 gradientTransform=%22matrix(1 0 0 1 0 -182)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23FF1CD2;%22/%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23B20DFF;%22/%3E%3C/linearGradient%3E%3Crect x=%2211.2%22 y=%229.6%22 style=%22fill:url(%23badge-host-gradient-4);%22 width=%221.6%22 height=%221.6%22/%3E%3ClinearGradient id=%22badge-host-gradient-5%22 gradientUnits=%22userSpaceOnUse%22 x1=%228%22 y1=%22180.5864%22 x2=%228%22 y2=%22200.6666%22 gradientTransform=%22matrix(1 0 0 1 0 -182)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23FF1CD2;%22/%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23B20DFF;%22/%3E%3C/linearGradient%3E%3Cpolygon style=%22fill:url(%23badge-host-gradient-5);%22 points=%224.8,12.8 6.4,12.8 6.4,14.4 4.8,14.4 4.8,16 11.2,16 11.2,14.4 9.6,14.4 9.6,12.8 11.2,12.8 11.2,11.2 4.8,11.2 %22/%3E%3ClinearGradient id=%22badge-host-gradient-6%22 gradientUnits=%22userSpaceOnUse%22 x1=%2213.6%22 y1=%22180.5864%22 x2=%2213.6%22 y2=%22200.6666%22 gradientTransform=%22matrix(1 0 0 1 0 -182)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23FF1CD2;%22/%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23B20DFF;%22/%3E%3C/linearGradient%3E%3Crect x=%2212.8%22 y=%226.4%22 style=%22fill:url(%23badge-host-gradient-6);%22 width=%221.6%22 height=%223.2%22/%3E%3C/g%3E%3C/svg%3E","moderator":"data:image/svg+xml,%3Csvg version=%221.1%22 xmlns=%22http://www.w3.org/2000/svg%22 x=%220px%22 y=%220px%22 viewBox=%220 0 16 16%22 xml:space=%22preserve%22 width=%2216%22 height=%2216%22%3E%3Cpath d=%22M11.7,1.3v1.5h-1.5v1.5 H8.7v1.5H7.3v1.5H5.8V5.8h-3v3h1.5v1.5H2.8v1.5H1.3v3h3v-1.5h1.5v-1.5h1.5v1.5h3v-3H8.7V8.7h1.5V7.3h1.5V5.8h1.5V4.3h1.5v-3 C14.7,1.3,11.7,1.3,11.7,1.3z%22 style=%22fill: rgb(0, 199, 255);%22%3E%3C/path%3E%3C/svg%3E","vip":"data:image/svg+xml,%3Csvg version=%221.1%22 xmlns=%22http://www.w3.org/2000/svg%22 x=%220px%22 y=%220px%22 viewBox=%220 0 16 16%22 xml:space=%22preserve%22 width=%2216%22 height=%2216%22%3E%3ClinearGradient id=%22badge-vip-gradient%22 gradientUnits=%22userSpaceOnUse%22 x1=%228%22 y1=%22-163.4867%22 x2=%228%22 y2=%22-181.56%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color: rgb(255, 201, 0);%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color: rgb(255, 149, 0);%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath d=%22M13.9,2.4v1.1h-1.2v2.3 h-1.1v1.1h-1.1V4.6H9.3V1.3H6.7v3.3H5.6v2.3H4.4V5.8H3.3V3.5H2.1V2.4H0v12.3h16V2.4H13.9z%22 style=%22fill: url(%26quot;%23badge-vip-gradient%26quot;);%22%3E%3C/path%3E%3C/svg%3E","og":"data:image/svg+xml,%3Csvg version=%221.1%22 xmlns=%22http://www.w3.org/2000/svg%22 x=%220px%22 y=%220px%22 viewBox=%220 0 16 16%22 xml:space=%22preserve%22 width=%2216%22 height=%2216%22%3E%3Cg%3E%3ClinearGradient id=%22badge-og-gradient-1%22 gradientUnits=%22userSpaceOnUse%22 x1=%2212.2%22 y1=%22-180%22 x2=%2212.2%22 y2=%22-165.2556%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%2300FFF2;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23006399;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-og-gradient-1);%22 d=%22M16,16H9.2v-0.8H8.4v-8h0.8V6.4H16v3.2h-4.5v4.8H13v-1.6h-0.8v-1.6H16V16z%22%3E%3C/path%3E%3ClinearGradient id=%22badge-og-gradient-2%22 gradientUnits=%22userSpaceOnUse%22 x1=%223.7636%22 y1=%22-164.265%22 x2=%224.0623%22 y2=%22-179.9352%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%2300FFF2;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%23006399;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-og-gradient-2);%22 d=%22M6.8,8.8v0.8h-6V8.8H0v-8h0.8V0h6.1v0.8 h0.8v8H6.8z M4.5,6.4V1.6H3v4.8H4.5z%22%3E%3C/path%3E%3Cpath style=%22fill:%2300FFF2;%22 d=%22M6.8,15.2V16h-6v-0.8H0V8.8h0.8V8h6.1v0.8h0.8v6.4C7.7,15.2,6.8,15.2,6.8,15.2z M4.5,14.4V9.6H3v4.8 C3,14.4,4.5,14.4,4.5,14.4z%22%3E%3C/path%3E%3Cpath style=%22fill:%2300FFF2;%22 d=%22M16,8H9.2V7.2H8.4V0.8h0.8V0H16v1.6h-4.5v4.8H13V4.8h-0.8V3.2H16V8z%22%3E%3C/path%3E%3C/g%3E%3C/svg%3E","founder":"data:image/svg+xml,%3Csvg xmlns:xlink=%22http://www.w3.org/1999/xlink%22 xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22 width=%2218%22 height=%2218%22%3E%3Cg clip-path=%22url(%23clip0_369_269)%22%3E%3Cpath d=%22M0 0V32H32V0H0Z%22 fill=%22%23009644%22%3E%3C/path%3E%3Cpath d=%22M22.88 20.528H20.272V19.728C20.272 19.36 20.24 19.12 20.176 19.008C20.112 18.896 20 18.848 19.84 18.848C19.664 18.848 19.536 18.912 19.456 19.056C19.376 19.2 19.328 19.408 19.328 19.68C19.328 20.048 19.376 20.32 19.472 20.496C19.568 20.672 19.824 20.896 20.272 21.168C21.536 21.92 22.304 22.528 22.64 22.992C22.976 23.472 23.136 24.24 23.136 25.296C23.136 26.064 23.04 26.64 22.864 26.992C22.688 27.36 22.336 27.664 21.808 27.92C21.28 28.176 20.688 28.288 20.016 28.288C19.264 28.288 18.624 28.144 18.096 27.856C17.568 27.568 17.216 27.2 17.04 26.768C16.864 26.336 16.784 25.696 16.784 24.896V24.192H19.392V25.52C19.392 25.92 19.424 26.192 19.504 26.304C19.584 26.416 19.712 26.48 19.904 26.48C20.096 26.48 20.224 26.4 20.32 26.256C20.416 26.112 20.464 25.888 20.464 25.6C20.464 24.96 20.384 24.544 20.208 24.352C20.032 24.16 19.584 23.824 18.88 23.36C18.176 22.896 17.712 22.56 17.504 22.352C17.28 22.144 17.088 21.856 16.944 21.472C16.8 21.088 16.72 20.624 16.72 20.064C16.72 19.232 16.832 18.64 17.04 18.256C17.248 17.872 17.6 17.568 18.064 17.36C18.528 17.152 19.104 17.04 19.76 17.04C20.496 17.04 21.12 17.152 21.616 17.392C22.128 17.632 22.48 17.92 22.64 18.288C22.8 18.656 22.896 19.264 22.896 20.112V20.544V20.512L22.88 20.528Z%22 fill=%22%23B9E38D%22%3E%3C/path%3E%3Cpath d=%22M29.664 17.264V19.424H28V28.064H25.184V19.424H23.536V17.264H29.68H29.664Z%22 fill=%22%23B9E38D%22%3E%3C/path%3E%3Cpath d=%22M6.496 28.4V11.616C5.488 11.536 3.568 11.328 3.184 11.2V5.872C5.392 5.728 7.056 4.64 7.952 3.6H14.768V28.384H6.496V28.4Z%22 fill=%22%23FFFFFF%22%3E%3C/path%3E%3C/g%3E%3Cdefs%3E%3CclipPath id=%22clip0_369_269%22%3E%3Crect width=%2232%22 height=%2232%22 fill=%22white%22%3E%3C/rect%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E","verified":"data:image/svg+xml,%3Csvg xmlns:xlink=%22http://www.w3.org/1999/xlink%22 xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22 fill=%22none%22 width=%2218%22 height=%2218%22%3E%3Cg clip-path=%22url(%23clip0_369_233)%22 fill=%22none%22%3E%3Cpath d=%22M0 0V32H32V0H0Z%22 fill=%22url(%26quot;%23paint0_linear_369_233%26quot;)%22%3E%3C/path%3E%3Cpath d=%22M12.432 27.616L2.48 16.128L5.28 12.976L11.984 17.36L25.984 3.728L29.52 7.04L12.432 27.616Z%22 fill=%22%23FFFFFF%22%3E%3C/path%3E%3Cpath d=%22M12.608 25.04L29.52 7.04L12.432 28.72L2.48 16.128L12.608 25.056V25.04Z%22 fill=%22%233A9955%22%3E%3C/path%3E%3Cpath d=%22M2.48 16.128L12.432 24.016L29.52 7.04L12.432 26.432L2.48 16.128Z%22 fill=%22%23B9E38D%22%3E%3C/path%3E%3C/g%3E%3Cdefs%3E%3ClinearGradient id=%22paint0_linear_369_233%22 x1=%2238.24%22 y1=%2241.488%22 x2=%221.056%22 y2=%22-1.136%22 gradientUnits=%22userSpaceOnUse%22%3E%3Cstop stop-color=%22%23005863%22%3E%3C/stop%3E%3Cstop offset=%220.19%22 stop-color=%22%23006357%22%3E%3C/stop%3E%3Cstop offset=%220.64%22 stop-color=%22%236CCF00%22%3E%3C/stop%3E%3Cstop offset=%221%22 stop-color=%22%23BEED00%22%3E%3C/stop%3E%3C/linearGradient%3E%3CclipPath id=%22clip0_369_233%22%3E%3Crect width=%2232%22 height=%2232%22 fill=%22white%22%3E%3C/rect%3E%3C/clipPath%3E%3ClinearGradient id=%22paint0_linear_369_233%22 x1=%2238.24%22 y1=%2241.488%22 x2=%221.056%22 y2=%22-1.136%22 gradientUnits=%22userSpaceOnUse%22%3E%3Cstop stop-color=%22%23005863%22%3E%3C/stop%3E%3Cstop offset=%220.19%22 stop-color=%22%23006357%22%3E%3C/stop%3E%3Cstop offset=%220.64%22 stop-color=%22%236CCF00%22%3E%3C/stop%3E%3Cstop offset=%221%22 stop-color=%22%23BEED00%22%3E%3C/stop%3E%3C/linearGradient%3E%3C/defs%3E%3C/svg%3E","staff":"data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg clip-path=%22url(%23clip0_301_17830)%22%3E%3Cpath d=%22M7.99999 9.14999V6.62499L0.484985 3.35999V6.34499L1.14999 6.63999V12.73L7.99999 16V9.14999Z%22 fill=%22%232FA604%22/%3E%3Cpath d=%22M8.00002 10.74V9.61501L1.15002 6.64001V7.71001L8.00002 10.74Z%22 fill=%22%232FA604%22/%3E%3Cpath d=%22M15.515 3.355V6.345L14.85 6.64V12.73L12.705 13.755L11.185 14.48L8.00499 15.995V6.715L4.81999 5.295H4.81499L3.29499 4.61L0.484985 3.355L3.66999 1.935L3.67999 1.93L5.09499 1.3L8.00499 0L10.905 1.3L12.32 1.925L12.33 1.935L15.515 3.355Z%22 fill=%22%2353F918%22/%3E%3Cpath d=%22M14.85 6.64001V7.71001L8 10.74V9.61501L14.85 6.64001Z%22 fill=%22%232FA604%22/%3E%3C/g%3E%3Cdefs%3E%3CclipPath id=%22clip0_301_17830%22%3E%3Crect width=%2216%22 height=%2216%22 fill=%22white%22/%3E%3C/clipPath%3E%3C/defs%3E%3Cimage href=%22data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAIAAAC0tAIdAAAAZklEQVQoFWNgYGAI/iOBjBhgAFkw%2BI8EVBi7KC5TMFV73BVFE8RpNqY6iAh2l1CqGuZtMI3LMLg4CapRlGKGN9xIOANFA1wUF4M01RBToHpwGYkmjl01AwMDCXEJdyWxZkM0YKoGAPqY7g3a/VtEAAAAAElFTkSuQmCC%22 width=%2215%22 height=%2215%22 x=%22-0.081%22 y=%22-0.047%22 style=%22%22 transform=%22matrix(1.075213, 0, 0, 1.070655, 0.006092, 0.003321)%22/%3E%3C/svg%3E","subscriber":"data:image/svg+xml,%3Csvg version=%221.1%22 xmlns=%22http://www.w3.org/2000/svg%22 x=%220px%22 y=%220px%22 viewBox=%220 0 16 16%22 xml:space=%22preserve%22 width=%2216%22 height=%2216%22%3E%3Cg%3E%3ClinearGradient id=%22badge-subscriber-gradient-1%22 gradientUnits=%22userSpaceOnUse%22 x1=%22-2.386%22 y1=%22-151.2764%22 x2=%2242.2073%22 y2=%22-240.4697%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23E1FF00;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%232AA300;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-subscriber-gradient-1);%22 d=%22M14.8,7.3V6.1h-2.4V4.9H11V3.7H9.9V1.2H8.7V0H7.3v1.2H6.1v2.5H5v1.2H3.7v1.3H1.2v1.2H0v1.4 h1.2V10h2.4v1.3H5v1.2h1.2V15h1.2v1h1.3v-1.2h1.2v-2.5H11v-1.2h1.3V9.9h2.4V8.7H16V7.3H14.8z%22%3E%3C/path%3E%3ClinearGradient id=%22badge-subscriber-gradient-2%22 gradientUnits=%22userSpaceOnUse%22 x1=%22-5.3836%22 y1=%22-158.3055%22 x2=%2214.9276%22 y2=%22-189.0962%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23E1FF00;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%232AA300;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-subscriber-gradient-2);%22 d=%22M7.3,7.3v7.5H6.1v-2.5H5v-1.2H3.7V9.9H1.2 V8.7H0V7.3H7.3z%22%3E%3C/path%3E%3ClinearGradient id=%22badge-subscriber-gradient-3%22 gradientUnits=%22userSpaceOnUse%22 x1=%223.65%22 y1=%22-160.7004%22 x2=%223.65%22 y2=%22-184.1244%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23E1FF00;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%232AA300;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-subscriber-gradient-3);%22 d=%22M7.3,7.3v7.5H6.1v-2.5H5v-1.2H3.7V9.9H1.2 V8.7H0V7.3H7.3z%22%3E%3C/path%3E%3ClinearGradient id=%22badge-subscriber-gradient-4%22 gradientUnits=%22userSpaceOnUse%22 x1=%2222.9659%22 y1=%22-167.65%22 x2=%22-5.3142%22 y2=%22-167.65%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23E1FF00;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%232AA300;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-subscriber-gradient-4);%22 d=%22M8.7,0v7.3H1.2V6.1h2.4V4.9H5V3.7h1.2V1.2 h1.2V0H8.7z%22%3E%3C/path%3E%3ClinearGradient id=%22badge-subscriber-gradient-5%22 gradientUnits=%22userSpaceOnUse%22 x1=%2212.35%22 y1=%22-187.6089%22 x2=%2212.35%22 y2=%22-161.5965%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23E1FF00;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%232AA300;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-subscriber-gradient-5);%22 d=%22M8.7,8.7V1.2h1.2v2.5H11v1.2h1.3v1.3h2.4 v1.2H16v1.4L8.7,8.7L8.7,8.7z%22%3E%3C/path%3E%3ClinearGradient id=%22badge-subscriber-gradient-6%22 gradientUnits=%22userSpaceOnUse%22 x1=%22-6.5494%22 y1=%22-176.35%22 x2=%2221.3285%22 y2=%22-176.35%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23E1FF00;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%232AA300;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-subscriber-gradient-6);%22 d=%22M7.3,16V8.7h7.4v1.2h-2.4v1.3H11v1.2H9.9 v2.5H8.7V16H7.3z%22%3E%3C/path%3E%3ClinearGradient id=%22badge-subscriber-gradient-7%22 gradientUnits=%22userSpaceOnUse%22 x1=%226.72%22 y1=%22-169.44%22 x2=%2212.2267%22 y2=%22-180.4533%22 gradientTransform=%22matrix(1 0 0 -1 0 -164)%22%3E%3Cstop offset=%220%22 style=%22stop-color:%23E1FF00;%22%3E%3C/stop%3E%3Cstop offset=%220.99%22 style=%22stop-color:%232AA300;%22%3E%3C/stop%3E%3C/linearGradient%3E%3Cpath style=%22fill:url(%23badge-subscriber-gradient-7);%22 d=%22M8.7,7.3H7.3v1.4h1.3L8.7,7.3L8.7,7.3z%22%3E%3C/path%3E%3C/g%3E%3C/svg%3E","g0":"data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg clip-path=%22url(%23clip0_301_17810)%22%3E%3Cpath d=%22M7.99999 9.14999V6.62499L0.484985 3.35999V6.34499L1.15499 6.63499V12.73L7.99999 15.995V9.14999Z%22 fill=%22%230269D4%22%3E%3C/path%3E%3Cpath d=%22M8.00003 10.735V9.61501L1.15503 6.63501V7.70501L8.00003 10.735Z%22 fill=%22%230269D4%22%3E%3C/path%3E%3Cpath d=%22M15.515 3.355V6.345L14.85 6.64V12.73L12.705 13.755L11.185 14.48L8.00499 15.995V6.715L4.81999 5.295H4.81499L3.29499 4.61L0.484985 3.355L3.66999 1.935L3.67999 1.93L5.09499 1.3L8.00499 0L10.905 1.3L12.32 1.925L12.33 1.935L15.515 3.355Z%22 fill=%22%2304D0FF%22%3E%3C/path%3E%3Cpath d=%22M14.845 6.63501V7.70501L8 10.735V9.61501L14.845 6.63501Z%22 fill=%22%230269D4%22%3E%3C/path%3E%3C/g%3E%3Cdefs%3E%3CclipPath id=%22clip0_301_17810%22%3E%3Crect width=%2216%22 height=%2216%22 fill=%22white%22%3E%3C/rect%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E","g25":"data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg clip-path=%22url(%23clip0_301_17815)%22%3E%3Cpath d=%22M8.02501 9.14999V6.62499L0.51001 3.35999V6.34499L1.17501 6.63499V12.73L8.02501 15.995V9.14999Z%22 fill=%22%237B1BAB%22%3E%3C/path%3E%3Cpath d=%22M8.02505 10.735V9.61501L1.17505 6.63501V7.70501L8.02505 10.735Z%22 fill=%22%237B1BAB%22%3E%3C/path%3E%3Cpath d=%22M15.535 3.355V6.345L14.87 6.64V12.73L12.725 13.755L11.21 14.48L8.02501 15.995V6.715L4.84001 5.295H4.83501L3.32001 4.61L0.51001 3.355L3.69001 1.935L3.70501 1.93L5.11501 1.3L8.02501 0L10.93 1.3L12.34 1.925L12.355 1.935L15.535 3.355Z%22 fill=%22%23A947D3%22%3E%3C/path%3E%3Cpath d=%22M14.87 6.63501V7.70501L8.02502 10.735V9.61501L14.87 6.63501Z%22 fill=%22%237B1BAB%22%3E%3C/path%3E%3C/g%3E%3Cdefs%3E%3CclipPath id=%22clip0_301_17815%22%3E%3Crect width=%2216%22 height=%2216%22 fill=%22white%22%3E%3C/rect%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E","g50":"data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg clip-path=%22url(%23clip0_301_17820)%22%3E%3Cpath d=%22M7.99999 9.14999V6.62499L0.484985 3.35999V6.34499L1.14999 6.63999V12.73L7.99999 16V9.14999Z%22 fill=%22%23CF0038%22%3E%3C/path%3E%3Cpath d=%22M8.00002 10.74V9.61501L1.15002 6.64001V7.71001L8.00002 10.74Z%22 fill=%22%23CF0038%22%3E%3C/path%3E%3Cpath d=%22M15.515 3.355V6.345L14.85 6.64V12.73L12.705 13.755L11.185 14.48L8.00499 15.995V6.715L4.81999 5.295H4.81499L3.29499 4.61L0.484985 3.355L3.66999 1.935L3.67999 1.93L5.09499 1.3L8.00499 0L10.905 1.3L12.32 1.925L12.33 1.935L15.515 3.355Z%22 fill=%22%23FA4E78%22%3E%3C/path%3E%3Cpath d=%22M14.85 6.64001V7.71001L8 10.74V9.61501L14.85 6.64001Z%22 fill=%22%23CF0038%22%3E%3C/path%3E%3C/g%3E%3Cdefs%3E%3CclipPath id=%22clip0_301_17820%22%3E%3Crect width=%2216%22 height=%2216%22 fill=%22white%22%3E%3C/rect%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E","g100":"data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg clip-path=%22url(%23clip0_301_17825)%22%3E%3Cpath d=%22M7.99999 9.14999V6.62499L0.484985 3.35999V6.34499L1.14999 6.63999V12.73L7.99999 16V9.14999Z%22 fill=%22%23FF5008%22%3E%3C/path%3E%3Cpath d=%22M8.00002 10.74V9.61501L1.15002 6.64001V7.71001L8.00002 10.74Z%22 fill=%22%23FF5008%22%3E%3C/path%3E%3Cpath d=%22M15.515 3.355V6.345L14.85 6.64V12.73L12.705 13.755L11.185 14.48L8.00499 15.995V6.715L4.81999 5.295H4.81499L3.29499 4.61L0.484985 3.355L3.66999 1.935L3.67999 1.93L5.09499 1.3L8.00499 0L10.905 1.3L12.32 1.925L12.33 1.935L15.515 3.355Z%22 fill=%22%23FFC800%22%3E%3C/path%3E%3Cpath d=%22M14.85 6.64001V7.71001L8 10.74V9.61501L14.85 6.64001Z%22 fill=%22%23FF5008%22%3E%3C/path%3E%3C/g%3E%3Cdefs%3E%3CclipPath id=%22clip0_301_17825%22%3E%3Crect width=%2216%22 height=%2216%22 fill=%22white%22%3E%3C/rect%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E","g200":"data:image/svg+xml,%3Csvg width=%2216%22 height=%2216%22 viewBox=%220 0 16 16%22 fill=%22none%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg clip-path=%22url(%23clip0_301_17830)%22%3E%3Cpath d=%22M7.99999 9.14999V6.62499L0.484985 3.35999V6.34499L1.14999 6.63999V12.73L7.99999 16V9.14999Z%22 fill=%22%232FA604%22%3E%3C/path%3E%3Cpath d=%22M8.00002 10.74V9.61501L1.15002 6.64001V7.71001L8.00002 10.74Z%22 fill=%22%232FA604%22%3E%3C/path%3E%3Cpath d=%22M15.515 3.355V6.345L14.85 6.64V12.73L12.705 13.755L11.185 14.48L8.00499 15.995V6.715L4.81999 5.295H4.81499L3.29499 4.61L0.484985 3.355L3.66999 1.935L3.67999 1.93L5.09499 1.3L8.00499 0L10.905 1.3L12.32 1.925L12.33 1.935L15.515 3.355Z%22 fill=%22%2353F918%22%3E%3C/path%3E%3Cpath d=%22M14.85 6.64001V7.71001L8 10.74V9.61501L14.85 6.64001Z%22 fill=%22%232FA604%22%3E%3C/path%3E%3C/g%3E%3Cdefs%3E%3CclipPath id=%22clip0_301_17830%22%3E%3Crect width=%2216%22 height=%2216%22 fill=%22white%22%3E%3C/rect%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E"};
-var KBNAME={broadcaster:'Dueño del canal', moderator:'Moderador', vip:'VIP', og:'OG', founder:'Fundador', verified:'Verificado', staff:'Staff de Kick', subscriber:'Sub'};
 var ORDER=['broadcaster','staff','moderator','vip','og','founder','verified','partner','subscriber','sub_gifter'];
 var SUBB=[], TWB=null;              // insignias de sub de tu canal de Kick · mapa de insignias de Twitch
 function img(src){ return '<img src="'+esc(src)+'" alt="" onerror="this.remove()">'; }
 function subBadge(n){ var best=null; SUBB.forEach(function(b){ if (b.months<=n && (!best || b.months>best.months)) best=b; }); return best; }
 function kickBadges(list){
-  if (!OPT.badges || !list || !list.length) return '';
+  if (!list || !list.length) return '';
   var h=list.slice().sort(function(a,b){ var x=ORDER.indexOf(String(a.type).toLowerCase()), y=ORDER.indexOf(String(b.type).toLowerCase()); return (x<0?99:x)-(y<0?99:y); })
     .map(function(b){
       var t=String(b && b.type || '').toLowerCase(), n=Number(b && b.count)||0;
@@ -116,7 +151,7 @@ function kickBadges(list){
   return h ? '<span class="bd">'+h+'</span>' : '';
 }
 function twBadges(tag){
-  if (!OPT.badges || !TWB || !tag) return '';
+  if (!TWB || !tag) return '';
   var h=tag.split(',').filter(Boolean).map(function(x){ var u=TWB[x] || (/^subscriber\//.test(x) && TWB['subscriber/0']); return u ? img(u) : ''; }).join('');
   return h ? '<span class="bd">'+h+'</span>' : '';
 }
@@ -134,12 +169,12 @@ function tpBuild(){
 }
 function settle(jobs){ return Promise.all(jobs.map(function(p){ return p.catch(function(){}); })).then(tpBuild); }
 var tpG=false, tpK='', tpT='';
-function tpGlobal(){ if (tpG || !OPT.extras) return []; tpG=true;
+function tpGlobal(){ if (tpG) return []; tpG=true;
   return [tpGet('https://7tv.io/v3/emote-sets/global').then(function(j){ TPL.s7g=tp7(j && j.emotes); }),
           tpGet('https://api.betterttv.net/3/cached/emotes/global').then(function(j){ TPL.btg=tpB(j); }),
           tpGet('https://api.betterttv.net/3/cached/frankerfacez/emotes/global').then(function(f){ TPT.fg=tpF(f); })]; }
 function tpLoadKick(uid){
-  uid=String(uid||''); if (!OPT.extras || !uid || tpK===uid) return; tpK=uid;
+  uid=String(uid||''); if (!uid || tpK===uid) return; tpK=uid;
   settle(tpGlobal().concat([tpGet('https://7tv.io/v3/users/kick/'+encodeURIComponent(uid)).then(function(j){
     TPL.s7c=tp7(j && j.emote_set && j.emote_set.emotes);
     var tw=((j && j.user && j.user.connections) || []).filter(function(c){ return /twitch/i.test(c.platform||''); })[0];
@@ -148,7 +183,7 @@ function tpLoadKick(uid){
   })]));
 }
 function tpLoadTw(rid){
-  rid=String(rid||''); if (!OPT.extras || !/^\d+$/.test(rid) || tpT===rid) return; tpT=rid;
+  rid=String(rid||''); if (!/^\d+$/.test(rid) || tpT===rid) return; tpT=rid;
   settle(tpGlobal().concat([
     tpGet('https://7tv.io/v3/users/twitch/'+rid).then(function(j){ TPT.s7=tp7(j && j.emote_set && j.emote_set.emotes); }),
     tpGet('https://api.betterttv.net/3/cached/users/twitch/'+rid).then(function(b){ TPT.bc=tpB(((b && b.channelEmotes) || []).concat((b && b.sharedEmotes) || [])); }),
@@ -164,7 +199,7 @@ function emImg(src, name, tp){ return '<img class="em" src="'+esc(src)+'" alt="'
 // el texto suelto: palabra por palabra, por si es un emote de 7TV/BTTV/FFZ
 function words(t, M, st){
   if (!t) return '';
-  return t.split(/(\s+)/).map(function(w){ var u=M[w]; if (u){ st.em++; return emImg(u, w, true); } if (/\S/.test(w)) st.tx++; return esc(w); }).join('');
+  return t.split(/(\s+)/).map(function(w){ var u=S.extras ? M[w] : null; if (u){ st.em++; return emImg(u, w, true); } if (/\S/.test(w)) st.tx++; return esc(w); }).join('');
 }
 // Kick: «hola [emote:123:nombre]»
 function kickHtml(s, st){
@@ -186,26 +221,39 @@ function twHtml(text, em, st){
 }
 
 /* ---------------- pintar ---------------- */
-function hidden(user, text){
+var LINK=/(https?:\/\/|www\.)\S+|\b[\w-]+\.(com|net|org|gg|tv|io|me|ly|mx|xyz|ru|shop|link|site|app)\b/i;
+function hidden(user, text, pf){
+  if (!WANT(pf)) return true;
   if (HIDE.has(String(user||'').toLowerCase())) return true;
-  if (!OPT.cmd && /^\s*!/.test(text||'')) return true;
+  if (!S.cmd && /^\s*!/.test(text||'')) return true;
+  if (S.links && LINK.test(String(text||'').replace(/\[emote:\d+:[^\]]*\]/g,''))) return true;
+  if (WORDS.length){ var t=String(text||'').toLowerCase(); for (var i=0;i<WORDS.length;i++) if (t.indexOf(WORDS[i])!==-1) return true; }
   return false;
 }
-function add(o){   // o: {pf, id, user, name, color, badges(html), html, st, me}
-  var d=document.createElement('div');
-  d.className='m in'+(o.me ? ' me' : '')+(OPT.big && o.st.em>0 && o.st.em<=3 && o.st.tx===0 ? ' big' : '');
-  d.setAttribute('data-pf', o.pf); d.setAttribute('data-id', o.id); d.setAttribute('data-u', String(o.user||'').toLowerCase());
-  var col=OPT.colors ? readable(o.color || defColor(o.user)) : '#ffffff';
-  d.innerHTML=(OPT.kt ? '<span class="kt '+(o.pf==='tw'?'w':'k')+'">'+(o.pf==='tw'?'T':'K')+'</span>' : '')+o.badges+
-    '<span class="n" style="color:'+col+'">'+esc(o.name)+'</span>'+(o.me ? ' ' : '<span class="t">: </span>')+
-    '<span class="t"'+(o.me ? ' style="color:'+col+'"' : '')+'>'+o.html+'</span>';
-  if (OPT.arriba) BOX.insertBefore(d, BOX.firstChild); else BOX.appendChild(d);
-  setTimeout(function(){ d.classList.remove('in'); }, 400);
-  var all=BOX.children;
-  while (all.length>OPT.max) BOX.removeChild(OPT.arriba ? BOX.lastChild : BOX.firstChild);
-  if (OPT.fade>0) d._t=setTimeout(function(){ d.classList.add('out'); setTimeout(function(){ if (d.parentNode) d.parentNode.removeChild(d); }, 650); }, OPT.fade*1000);
+function paint(d){
+  var o=d._o, st={em:0, tx:0};
+  var html=o.pf==='tw' ? twHtml(o.text, o.em, st) : kickHtml(o.text, st);
+  var badges=S.insignias ? (o.pf==='tw' ? twBadges(o.badges) : kickBadges(o.badges)) : '';
+  var col=S.colores ? readable(o.color || defColor(o.user)) : S.colTexto;
+  d.className='m'+(d._new ? ' in' : '')+(d._out ? ' out' : '')+(o.me ? ' me' : '')+(S.grande && st.em>0 && st.em<=3 && st.tx===0 ? ' big' : '');
+  d.innerHTML=(S.kt ? '<span class="kt '+(o.pf==='tw'?'w':'k')+'">'+(o.pf==='tw'?'T':'K')+'</span>' : '')+badges+
+    '<span class="n" style="color:'+col+'">'+esc(o.name)+'</span>'+(o.me ? ' ' : '<span class="sep">: </span>')+
+    '<span class="t"'+(o.me ? ' style="color:'+col+'"' : '')+'>'+html+'</span>';
 }
-function drop(sel){ Array.prototype.forEach.call(BOX.querySelectorAll(sel), function(d){ clearTimeout(d._t); d.parentNode.removeChild(d); }); }
+function kill(d){ clearTimeout(d._t); if (d.parentNode) d.parentNode.removeChild(d); }
+function trim(){ while (BOX.children.length>S.max) kill(S.arriba ? BOX.lastChild : BOX.firstChild); }
+function add(o){   // o: {pf, id, user, name, color, badges, text, em, me}
+  if (hidden(o.user, o.text, o.pf)) return;
+  var d=document.createElement('div');
+  d._o=o; d._new=true;
+  d.setAttribute('data-pf', o.pf); d.setAttribute('data-id', o.id); d.setAttribute('data-u', String(o.user||'').toLowerCase());
+  paint(d);
+  if (S.arriba) BOX.insertBefore(d, BOX.firstChild); else BOX.appendChild(d);
+  setTimeout(function(){ d._new=false; d.classList.remove('in'); }, 400);
+  trim();
+  if (S.fade>0) d._t=setTimeout(function(){ d._out=true; d.classList.add('out'); setTimeout(function(){ kill(d); }, 650); }, S.fade*1000);
+}
+function drop(sel){ Array.prototype.forEach.call(BOX.querySelectorAll(sel), kill); }
 function cssq(s){ return String(s).replace(/["\\]/g, '\\$&'); }
 function dropMsg(pf, id){ if (id) drop('.m[data-pf="'+pf+'"][data-id="'+cssq(id)+'"]'); }
 function dropUser(pf, u){ if (u) drop('.m[data-pf="'+pf+'"][data-u="'+cssq(String(u).toLowerCase())+'"]'); }
@@ -214,16 +262,18 @@ function dropAll(pf){ drop('.m[data-pf="'+pf+'"]'); }
 /* ---------------- lo que dice tu servidor (1 vez al abrir, con caché) ---------------- */
 var CFG=null;
 try{ CFG=JSON.parse(LSget('chatobs.cfg')||'null'); }catch(e){ CFG=null; }
+if (CFG && CFG.twb) TWB=CFG.twb;
+apply(CFG && CFG.set);                                  // lo último que se supo: así no «brinca» al abrir
 function loadCfg(fresh){
   return fetch(API+'/api/chatobs'+(fresh ? '?n='+Math.floor(Date.now()/300000) : ''), {credentials:'omit'})
     .then(function(r){ return r.json(); }).then(function(j){
       if (!j || !j.ok) throw new Error('sin datos');
       CFG=j; LSset('chatobs.cfg', JSON.stringify(j));
       if (j.twb && typeof j.twb==='object') TWB=j.twb;
+      if (!FROMPARENT) apply(j.set);
       return j;
     });
 }
-if (CFG && CFG.twb) TWB=CFG.twb;
 
 /* ---------------- Kick (Pusher, igual que la guardia) ---------------- */
 var K={ws:null, last:0, retry:0}, SEEN=new Set();
@@ -237,13 +287,11 @@ function kickEvent(m){
   if (!/ChatMessageEvent$/.test(ev)) return;
   var x=pdata(m);
   if (!x || !x.id || !x.sender || seen(String(x.id))) return;
-  var s=x.sender||{}, idt=s.identity||{}, user=String(s.username||s.slug||''), text=String(x.content||'').slice(0,600);
-  if (!user || hidden(user, text) || hidden(s.slug, text)) return;
-  var st={em:0, tx:0};
-  add({pf:'kick', id:String(x.id), user:user, name:user, color:idt.color||'', badges:kickBadges(idt.badges), html:kickHtml(text, st), st:st});
+  var s=x.sender||{}, idt=s.identity||{}, user=String(s.username||s.slug||'');
+  if (!user) return;
+  add({pf:'kick', id:String(x.id), user:user, name:user, color:idt.color||'', badges:idt.badges||[], text:String(x.content||'').slice(0,600)});
 }
 function kickConnect(){
-  if (!WANT_K) return;
   var k=CFG && CFG.kick;
   if (!k || !k.key || !k.chatroom){ return setTimeout(function(){ loadCfg(true).then(kickConnect, function(){ setTimeout(kickConnect, 60000); }); }, 30000); }
   var ws; try{ ws=new WebSocket('wss://ws-'+(k.cluster||'us2')+'.pusher.com/app/'+k.key+'?protocol=7&client=js&version=8.4.0&flash=false'); }catch(e){ return kickRetry(); }
@@ -274,7 +322,6 @@ setInterval(function(){                                // si Kick no contesta en
 }, 30000);
 // las insignias de sub de tu canal y tus emotes de 7TV de Kick (directo de Kick, 1 vez)
 function kickChannel(){
-  if (!WANT_K) return;
   var slug=(CFG && CFG.kick && CFG.kick.slug) || 'mariotq';
   fetch('https://kick.com/api/v2/channels/'+encodeURIComponent(slug), {cache:'no-store', credentials:'omit'})
     .then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
@@ -302,13 +349,11 @@ function twLine(line){
   if (cmd!=='PRIVMSG') return;
   var nick=m[1], text=(m[4]||'').slice(0,900), me=false;
   var act=text.match(/^\u0001ACTION ([\s\S]*)\u0001$/); if (act){ text=act[1]; me=true; }
-  if (!tags.id || hidden(nick, text)) return;
+  if (!tags.id) return;
   if (tags['room-id']) tpLoadTw(tags['room-id']);
-  var st={em:0, tx:0};
-  add({pf:'tw', id:tags.id, user:nick, name:tags['display-name']||nick, color:tags.color||'', badges:twBadges(tags.badges), html:twHtml(text, tags.emotes, st), st:st, me:me});
+  add({pf:'tw', id:tags.id, user:nick, name:tags['display-name']||nick, color:tags.color||'', badges:tags.badges||'', text:text, em:tags.emotes||'', me:me});
 }
 function twConnect(){
-  if (!WANT_T) return;
   var login=String((CFG && CFG.tw && CFG.tw.login) || 'mariotq').toLowerCase().replace(/[^a-z0-9_]/g,'');
   var ws; try{ ws=new WebSocket('wss://irc-ws.chat.twitch.tv:443'); }catch(e){ return twRetry(); }
   T.ws=ws; T.pong=Date.now();
@@ -324,23 +369,36 @@ setInterval(function(){                                // si Twitch no contesta 
   setTimeout(function(){ if (T.ws===ws && T.pong<sent){ try{ ws.close(); }catch(e){} } }, 15000);
 }, 60000);
 
-/* ---------------- para probar (?prueba=1) ---------------- */
-window.chatObs={kick:kickEvent, tw:twLine, ver:VER};
-function demo(){
-  var i=0, list=[
-    function(){ kickEvent({event:'App\\Events\\ChatMessageEvent', data:JSON.stringify({id:'d'+(++i), content:'¡Qué onda Mario! [emote:37226:KEKW]', sender:{username:'Ejemplo_Kick', identity:{color:'#53FC18', badges:[{type:'moderator'},{type:'subscriber', count:3}]}}})}); },
-    function(){ twLine('@badges=vip/1,subscriber/6;color=#1E90FF;display-name=EjemploTwitch;emotes=25:9-13;id=t'+(++i)+' :ejemplotwitch!e@e.tmi.twitch.tv PRIVMSG #mariotq :saludos! Kappa'); },
-    function(){ kickEvent({event:'App\\Events\\ChatMessageEvent', data:JSON.stringify({id:'d'+(++i), content:'¿a dónde vamos hoy?', sender:{username:'viewer_kick', identity:{color:'#FF7F50', badges:[]}}})}); },
-    function(){ twLine('@badges=;color=;display-name=OtroViewer;emotes=;id=t'+(++i)+' :otroviewer!o@o.tmi.twitch.tv PRIVMSG #mariotq :se ve muy bien el stream'); }
-  ];
-  var n=0; (function tick(){ list[n++%list.length](); setTimeout(tick, 2500); })();
-}
+/* ---------------- mensajes de ejemplo (?prueba=1, y el botón «Probar en OBS» de Chat Studio) ---------------- */
+window.chatObs={kick:kickEvent, tw:twLine, apply:apply, ver:VER};
+var di=0, DEMO=[
+  function(){ kickEvent({event:'App\\Events\\ChatMessageEvent', data:JSON.stringify({id:'demo'+(++di), content:'¡Qué onda Mario! [emote:37226:KEKW]', sender:{username:'Ejemplo_Kick', identity:{color:'#53FC18', badges:[{type:'moderator'},{type:'subscriber', count:3}]}}})}); },
+  function(){ twLine('@badges=vip/1,subscriber/6;color=#1E90FF;display-name=EjemploTwitch;emotes=25:9-13;id=demo'+(++di)+' :ejemplotwitch!e@e.tmi.twitch.tv PRIVMSG #mariotq :saludos! Kappa'); },
+  function(){ kickEvent({event:'App\\Events\\ChatMessageEvent', data:JSON.stringify({id:'demo'+(++di), content:'¿a dónde vamos hoy?', sender:{username:'viewer_kick', identity:{color:'#FF7F50', badges:[]}}})}); },
+  function(){ twLine('@badges=;color=;display-name=OtroViewer;emotes=;id=demo'+(++di)+' :otroviewer!o@o.tmi.twitch.tv PRIVMSG #mariotq :se ve muy bien el stream, saludos desde Monterrey'); }
+];
+function demoLoop(){ var n=0; (function tick(){ DEMO[n++%DEMO.length](); setTimeout(tick, 2200); })(); }
+function demoBurst(){ DEMO.forEach(function(f, i){ setTimeout(f, i*700); }); }
 
 /* ---------------- arrancar ---------------- */
 var started=false;
-function start(){ if (started) return; started=true; kickConnect(); twConnect(); kickChannel(); if (OPT.extras) settle(tpGlobal()); }
-if (OPT.test) demo();
-loadCfg(false).then(start, function(){ if (CFG) start(); else setTimeout(function(){ loadCfg(true).then(start, start); }, 15000); });
+function start(){ if (started) return; started=true; kickConnect(); twConnect(); kickChannel(); settle(tpGlobal()); }
+if (TEST){
+  // vista previa de Chat Studio: los ajustes llegan de la página que la contiene, al momento
+  window.addEventListener('message', function(e){ if (e.origin===location.origin && e.data && e.data.chatobsSet){ FROMPARENT=true; apply(e.data.chatobsSet); } });
+  try{ if (parent!==window) parent.postMessage({chatobsReady:1}, location.origin); }catch(e){}
+  demoLoop();
+  loadCfg(false).catch(function(){});
+  settle(tpGlobal());
+} else {
+  loadCfg(false).then(start, function(){ if (CFG) start(); else setTimeout(function(){ loadCfg(true).then(start, start); }, 15000); });
+  // lo que guardes en Chat Studio llega al momento por Ably (sin refrescar OBS)
+  if (window.KFRT) KFRT.start({ api: API, on: function(name, d){
+    if (name!=='chatobs' || !d) return;
+    if (d.set){ apply(d.set); if (CFG){ CFG.set=d.set; LSset('chatobs.cfg', JSON.stringify(CFG)); } }
+    if (d.test) demoBurst();
+  } });
+}
 })();
 </script>
 </body>
