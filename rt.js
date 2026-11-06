@@ -39,7 +39,9 @@
   }
   function rid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
-  // opt: { api: 'https://…vercel.app', on: function(nombre, datos){}, state: function(sirve){}, log: function(txt){} }
+  // opt: { api: 'https://…vercel.app', on: function(nombre, datos){}, state: function(sirve){}, log: function(txt){}, key: 'tu clave' }
+  // v88: con «key» (solo tu app) también escucha el canal privado «kfp» (bans, spam, escena, canjes, ajustes…).
+  // Los letreros de OBS no llevan clave: solo el canal público «kf», como siempre.
   function start(opt) {
     var api = String(opt.api || '').replace(/\/+$/, '');
     var R = { ok: false, down: false, client: null, ch: null, pingId: '', pingT: 0, reT: 0, tries: 0, last: 0, dead: false, got: 0 };
@@ -85,8 +87,13 @@
         if (!ok) { log('tiempo real: no cargó Ably (se sigue preguntando como antes)'); setOk(false); R.reT = setTimeout(boot, 5 * 60000); return; }
         var me;
         try {
-          me = R.client = new window.Ably.Realtime({ authUrl: api + '/api/rt', authMethod: 'GET', echoMessages: false, closeOnUnload: true });
+          var ao = { authUrl: api + '/api/rt', authMethod: 'GET', echoMessages: false, closeOnUnload: true };
+          if (opt.key) ao.authParams = { key: String(opt.key) };   // v88: tu clave va aparte (no en la dirección)
+          me = R.client = new window.Ably.Realtime(ao);
         } catch (e) { return restart(e && e.message); }
+        if (opt.key) {                                              // v88: el privado; si falla, el público sigue igual
+          try { var pv = R.client.channels.get('kfp').subscribe(onMsg); if (pv && pv.then) pv.then(null, function (e) { log('tiempo real: el canal privado no se pudo escuchar (' + ((e && e.message) || 'sin permiso') + ')'); }); } catch (e) {}
+        }
         R.ch = R.client.channels.get('kf');
         var sub = R.ch.subscribe(onMsg);
         if (sub && sub.then) sub.then(function () { if (R.client === me) ping(); }, function (e) { if (R.client === me) restart(e && e.message); });

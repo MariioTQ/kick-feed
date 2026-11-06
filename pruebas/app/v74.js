@@ -185,13 +185,15 @@ await ev(()=>[...document.querySelectorAll('#filters .chip')].find(x=>/Plataform
 g=await ev(()=>document.getElementById('cpanel').textContent);
 ok(/MarioTQ/.test(g) && /TQ_bot_IRL/.test(g) && /Donde estoy en vivo/.test(g), 'Plataformas: tu cuenta de Twitch, el bot y a dónde escribir');
 await page.click('#cpHead .x'); await W(300);
-await ev(()=>{ document.getElementById('twBtn').click(); }); await W(700);
+await ev(()=>{ const f=document.getElementById('filters'); if (!f.classList.contains('open')) document.getElementById('gear').click(); }); await W(300);
+await ev(()=>[...document.querySelectorAll('#filters .chip')].find(x=>/Encuestas y anuncios/.test(x.textContent)).click()); await W(700);   // v88: el 🟣 de la barra se fue a ⚙
 g=await ev(()=>({m:document.getElementById('cpanel').classList.contains('twm'), t:document.getElementById('cpanel').textContent}));
 ok(g.m && /Próximo anuncio en/.test(g.t) && /Encuesta/.test(g.t) && /Predicción/.test(g.t), 'página de Twitch: anuncios, encuesta y predicción');
 await page.fill('#twPollQ','¿A dónde vamos?'); const ins=await page.$$('.twPO'); await ins[0].fill('Centro'); await ins[1].fill('Playa');
 await page.click('#twPollGo'); await W(400);
 ok(S.tw.posts.some(x=>x.a==='poll' && x.body.op==='create' && x.body.choices.length===2 && x.body.title==='¿A dónde vamos?'), 'crear una encuesta en Twitch');
-await ev(()=>document.getElementById('twBtn').click()); await W(600);
+await ev(()=>{ const f=document.getElementById('filters'); if (!f.classList.contains('open')) document.getElementById('gear').click(); }); await W(300);
+await ev(()=>[...document.querySelectorAll('#filters .chip')].find(x=>/Encuestas y anuncios/.test(x.textContent)).click()); await W(700);   // v88: el 🟣 de la barra se fue a ⚙
 await page.click('button[data-adl="60"]'); await W(150); await page.click('button[data-adl="60"]'); await W(400);
 ok(S.tw.posts.some(x=>x.a==='ads' && x.body.op==='start' && x.body.length===60), 'lanzar un anuncio de 1 min (dos toques)');
 ok(errs.length===0, 'sin errores (2): '+errs.join(' | '));
@@ -201,8 +203,8 @@ await ctx.close();
 /* ===== 3. sin Twitch conectado: todo como antes ===== */
 reset(); S.status={ok:true, configured:true, channel:'mariotq', me:null, bot:null}; S.twState=null;
 ({ctx, page, errs, ev}=await mk(375, 720, {}));
-g=await ev(()=>({to:getComputedStyle(document.getElementById('chatTo')).display, tw:getComputedStyle(document.getElementById('twBtn')).display}));
-ok(g.to==='none' && g.tw==='none', 'sin Twitch conectado no sale el botón K/T ni 🟣');
+g=await ev(()=>({to:getComputedStyle(document.getElementById('chatTo')).display, tw:!!document.getElementById('twBtn')}));
+ok(g.to==='none' && !g.tw, 'sin Twitch conectado no sale el botón K/T (y el 🟣 ya no existe desde la v88)');
 await kmsg(ev,'k9','solo_kick','hola'); await W(300);
 ok(await ev(()=>!document.querySelector('.cm[data-id="k9"] .pfc')), 'y en el chat no salen las marquitas');
 ok(await ev(()=>{ document.getElementById('chatGrid').click(); return true; }) && await ev(()=>!(JSON.parse(localStorage.getItem('kickfeed.chatcfg')).tiles||[]).some(t=>/Twitch/.test(t.name||''))), 'sin Twitch conectado no se agregan atajos de la meta de Twitch');

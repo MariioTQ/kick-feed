@@ -28,7 +28,7 @@ const RT = require('./_rt.js');          // v79: tiempo real con Ably (si no hay
 const CHANNEL = (process.env.KICK_CHANNEL || 'mariotq').toLowerCase();
 const CLIENT_ID = process.env.KICK_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.KICK_CLIENT_SECRET || '';
-const SCOPES = 'user:read channel:read channel:write events:subscribe kicks:read chat:write moderation:ban moderation:chat_message:manage channel:rewards:read channel:rewards:write';   // v82: + recompensas
+const SCOPES = 'user:read channel:read channel:write events:subscribe kicks:read chat:write moderation:ban moderation:chat_message:manage channel:rewards:read channel:rewards:write ads:read ads:write';   // v82: + recompensas · v88: + anuncios de Kick
 const EVENTS = [
   'channel.subscription.new', 'channel.subscription.renewal', 'channel.subscription.gifts',
   'kicks.gifted', 'channel.followed', 'moderation.banned', 'livestream.status.updated',
@@ -69,8 +69,13 @@ function send(res, code, body, type, cache) {
   res.setHeader('Cache-Control', cache || 'no-store');
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
+// v88 · 🔐 CORS: desde un navegador, solo TUS páginas (GitHub Pages y tu Vercel) pueden leer lo que contesta tu servidor.
+// (Antes era «*»: cualquier página de internet podía usarlo desde el navegador de alguien.)
+const ORIG_OK = /^https:\/\/(mariiotq\.github\.io|kick-feed-mariotq\.vercel\.app|kick-feed-mariotq-[a-z0-9-]+-tq19\.vercel\.app)$/;
 function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const o = String((res.req && res.req.headers && res.req.headers.origin) || '');
+  if (ORIG_OK.test(o)) res.setHeader('Access-Control-Allow-Origin', o);
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
@@ -83,6 +88,9 @@ function readRaw(req) {
   });
 }
 function baseUrl(req) {
+  // v88 · 🔐 si se sabe tu dominio principal (Vercel lo pone), se usa ese: no se confía en la cabecera «host» de quien llama
+  const p = String(process.env.VERCEL_PROJECT_PRODUCTION_URL || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  if (p) return 'https://' + p;
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   return 'https://' + host;
 }
@@ -1222,11 +1230,25 @@ async function list(req, res) {
 
 /* ---- cambiar título y categoría (solo con la clave de tus celulares) ---- */
 let KEYC = { k: null, at: 0 };
+// v88 · 🔐 freno a quien prueba claves: 20 claves equivocadas distintas en 10 min desde la misma
+// conexión y ya no se le acepta ninguna clave un rato. Solo cuenta cuando sí mandan una clave
+// (tus letreros de OBS no llevan clave: nunca se frenan). Es por instancia del servidor (en memoria).
+const { AsyncLocalStorage } = require('async_hooks');
+const REQCTX = new AsyncLocalStorage(), BADK = new Map();
+const reqIp = req => String((req && req.headers && (req.headers['x-real-ip'] || req.headers['x-forwarded-for'])) || (req && req.socket && req.socket.remoteAddress) || '').split(',')[0].trim();
+// Cuenta claves DISTINTAS: un celular que se quedó con tu clave vieja repite siempre la misma (cuenta 1) y no frena a nadie.
+function keyBlocked() { const c = REQCTX.getStore(), b = c && BADK.get(c.ip); if (!b) return false; if (Date.now() - b.t > 600000) { BADK.delete(c.ip); return false; } return b.ks.size >= 20; }
+function keyFail(q) { const c = REQCTX.getStore(); if (!c || !c.ip || !String(q || '')) return; const now = Date.now(), h = crypto.createHash('sha256').update(String(q)).digest('base64').slice(0, 12);
+  let b = BADK.get(c.ip); if (!b || now - b.t > 600000) { b = { t: now, ks: new Set() }; BADK.set(c.ip, b); }
+  if (b.ks.size < 50) b.ks.add(h); if (BADK.size > 5000) BADK.delete(BADK.keys().next().value); }
 async function checkKey(q) {
   if (!KEYC.k || Date.now() - KEYC.at > 60000) KEYC = { k: await redis('GET', 'feedkey'), at: Date.now() };
-  const k = KEYC.k;
-  const a = Buffer.from(String(q || '')), b = Buffer.from(String(k || ''));
-  return !!k && a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (keyBlocked()) return false;                     // v88: frenado por probar claves
+  const same = k2 => { const a2 = Buffer.from(String(q || '')), b2 = Buffer.from(String(k2 || '')); return !!k2 && a2.length === b2.length && crypto.timingSafeEqual(a2, b2); };
+  let ok = same(KEYC.k);
+  if (!ok && String(q || '') && Date.now() - KEYC.at > 5000) { KEYC = { k: await redis('GET', 'feedkey'), at: Date.now() }; ok = same(KEYC.k); }   // v88: la clave pudo cambiar en otro servidor
+  if (!ok) keyFail(q);
+  return ok;
 }
 async function readJSONBody(req) {
   // Vercel a veces ya trae el cuerpo leído en req.body
@@ -2205,9 +2227,9 @@ async function vipList() {
   return out.sort((x, y) => x.until - y.until);
 }
 // «Quitar ya»: vence al momento y se quita por el mismo camino de siempre (Twitch o Kick)
-async function vipRemoveNow(key) {
+async function vipRemoveNow(key, add) {          // v88: add = también si se lo diste a mano (no está en la lista)
   if (!VIPKEY.test(key)) return { ok: false, error: 'Ese VIP no es válido' };
-  if ((await redis('ZSCORE', 'vipx', key)) == null) return { ok: true, gone: true };
+  if (!add && (await redis('ZSCORE', 'vipx', key)) == null) return { ok: true, gone: true };
   await redis('SET', 'vipq:' + key, '1', 'EX', 86400);
   await redis('ZADD', 'vipx', 1, key);                                  // primero en la fila
   await vipSweep(true);
@@ -2242,6 +2264,20 @@ async function rewardsApi(req, res) {
   if (a === 'save') return send(res, 200, await rwSave(pf, id, b.f));
   // v87 · 👑 quitar un VIP antes · 🛡 protegidos · 🔊 lista negra del TTS
   if (a === 'vipdel') { const r = await vipRemoveNow(str(b.k).slice(0, 80)); return send(res, 200, Object.assign(r, await rwExtra())); }
+  // v88 · 👑 dar o quitar VIP desde la hoja de un usuario del chat (dejando presionado su nombre)
+  if (a === 'vipgive' || a === 'vipoff') {
+    const u = str(b.u).replace(/^@/, '').trim().slice(0, 40), uid = str(b.uid).slice(0, 20);
+    if (!/^[\w.-]{2,40}$/.test(u)) return send(res, 200, { ok: false, error: 'No sé quién es' });
+    if (pf === 'tw' && !/^\d{1,20}$/.test(uid)) return send(res, 200, { ok: false, error: 'No sé su id de Twitch (que escriba algo en el chat)' });
+    if (a === 'vipgive') {
+      const days = Math.max(1, Math.min(90, Math.round(Number(b.days) || 7)));
+      const r = await vipGive(pf, { nombre: u, _uid: uid, _login: u.toLowerCase() }, days);
+      return send(res, 200, Object.assign(r, await rwExtra()));
+    }
+    const lu = u.toLowerCase(), have = (await vipList()).find(x => pf === 'tw' ? x.k.indexOf('tw:' + uid + ':') === 0 : x.k === 'kick:' + lu);
+    const r = await vipRemoveNow(have ? have.k : (pf === 'tw' ? 'tw:' + uid + ':' + lu : 'kick:' + lu), true);
+    return send(res, 200, Object.assign(r, await rwExtra()));
+  }
   if (a === 'prot') { const c = b.c && typeof b.c === 'object' ? b.c : {}; await setJSON('toprot', { users: nameList(c.users, 100), mods: c.mods !== false }); return send(res, 200, Object.assign({ ok: true }, await rwExtra())); }
   if (a === 'ttsbl') {
     const u = nameList([b.u], 1)[0]; if (!u) return send(res, 200, { ok: false, error: 'Escribe el nombre (como sale en el chat)' });
@@ -2257,10 +2293,65 @@ async function rewardsApi(req, res) {
 /* ---- v84 · 🔑 tu cuenta de Kick: qué permisos le faltan (para el botón «Volver a conectar Kick») ---- */
 const SCOPE_TXT = { 'user:read': 'Ver tu cuenta', 'channel:read': 'Leer tu canal', 'channel:write': 'Cambiar título y categoría', 'events:subscribe': 'Recibir los avisos (subs, follows, canjes…)',
   'kicks:read': 'Ver los Kicks', 'chat:write': 'Escribir en el chat', 'moderation:ban': 'Silenciar y banear', 'moderation:chat_message:manage': 'Borrar mensajes',
-  'channel:rewards:read': 'Ver tus recompensas', 'channel:rewards:write': 'Crear y cambiar recompensas, y aceptar o rechazar canjes' };
+  'channel:rewards:read': 'Ver tus recompensas', 'channel:rewards:write': 'Crear y cambiar recompensas, y aceptar o rechazar canjes',
+  'ads:read': 'Ver tus anuncios', 'ads:write': 'Lanzar anuncios' };   // v88
 function kickMissing(t) {
   const have = String((t && t.scope) || '').split(/[\s,+]+/).filter(Boolean);
   return SCOPES.split(' ').filter(s => have.indexOf(s) < 0);
+}
+/* ==================================================================
+   v88 · 📺 ANUNCIOS DE KICK (API oficial: ads:read / ads:write)
+   Kick no avisa por webhook cuando hay anuncio: el estado se le pregunta a Kick
+   solo mientras estás en vivo en Kick y tu app pregunta (máximo cada ~60 s,
+   guardado en «k:ads»). Lanzar un corte: de 7 a 90 segundos.
+   ================================================================== */
+const KAD_ERR = { CHANNEL_IS_NOT_LIVE: 'Tienes que estar en vivo en Kick', CHANNEL_NOT_OPTED_IN: 'Tu canal no está inscrito en los anuncios de Kick (inscríbelo cuando no estés en vivo)',
+  ADS_BLOCKED: 'Kick tiene bloqueados los anuncios en tu canal', ADS_RESTRICTED: 'Kick tiene restringidos los anuncios en tu canal', AD_BREAK_ACTIVE: 'Ya hay un anuncio corriendo',
+  MAX_AD_BREAKS_REACHED: 'Ya llegaste al máximo de anuncios por ahora', AUTO_ADS_ACTIVE: 'Tienes prendidos los anuncios automáticos de Kick',
+  CHANNEL_IS_LIVE: 'Para inscribirte tienes que estar fuera de vivo', CHANNEL_NEVER_STREAMED: 'Kick pide que hayas transmitido antes', CHANNEL_NOT_FOUND: 'Kick no encontró tu canal' };
+function kAdErr(r, what) {
+  const code = String((r.j && typeof r.j.data === 'string' && r.j.data) || '');
+  if (KAD_ERR[code]) return KAD_ERR[code];
+  if (r.status === 401 || r.status === 403) return 'Falta el permiso de anuncios: vuelve a conectar Kick (⚙ → Plataformas)';
+  return kickErr(r.status, r.j, what || 'anuncios');
+}
+function kAdOut(d) {
+  d = d || {};
+  const now = Date.now(), lim = d.limits || {};
+  const list = (Array.isArray(d.ad_breaks) ? d.ad_breaks : []).map(x => ({ st: String(x.status || '').toLowerCase(), dur: Number(x.break_duration_seconds) || 0, at: Date.parse(x.created_at) || 0, src: str(x.source).slice(0, 20) }));
+  const run = list.filter(x => x.at && x.dur && x.at + x.dur * 1000 > now && !/reject|fail|cancel|error|expire|deny/.test(x.st)).sort((a, b) => b.at - a.at)[0] || null;
+  return { at: now, opted: d.opted_in !== false, blocked: !!d.ads_blocked, auto: !!d.auto_ads_active, left: d.remaining_ad_breaks != null ? Number(d.remaining_ad_breaks) : null,
+           max: lim.max != null ? Number(lim.max) : null, per: Number(lim.period_seconds) || 0, run: run ? { at: run.at, dur: run.dur, st: run.st, src: run.src } : null };
+}
+async function kickAds(fresh) {
+  if (!fresh) { try { const c = await getJSON('k:ads'); if (c) return c; } catch (e) {} }
+  const t = await validToken(); if (!t) return { none: 1, at: Date.now(), error: 'Falta conectar tu cuenta de Kick' };
+  const r = await kickCall('GET', '/ads/ad-break-status', t.access_token);
+  if (!r.ok) { const o = { none: 1, at: Date.now(), error: kAdErr(r) }; try { await setJSON('k:ads', o, 300); } catch (e) {} return o; }   // sin permiso: no insiste en 5 min
+  const o = kAdOut((r.j && r.j.data) || {});
+  try { await setJSON('k:ads', o, o.run ? 15 : 60); } catch (e) {}
+  return o;
+}
+async function kickAdStart(sec) {
+  const t = await validToken(); if (!t) return { ok: false, error: 'Falta conectar tu cuenta de Kick' };
+  const dur = Math.max(7, Math.min(90, Math.round(Number(sec) || 30)));
+  const r = await kickCall('POST', '/ads/ad-break', t.access_token, { break_duration_seconds: dur, id: crypto.randomUUID() });
+  if (!r.ok) return { ok: false, error: kAdErr(r, 'lanzar el anuncio') };
+  const d = (r.j && r.j.data) || {}, now = Date.now();
+  let o = null; try { o = await kickAds(true); } catch (e) {}
+  if (!o || o.none) o = { at: now, opted: true, left: null, max: null, per: 0 };
+  if (!o.run) o.run = { at: now, dur, st: 'pending', src: 'app' };            // Kick todavía no lo reporta: se cuenta desde ahorita
+  if (d.remaining_ad_breaks != null) o.left = Number(d.remaining_ad_breaks);
+  try { await setJSON('k:ads', o, 15); } catch (e) {}
+  await rtSend('kad', o);                                                       // a tus celulares, al momento
+  return { ok: true, ads: o };
+}
+async function kickAdEnroll() {
+  const t = await validToken(); if (!t) return { ok: false, error: 'Falta conectar tu cuenta de Kick' };
+  const r = await kickCall('POST', '/ads/enroll', t.access_token, {});
+  if (!r.ok) return { ok: false, error: kAdErr(r, 'inscribirte') };
+  try { await redis('DEL', 'k:ads'); } catch (e) {}
+  return { ok: true, ads: await kickAds(true) };
 }
 async function kickInfoApi(req, res) {
   cors(res);
@@ -2268,6 +2359,11 @@ async function kickInfoApi(req, res) {
   const q = req.query || {}, b = req.method === 'POST' ? await readJSONBody(req) : {};
   if (!(await checkKey(q.key || b.key))) return send(res, 403, { ok: false, error: 'clave' });
   if (!CLIENT_ID || !CLIENT_SECRET) return send(res, 200, { ok: false, configured: false, error: 'Faltan las claves de Kick en Vercel' });
+  const a = String(q.a || b.a || 'status');
+  // v88 · 📺 anuncios de Kick
+  if (a === 'ads') return send(res, 200, Object.assign({ ok: true }, { ads: await kickAds(q.fresh === '1' || b.fresh) }));
+  if (a === 'adstart') return send(res, 200, req.method === 'POST' ? await kickAdStart(b.sec) : { ok: false, error: 'usa POST' });
+  if (a === 'adenroll') return send(res, 200, req.method === 'POST' ? await kickAdEnroll() : { ok: false, error: 'usa POST' });
   const t = await getJSON('tok');
   if (!t) return send(res, 200, { ok: true, configured: true, me: null });
   const miss = kickMissing(t);
@@ -2388,6 +2484,21 @@ async function kwApi(req, res) {
   }
   return send(res, 400, { ok: false, error: 'acción rara' });
 }
+/* ---- v88 · 🔑 cambiar la clave de tus celulares desde la app (⚙ → Servidor y diagnóstico).
+   La anterior deja de servir al momento. Te regresa el link nuevo para abrirlo en tu otro celular. ---- */
+async function keyApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
+  const b = await readJSONBody(req);
+  if (!(await checkKey(b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  if (b.a !== 'rotate') return send(res, 400, { ok: false, error: 'acción rara' });
+  const nk = b64url(crypto.randomBytes(18)), now = Date.now();
+  await redis('SET', 'feedkey', nk); KEYC = { k: nk, at: now };
+  await redis('SET', 'feedkeyAt', String(now));
+  try { await logPush('raw', { at: now, type: 'clave', body: 'clave nueva desde la app (la anterior ya no sirve)' }, 40); } catch (e) {}
+  return send(res, 200, { ok: true, key: nk, at: now, link: 'https://mariiotq.github.io/kick-feed/?key=' + encodeURIComponent(nk) });
+}
 async function healthApi(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -2486,7 +2597,9 @@ async function rtApi(req, res) {
     if (++PINGS.n > 40) return send(res, 429, { ok: false });
     return send(res, 200, { ok: await RT.pub('ping', { id }) });
   }
-  return send(res, 200, RT.tokenRequest(6 * 3600e3));
+  // v88: con tu clave 🔑 el permiso incluye el canal privado (tu app); sin clave, solo el público (letreros de OBS)
+  const priv = !!q.key && (await checkKey(q.key));
+  return send(res, 200, RT.tokenRequest(6 * 3600e3, priv));
 }
 async function realtimeKey(req, res) {
   cors(res);
@@ -3117,8 +3230,8 @@ async function events(req, res) {
   // reglas y lo que sumaste o restaste a mano a la meta
   // v79: lo de Twitch viene en la MISMA consulta (antes eran dos)
   const twOnNow = !!TW_ID && (await twOn());
-  const mg = (await redis('MGET', 'live', 'session', 'lastHook', 'prefsAt', 'rulesAt', 'subAdj', 'chatw:hb', 'chatw:hooks', 'rwpAt', ...(twOnNow ? TW_KEYS : []))) || [];
-  const [liveS, seS, lhS, paS, raS, adjS, cwHbS, cwHS, rwaS] = mg;      // v84: + rwpAt (cambió la lista de canjes pendientes)
+  const mg = (await redis('MGET', 'live', 'session', 'lastHook', 'prefsAt', 'rulesAt', 'subAdj', 'chatw:hb', 'chatw:hooks', 'rwpAt', 'k:ads', ...(twOnNow ? TW_KEYS : []))) || [];
+  const [liveS, seS, lhS, paS, raS, adjS, cwHbS, cwHS, rwaS, kadS] = mg;      // v88: + k:ads (anuncio de Kick)      // v84: + rwpAt (cambió la lista de canjes pendientes)
   await cwCheck([cwHbS, cwHS], req);
   if (authed) { const vs = vipSweep(); if (!later(vs)) await vs; }                   // v79: ¿se cayó la guardia del chat? se vuelven a prender los avisos
   const pj = v => { try { return v ? JSON.parse(v) : null; } catch (e) { return null; } };
@@ -3131,11 +3244,14 @@ async function events(req, res) {
   const lastHook = Number(lhS) || 0;
   // 🟣 Twitch (si está conectado): en vivo, totales, viewers, encuesta, predicción, Hype Train y anuncio
   let tw = null;
-  if (twOnNow) { try { await twEnsureSubs(req); } catch (e) {} try { tw = await twState(q, mg.slice(9)); } catch (e) {} }
+  if (twOnNow) { try { await twEnsureSubs(req); } catch (e) {} try { tw = await twState(q, mg.slice(10)); } catch (e) {} }
   // el letrero de la meta (solo totales, sin clave): los dos letreros comparten la misma respuesta 3 s en la CDN
   const shared = since > Date.now() + 60000 && !q.key && !q.vw;
   let cw = null; try { const hb0 = cwHbS ? JSON.parse(cwHbS) : null, h0 = cwHS ? JSON.parse(cwHS) : null; if (authed && (hb0 || h0)) cw = cwPub(hb0, h0); } catch (e) {}
-  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0, rat: Number(raS) || 0, rwa: authed ? Number(rwaS) || 0 : 0, tw, rt: RT.on(), cw },
+  // v88 · 📺 anuncio de Kick: solo con tu clave y en vivo en Kick (si no hay nada guardado, se le pregunta a Kick)
+  let kad = null;
+  if (authed && se && se.live) { kad = pj(kadS); if (!kad) { try { kad = await kickAds(true); } catch (e) {} } }
+  return send(res, 200, { ok: true, now: Date.now(), live, session: se, totals, lastHook, cursor, events: evs, pat: Number(paS) || 0, rat: Number(raS) || 0, rwa: authed ? Number(rwaS) || 0 : 0, tw, rt: RT.on(), cw, kad },
               undefined, shared ? 'public, max-age=0, s-maxage=3, stale-while-revalidate=5' : undefined);
 }
 
@@ -3587,7 +3703,7 @@ async function callback(req, res) {
     let fkey = await redis('GET', 'feedkey');
     const rotate = await redis('GET', 'newkey:' + q.state);
     if (rotate) { await redis('DEL', 'newkey:' + q.state); fkey = null; }
-    if (!fkey) { fkey = b64url(crypto.randomBytes(18)); await redis('SET', 'feedkey', fkey); }
+    if (!fkey) { fkey = b64url(crypto.randomBytes(18)); await redis('SET', 'feedkey', fkey); await redis('SET', 'feedkeyAt', String(Date.now())); }
     KEYC = { k: fkey, at: Date.now() };
     const feedUrl = 'https://mariiotq.github.io/kick-feed/?key=' + encodeURIComponent(fkey);
     const subs = await subscribeAll(tok);
@@ -3656,7 +3772,8 @@ async function debug(req, res) {
   return send(res, 200, { raw: (raw || []).map(x => JSON.parse(x)), rejected: (rej || []).map(x => JSON.parse(x)) });
 }
 
-module.exports = async function handler(req, res) {
+module.exports = function handler(req, res) { return REQCTX.run({ ip: reqIp(req) }, () => handlerIn(req, res)); };   // v88
+async function handlerIn(req, res) {
   const route = String((req.query && req.query.route) || '').toLowerCase();
   try {
     if (route === 'webhook') return await webhook(req, res);
@@ -3672,7 +3789,8 @@ module.exports = async function handler(req, res) {
     if (route === 'health') return await healthApi(req, res);
     if (route === 'rewards') return await rewardsApi(req, res);         // v84: 🎯 recompensas y canjes pendientes
     if (route === 'kick') return await kickInfoApi(req, res);
-    if (route === 'kweb') return await kwApi(req, res);                 // v85: 🔐 tu sesión de Kick («modo Kick.bot»)           // v84: permisos de tu cuenta de Kick
+    if (route === 'kweb') return await kwApi(req, res);
+    if (route === 'key') return await keyApi(req, res);                 // v88: 🔑 cambiar la clave desde la app                 // v85: 🔐 tu sesión de Kick («modo Kick.bot»)           // v84: permisos de tu cuenta de Kick
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'modcmd') return await modCmdApi(req, res);
     if (route === 'moments') return await momentsApi(req, res);
@@ -3696,4 +3814,4 @@ module.exports = async function handler(req, res) {
     cors(res);
     return send(res, 500, { ok: false, error: e.message });
   }
-};
+}

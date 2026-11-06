@@ -214,7 +214,7 @@
   body.hm-scene #pScene,body.hm-viewers #pViewers,body.hm-uptime #pUptime,body.hm-subs #pSubs,body.hm-kicks #pKicks,body.hm-filt #rwBtn,
   body.hm-chat #chatBtn,body.hm-grid #obsBtn,body.hm-tts #pTts,body.hm-mom #momBtn,body.hb-brb #brbBtn,body.hm-brb #brbBtn,html.duo #brbBtn,
   body.hb-twv #pTwV,body.hm-twv #pTwV,body.hb-tws #pTwS,body.hm-tws #pTwS,html.duo #pTwV,html.duo #pTwS,
-  body.hb-bits #pBits,body.hm-bits #pBits,body.hb-ad #pAd,body.hm-ad #pAd,body.hb-twm #twBtn,body.hm-twm #twBtn,html.duo #twBtn,html.duo #pBits,html.duo #pAd{display:none!important}
+  body.hb-bits #pBits,body.hm-bits #pBits,body.hb-ad #pAd,body.hm-ad #pAd,html.duo #pBits,html.duo #pAd{display:none!important}
   #moreBtn{font-weight:900;letter-spacing:.04em}
   #moreBtn.on{color:var(--txt);border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.07)}
   #bpop{display:none;position:fixed;right:8px;top:44px;z-index:47;width:min(300px,calc(100vw - 16px));background:#181b21;
@@ -1433,7 +1433,6 @@
     <button class="btn" id="obsBtn" title="Atajos (OBS y chat)" aria-label="Atajos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
     <button class="btn" id="chatBtn" title="Chat: toca para prender o apagar" aria-label="Chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-8.2L6.4 20.6V17H5a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/></svg></button>
     <button class="btn" id="brbBtn" title="BRB: tus clips y los mensajes sobre ellos" aria-label="BRB">🎞</button>
-    <button class="btn" id="twBtn" title="Twitch: encuestas, predicciones y anuncios" aria-label="Twitch" style="display:none">🟣</button>
     <button class="btn" id="moreBtn" title="Más: lo que mandaste a los puntitos" aria-label="Más" style="display:none">⋯</button>
     <button class="btn" id="gear" title="Ajustes">⚙</button>
   </span>
@@ -1525,7 +1524,7 @@
 (function(){
   "use strict";
 
-  var VERSION = '87 · 6 nov 2026';   // se muestra abajo en el engrane ⚙
+  var VERSION = '88 · 6 nov 2026';   // se muestra abajo en el engrane ⚙
   // v74 · 🟣 Twitch (multistream): chat junto con Kick, a dónde escribir (K, T o los dos), subs/bits/raids, encuestas y predicciones, Hype Train, anuncios, metas aparte y aviso si se cae una
   // v73 · 🎞 BRB a la mano (botón y página), respuestas rápidas que salen sobre los clips unos segundos, y el lector no lee «Alexa», «Siri»…
   // v71 · 🎞 BRB en los Atajos: siguiente clip, pausa, sonido, mensaje y playlist de tu BRB Studio (brb.html)
@@ -4246,6 +4245,7 @@
       if (!j || !j.ok) throw new Error((j&&j.error)||'respuesta rara');
       if (typeof j.pat==='number') prefsCheck(j.pat);   // ¿cambiaste algo en el otro celular?
       if (j.rwa && typeof RW!=='undefined' && RW && j.rwa!==RW.rwa){ RW.rwa=j.rwa; rwLoadSoon(); }   // v84: ¿cambiaron los canjes pendientes?
+      if ('kad' in j && typeof kadSet==='function') kadSet(j.kad, true);   // v88: 📺 anuncio de Kick (solo en vivo en Kick)
       if (j.rat && typeof rlCfg==='function' && (rlCfg().at||0) < j.rat && !RL.busy) rlLoad(true);   // ¿cambiaron tus reglas en el otro celular?
       var got=0;
       (j.events||[]).forEach(function(e){
@@ -4325,6 +4325,7 @@
       if (d.scene) sceneSeen(d.scene); else scenePaint();
     }
     else if (name==='rw'){ if (typeof rwLoadSoon==='function') rwLoadSoon(); }   // v84: cambió la lista de canjes pendientes
+    else if (name==='kad'){ if (typeof kadSet==='function') kadSet(d); }          // v88: 📺 lanzaste un anuncio en Kick
     else if (name==='sync'){
       if (typeof d.pat==='number') prefsCheck(d.pat);
       if (d.rat && typeof rlCfg==='function' && (rlCfg().at||0) < d.rat && !RL.busy) rlLoad(true);
@@ -4332,7 +4333,7 @@
   }
   function rtStart(){
     if (RTC || !CFG.api || DUO || !window.KFRT) return;
-    RTC=KFRT.start({ api:CFG.api, on:rtMsg, log:function(t){ logRaw(t); },
+    RTC=KFRT.start({ api:CFG.api, key:CFG.key, on:rtMsg, log:function(t){ logRaw(t); },   // v88: con tu clave también el canal privado
       state:function(ok){ var was=RTOK; RTOK=ok; paintApi(); if ($filt.classList.contains('open') && typeof setPaint==='function') setPaint(); if (ok!==was) apiPoll(); } });   // al conectar o caerse: una revisión para no perder nada
   }
   if (CFG.api && !DUO) setTimeout(rtStart, 1500);
@@ -5306,6 +5307,20 @@
   }
   function modCall(b){ return b && b.pf==='tw' ? apiPost('/api/tw?a=mod', b) : apiPost('/api/mod', b); }   // v74: 🟣 lo de Twitch va a Twitch
 
+  /* v88 · 👑 VIP desde la hoja: ¿ya lo tiene? (su insignia en el chat o tu lista de VIP temporales) y darlo o quitarlo */
+  function hasVip(m){
+    if ((m.tb||[]).some(function(b){ return /^vip\//.test(b); }) || (m.badges||[]).some(function(b){ return b && /^vip$/i.test(String(b.type||'')); })) return true;
+    var u=lc(m.login||m.u), pf=m.pf==='tw' ? 'tw' : 'kick';
+    return (RW.vips||[]).some(function(v){ return v.pf===pf && lc(v.u)===u; });
+  }
+  function vipSet(m, days, b){
+    var pf=m.pf==='tw' ? 'tw' : 'kick', who=m.login||m.u;
+    if (b){ b.disabled=true; }
+    apiPost('/api/rewards', {a:days ? 'vipgive' : 'vipoff', pf:pf, u:who, uid:String(m.uid||''), days:days}).then(function(j){
+      if (j && j.ok){ rwExtraSet(j); apToast(days ? (j.manual ? '👑 '+m.u+' ya era VIP (no le puse fecha)' : '👑 '+m.u+' es VIP por '+days+(days===1?' día':' días')) : '👑 Le quité el VIP a '+m.u); closeSheet(); }
+      else { if (b) b.disabled=false; apToast('⚠ '+((j && j.error) || 'No se pudo'), true); }
+    });
+  }
   /* --- panel al tocar un mensaje o un nombre --- */
   var DUR=[[1,'1 min'],[10,'10 min'],[60,'1 h'],[1440,'1 día'],[10080,'1 semana']];
   function openSheet(m){
@@ -5330,7 +5345,9 @@
              '<div class="big"><button class="ban" data-a="ban">Banear</button><button class="unb" data-a="unban">Desbanear / quitar silencio</button></div>'+
              (m.id?'<div class="big"><button data-a="delete">🗑 Borrar</button>'+(m.pf==='tw' ? '' : '<button data-a="spam">🛡 Es spam</button>')+'</div>':'')+
              '<div class="big"><button data-a="hl">'+(isHl?'✨ Quitar resaltado':'✨ Resaltar')+'</button><button data-a="hide">🙈 Ocultar</button></div>'+
-             '<div class="big"><button data-a="ttsbl">'+((RW.ttsbl||[]).indexOf(lc(m.u))>=0 ? '🔊 Dejar que use el TTS' : '🔇 Ya no puede usar el TTS')+'</button></div>';   // v87
+             '<div class="big"><button data-a="ttsbl">'+((RW.ttsbl||[]).indexOf(lc(m.u))>=0 ? '🔊 Dejar que use el TTS' : '🔇 Ya no puede usar el TTS')+'</button></div>'+   // v87
+             (hasVip(m) ? '<div class="big"><button data-a="vipoff">👑 Quitar VIP</button></div>'                                                  // v88: 👑 VIP desde aquí
+                        : '<div class="lb">👑 Dar VIP por</div><div class="row">'+[[1,'1 día'],[7,'7 días'],[30,'30 días']].map(function(d){ return '<button data-vip="'+d[0]+'">'+d[1]+'</button>'; }).join('')+'</div>');
     } else if (can && m.id) h+='<div class="big"><button data-a="delete">🗑 Borrar este mensaje</button></div>';
     h+='<div class="st" id="mSt"></div>';
     $msheet.innerHTML=h; document.body.classList.add('sheet');
@@ -5353,6 +5370,9 @@
       };
     });
     if ($conf) $conf.onclick=function(){ var d=pick; if (!d) return; pick=0; $conf.style.display='none'; run({action:'timeout', duration:d}); };
+    // v88 · 👑 dar VIP por unos días (pide otro toque)
+    Array.prototype.forEach.call($msheet.querySelectorAll('button[data-vip]'), function(b){ var d=Number(b.getAttribute('data-vip'));
+      confirmTap(b, '¿VIP '+b.textContent+'?', function(){ vipSet(m, d, b); }); });
     Array.prototype.forEach.call($msheet.querySelectorAll('button[data-a]'), function(b){
       var a=b.getAttribute('data-a'), dmin=Number(b.getAttribute('data-d'))||0;
       if (a==='reply'){ b.onclick=function(){ setReply(m); closeSheet(); $chatTxt.focus(); }; return; }
@@ -5363,6 +5383,7 @@
         copyText(txt, function(){ b.textContent='✅ Copiado'; setTimeout(closeSheet, 600); }); }; return; }
       if (a==='hide'){ b.onclick=function(){ hideUser(m.u, true); closeSheet(); }; return; }
       if (a==='ttsbl'){ b.onclick=function(){ var u=lc(m.u), on=(RW.ttsbl||[]).indexOf(u)<0; ttsBlSet(u, on); closeSheet(); }; return; }   // v87: 🔊 lista negra del TTS
+      if (a==='vipoff'){ confirmTap(b, 'Toca otra vez para quitarle el VIP', function(){ vipSet(m, 0, b); }); return; }                      // v88
       if (a==='hl'){ b.onclick=function(){ var v=lc(m.u); CC.hlu=(CC.hlu||[]).filter(function(x){ return x!==v; }); if (!isHl) CC.hlu.push(v);
           saveCC(); chatRepaint(); closeSheet(); }; return; }
       if (a==='spam'){ confirmTap(b, 'Toca otra vez: se borra y se agrega al antispam', function(){
@@ -6097,8 +6118,7 @@
     ['chat',document.getElementById('chatBtn').innerHTML,'Chat','Prenderlo y apagarlo con un toque','chatBtn'],
     ['brb','🎞','BRB','Tus clips: siguiente, pausa, sonido y mensajes sobre los clips','brbBtn'],
     ['bits','💎','Bits de Twitch','Sale cuando estás en vivo en Twitch · tócalo para ver quién mandó','pBits'],
-    ['ad','📺','Anuncio de Twitch','Sale solo mientras corre un anuncio, con la cuenta regresiva','pAd'],
-    ['twm','🟣','Twitch','Encuestas, predicciones y anuncios de Twitch','twBtn'],
+    ['ad','📺','Anuncio','De Kick o de Twitch: sale solo mientras corre, con la cuenta regresiva · tócalo para ver tus anuncios','pAd'],   // v88: el 🟣 se fue a ⚙ (y como atajo)
     ['rwp','🎯','Canjes pendientes','Sale solo cuando hay canjes por aceptar o rechazar · tócalo para verlos','pRwp'],   // v84
     ['bela','📶','Bitrate','Siempre hasta la derecha · solo sale si tu enlace trae Belabox','pBela']];
   var BSIZE={n:['Normal',1], g:['Grande',1.2], xg:['Muy grande',1.4]};
@@ -6108,7 +6128,7 @@
   function normBar(b){
     b=b||{}; var h=Object.assign({grid:true}, b.hide||{}), m=b.more||{}, o={hide:{}, more:{}, size:BSIZE[b.size]?b.size:'n', rows:b.rows===2?2:1, r2:{}};
     var r2=b.r2||{}; Object.keys(r2).forEach(function(k){ if (BAR_ORDER0.indexOf(k)>=0) o.r2[k]=!!r2[k]; });   // v75: qué va en el renglón de abajo
-    BAR_ITEMS.forEach(function(i){ o.hide[i[0]]=!!h[i[0]]; o.more[i[0]]=i[0]!=='bela' && !h[i[0]] && (i[0] in m ? !!m[i[0]] : i[0]==='brb' || i[0]==='bits' || i[0]==='twm'); });   // v73/v74: lo nuevo llega en ⋯
+    BAR_ITEMS.forEach(function(i){ o.hide[i[0]]=!!h[i[0]]; o.more[i[0]]=i[0]!=='bela' && !h[i[0]] && (i[0] in m ? !!m[i[0]] : i[0]==='brb' || i[0]==='bits'); });   // v73/v74: lo nuevo llega en ⋯
     var ord=(Array.isArray(b.order) ? b.order : []).filter(function(k, n, a){ return BAR_ORDER0.indexOf(k)>=0 && a.indexOf(k)===n; });
     // lo nuevo entra junto a su pareja (👁 de Twitch después de 👁, ★ de Twitch después de ★), no hasta el final
     BAR_ORDER0.forEach(function(k, n){ if (ord.indexOf(k)>=0) return;
@@ -6553,6 +6573,9 @@
     });
     return q;
   }
+  // v88: opciones de una encuesta de atajo («Tacos, Pizza, Sushi») y poner al día Twitch tras lanzar algo
+  function pollOps(s){ return String(s && s.ops || '').split(/[,\n]/).map(function(x){ return x.trim().slice(0,25); }).filter(Boolean).slice(0,5); }
+  function twNowSoon(){ if (typeof twApply==='function') apiPost('/api/tw?a=now', {}).then(function(k){ if (k && k.ok) twApply(k); }); }
   function tAutoName(t){
     var s=(t && t.steps && t.steps[0]) || {};
     switch(s.t){
@@ -6576,6 +6599,10 @@
       case 'goal': return (s.pf==='tw' ? 'Twitch: ' : '')+(s.n===0 ? 'Meta: conteo real' : 'Meta '+((s.n==null?1:s.n)>0?'+':'−')+Math.abs(s.n==null?1:s.n));
       case 'tts': return (s.who||'all')==='off' || s.who==='mods' ? 'Callar lector' : 'Lector: '+ttsWhoName(s.who||'all');
       case 'moment': return s.text ? '📍 '+String(s.text).slice(0,18) : '📍 Momento';
+      case 'polls': return '📊 Encuestas';                                                  // v88
+      case 'poll': return '📊 '+(s.text ? String(s.text).slice(0,18) : 'Encuesta');
+      case 'pred': return '🔮 '+(s.text ? String(s.text).slice(0,18) : 'Predicción');
+      case 'ad': return '📺 Anuncio '+(Number(s.sec)||30)+' s';
       case 'brb': var ba=s.act||'next';
         return ba==='next' ? 'BRB ⏭ Siguiente' : ba==='pause' ? 'BRB ⏯ Pausa' : ba==='mute' ? 'BRB 🔇 Sonido'
              : ba==='msg' ? (s.text ? String(s.text).slice(0,22) : 'BRB sin mensaje') : ba==='msgnext' ? 'BRB 🔁 Mensaje' : ba==='msgreset' ? 'BRB mensaje normal' : 'BRB: '+String(s.plName||'Playlist').slice(0,16);
@@ -6587,7 +6614,7 @@
     if (typeof t.conf==='boolean') return t.conf;
     return (t.steps||[]).some(function(s){ return s.t==='stream' || s.t==='record' || (CC.obsConf && s.t==='scene'); });
   }
-  function confDefault(type){ return type==='stream' || type==='record' || (type==='scene' && CC.obsConf!==false); }
+  function confDefault(type){ return type==='stream' || type==='record' || type==='ad' || (type==='scene' && CC.obsConf!==false); }   // v88: el anuncio pide otro toque
   function tileHtml(t, i){
     var s=tSingle(t), k=tKey(s), st=AP.state[k], j=OB.st||{}, cls='tl', extra='';
     var col=/^#[0-9a-f]{6}$/i.test(t.color||'') ? t.color : TCOL[Math.abs(i)%TCOL.length], name=esc(t.name||tAutoName(t));
@@ -6830,6 +6857,21 @@
         var v=s.mode==='on' ? true : s.mode==='off' ? false : !CC.mix; mixSet(v); mixMsg=v ? '✓ Chat compartido con '+mixName() : '✓ Solo tu chat'; }).then(next);
       if (s.t==='brb') return flush().then(function(){
         return brbRun(s).then(function(m){ mixMsg=m; }, function(e){ errs.push(e && e.message || 'El BRB no contestó'); }); }).then(next);
+      // v88 · 📊 encuestas, predicciones y anuncios desde un atajo
+      if (s.t==='polls') return flush().then(function(){ if (AP.open && !AP.dock) apShow(false); cpFrom=false; openTwPage(); }).then(next);
+      if (s.t==='poll') return flush().then(function(){
+        return apiPost('/api/tw?a=poll', {op:'create', title:String(s.text||'').trim(), choices:pollOps(s), duration:Number(s.dur)||120}).then(function(r){
+          if (r && r.ok){ goalMsg='📊 Encuesta en Twitch'; twNowSoon(); } else errs.push((r&&r.error)||'No se creó la encuesta'); }); }).then(next);
+      if (s.t==='pred') return flush().then(function(){
+        return apiPost('/api/tw?a=pred', {op:'create', title:String(s.text||'').trim(), outcomes:[String(s.r1||'').trim()||'Sí', String(s.r2||'').trim()||'No'], window:Number(s.win)||120}).then(function(r){
+          if (r && r.ok){ goalMsg='🔮 Predicción en Twitch'; twNowSoon(); } else errs.push((r&&r.error)||'No se creó la predicción'); }); }).then(next);
+      if (s.t==='ad') return flush().then(function(){
+        var pf=stepPf(s), sec=Number(s.sec)||30, ps=[];
+        if (pf!=='tw') ps.push(apiPost('/api/kick', {a:'adstart', sec:Math.min(90, sec)}).then(function(r){
+          if (r && r.ok){ if (r.ads) kadSet(r.ads); return 'Kick'; } errs.push('Kick: '+((r&&r.error)||'no se lanzó')); }));
+        if (pf!=='kick') ps.push(apiPost('/api/tw?a=ads', {op:'start', length:sec}).then(function(r){
+          if (r && r.ok){ if (r.sched) TW.adsch=r.sched; twNowSoon(); return 'Twitch'; } errs.push('Twitch: '+((r&&r.error)||'no se lanzó')); }));
+        return Promise.all(ps).then(function(a){ a=a.filter(Boolean); if (a.length) goalMsg='📺 Anuncio lanzado en '+a.join(' y '); }); }).then(next);
       if (s.t==='sceneback'){
         if (!AP.prevScene){ errs.push('Todavía no sé cuál era la escena anterior'); return next(); }
         group.push({t:'scene', scene:AP.prevScene}); return next();
@@ -7075,6 +7117,7 @@
     ['Transmisión',[['stream','🔴 Iniciar o detener la transmisión'],['record','⏺ Grabar, pausar o detener'],['replay','⏪ Guardar repetición (replay buffer)']]],
     ['Chat y canal (Kick y Twitch)',[['chat','💬 Mandar un mensaje al chat'],['title','✏️ Cambiar título o categoría'],['mix','🔀 Chat compartido (prender o apagar)'],['goal','🎯 Sumar o restar subs a la meta'],['tts','🔊 Lector de voz: qué lee'],['moment','📍 Marcar un momento']]],
     ['BRB',[['brb','🎞 BRB: controlar tus clips']]],
+    ['Encuestas y anuncios',[['polls','📊 Abrir encuestas y anuncios'],['poll','📊 Empezar una encuesta (Twitch)'],['pred','🔮 Empezar una predicción (Twitch)'],['ad','📺 Lanzar un anuncio (Kick o Twitch)']]],   // v88
     ['Otros',[['wait','⏱ Esperar unos segundos']]]];
   var TE=null, teDelT=0;
   // v71 · 🎞 BRB: tu pantalla de clips (se arma en BRB Studio). El player de OBS ve el cambio en ≤ 3 s.
@@ -7529,7 +7572,7 @@
   /* --- barra: 👁 y ★ con el número de Twitch aparte, 💎 bits y 📺 anuncio --- */
   function twNum(n){ return Number(n||0).toLocaleString('es-MX'); }
   var $bits=document.createElement('span'); $bits.className='pill'; $bits.id='pBits'; $bits.title='Bits de Twitch del stream'; $bits.style.display='none';
-  var $adp=document.createElement('span'); $adp.className='pill'; $adp.id='pAd'; $adp.title='Anuncio en Twitch'; $adp.style.display='none';
+  var $adp=document.createElement('span'); $adp.className='pill'; $adp.id='pAd'; $adp.title='Anuncio'; $adp.style.display='none';
   (function(){ var kc=document.getElementById('pKicks'), st=kc && kc.parentNode; if (st){ st.insertBefore($bits, kc.nextSibling); st.insertBefore($adp, $bits.nextSibling); }   // v75: puede estar en el renglón de abajo
     if (typeof barOrderApply==='function' && typeof BARC!=='undefined' && BARC){ barOrderApply(); barKey=''; } })();
   $bits.onclick=function(){ toggleList('bits'); };
@@ -7541,11 +7584,26 @@
     $bits.classList.toggle('has', n>0);
   }
   function twAdLeft(){ var a=TW.ad; if (!a || !a.at) return 0; return Math.max(0, a.at+a.dur*1000-Date.now()); }
+  // v88 · 📺 anuncio de Kick: Kick no avisa solo; tu servidor le pregunta mientras estás en vivo en Kick (y al momento si lo lanzas tú)
+  var KAD=null;
+  function kAdLeft(){ var r=KAD && KAD.run; if (!r || !r.at || !r.dur) return 0; return Math.max(0, r.at+r.dur*1000-Date.now()); }
+  function kadSet(o, fromPoll){
+    if (fromPoll && !o && KAD && kAdLeft()>0) return;           // fuera de vivo el servidor no manda nada: lo que ya corre termina solo
+    KAD=o || null;
+    adStripPaint();
+    if ($cpanel.classList.contains('twm')) twPagePaint();
+  }
+  function adNow(){
+    var t=twAdLeft(), k=kAdLeft();
+    if (t>0 && t>=k) return {pf:'tw', left:t, dur:TW.ad.dur};
+    if (k>0) return {pf:'kick', left:k, dur:KAD.run.dur};
+    return null;
+  }
   var adT=0;
   function twAdPaint(){
-    var left=twAdLeft(), strip=typeof $ads!=='undefined' && $ads && /\brun\b/.test($ads.className) && /\bshow\b/.test($ads.className), vis=left>0 && !strip ? '' : 'none';
-    if ($adp.style.display!==vis){ $adp.style.display=vis; if (left>0){ logRaw('TWITCH: anuncio de '+TW.ad.dur+' s'); } }
-    if (left>0){ $adp.textContent='📺 '+mmss(left/1000); clearTimeout(adT); adT=setTimeout(twAdPaint, 1000); }
+    var an=adNow(), left=an ? an.left : 0, strip=typeof $ads!=='undefined' && $ads && /\brun\b/.test($ads.className) && /\bshow\b/.test($ads.className), vis=left>0 && !strip ? '' : 'none';
+    if ($adp.style.display!==vis){ $adp.style.display=vis; if (left>0){ logRaw((an.pf==='tw' ? 'TWITCH' : 'KICK')+': anuncio de '+an.dur+' s'); } }
+    if (left>0){ $adp.textContent='📺 '+mmss(left/1000); $adp.title='Anuncio en '+(an.pf==='tw' ? 'Twitch' : 'Kick'); clearTimeout(adT); adT=setTimeout(twAdPaint, 1000); }
     else if (TW.ad && TW.ad.at && !TW.ad.doneSaid){ TW.ad.doneSaid=1; }
   }
 
@@ -7553,10 +7611,12 @@
          y 90 s antes de uno automático (con «Posponer»). Tócala para esconderla. --- */
   var $ads=document.getElementById('adStrip'), ADS={t:0, hid:'', key:'', doneAt:0, doneId:'', lastAd:null, busy:false};
   function adStripState(){
-    if (!$ads || DUO || CC.adStrip===false || CC.tw===false || !twActive()) return null;
-    var now=Date.now(), left=twAdLeft(), a=TW.ad, sc=TW.adsch;
-    if (left>0){ ADS.lastAd={id:String(a.at), dur:a.dur}; return {k:'run', id:'run'+a.at, left:left, a:a}; }
-    if (TW.live && sc && sc.next && sc.next>now && sc.next-now <= 90000){ ADS.lastAd=null; ADS.doneAt=0; return {k:'soon', id:'soon'+sc.next, left:sc.next-now, sc:sc}; }
+    if (!$ads || DUO || CC.adStrip===false) return null;
+    var twOk=CC.tw!==false && twActive();                       // v88: el de Kick sale aunque no uses Twitch
+    var now=Date.now(), left=twOk ? twAdLeft() : 0, a=TW.ad, sc=twOk ? TW.adsch : null, kl=kAdLeft();
+    if (left>0){ ADS.lastAd={id:String(a.at), dur:a.dur}; return {k:'run', id:'run'+a.at, left:left, a:a, pf:'tw'}; }
+    if (kl>0){ var kr=KAD.run; ADS.lastAd={id:'k'+kr.at, dur:kr.dur}; return {k:'run', id:'runk'+kr.at, left:kl, a:{at:kr.at, dur:kr.dur, auto:/auto/i.test(kr.src||'')}, pf:'kick'}; }
+    if (twOk && TW.live && sc && sc.next && sc.next>now && sc.next-now <= 90000){ ADS.lastAd=null; ADS.doneAt=0; return {k:'soon', id:'soon'+sc.next, left:sc.next-now, sc:sc}; }
     if (ADS.lastAd && !ADS.doneAt){ ADS.doneAt=now; ADS.doneId=ADS.lastAd.id; }
     if (ADS.doneAt && now-ADS.doneAt < 6000 && ADS.hid!=='run'+ADS.doneId) return {k:'done', id:'done'+ADS.doneId};   // si la escondiste, tampoco avisa que terminó
     ADS.lastAd=null; ADS.doneAt=0;
@@ -7570,7 +7630,7 @@
       var h;
       if (st.k==='run'){
         var pc=Math.min(100, Math.max(0, 100*(1-st.left/(st.a.dur*1000))));
-        h='<span class="ai">📺</span><span class="at"><b>Anuncio en Twitch</b><small>'+(st.a.auto ? 'automático' : 'lo lanzaste'+(st.a.by && lc(st.a.by)!==ME ? ' ('+esc(st.a.by)+')' : ''))+' · '+mmss(st.a.dur)+'</small></span>'+
+        h='<span class="ai">📺</span><span class="at"><b>Anuncio en '+(st.pf==='kick' ? 'Kick' : 'Twitch')+'</b><small>'+(st.a.auto ? 'automático' : 'lo lanzaste'+(st.a.by && lc(st.a.by)!==ME ? ' ('+esc(st.a.by)+')' : ''))+' · '+mmss(st.a.dur)+'</small></span>'+
           '<span class="an">'+mmss(st.left/1000)+'</span><button class="ax" data-ads="x" aria-label="Cerrar">✕</button><span class="ap" style="width:'+pc.toFixed(1)+'%"></span>';
       } else if (st.k==='soon'){
         var sn=st.sc.snooze||0;
@@ -8020,9 +8080,42 @@
       apiPost('/api/rewards', {a:'del', pf:e.pf, id:e.id}).then(function(j){
         if (j && j.ok){ apToast('🗑 Recompensa borrada'); RW.edit=null; rwListLoad(); } else { del.disabled=false; del.textContent='Borrar recompensa'; apToast('⚠ '+((j && j.error) || 'No se pudo'), true); } }); }); };
   }
-  /* --- 🟣 Twitch: encuestas, predicciones y anuncios (botón 🟣 de la barra o ⋯) --- */
-  var TWP={sched:null, busy:false, err:''};
-  function openTwPage(){ cpOpen('twm'); twPagePaint(); twAdsLoad(); }
+  /* --- 📊 Encuestas, predicciones y anuncios (⚙ → Recompensas y encuestas, el 📺 de la barra o un atajo).
+         v88: antes era el 🟣 de la barra y solo Twitch; ahora también los anuncios de Kick. --- */
+  var TWP={sched:null, busy:false, err:''}, KADP={busy:false, err:''};
+  function twPageOn(){ return twConnected() && CC.tw!==false; }
+  function openTwPage(){ cpOpen('twm'); twPagePaint(); if (twPageOn()) twAdsLoad(); if (CFG.key && CFG.api) kadLoad(); }
+  // 📺 Kick: ver cómo están tus anuncios, lanzar uno (7 a 90 s) o inscribir tu canal
+  function kadLoad(op, extra){
+    KADP.busy=true; twPagePaint();
+    var p = op==='start' ? apiPost('/api/kick', Object.assign({a:'adstart'}, extra||{}))
+          : op==='enroll' ? apiPost('/api/kick', {a:'adenroll'})
+          : apiPost('/api/kick', {a:'ads', fresh:op==='get' ? 1 : 0});
+    return p.then(function(j){
+      KADP.busy=false;
+      if (j && j.ok){ KADP.err=''; if (j.ads) kadSet(j.ads); } else KADP.err=(j && j.error) || 'Kick no contestó';
+      twPagePaint(); return j;
+    });
+  }
+  function perTxt(sec){ sec=Number(sec)||0; return sec>=3600 ? (sec%3600 ? (sec/3600).toFixed(1) : sec/3600)+' h' : Math.round(sec/60)+' min'; }
+  function kadHtml(){
+    var o=KAD, kl=kAdLeft(), t, ok=o && !o.none;
+    if (kl>0) t='📺 <b>Anuncio corriendo</b> · quedan '+mmss(kl/1000);
+    else if (KADP.busy && !o) t='Revisando…';
+    else if (KADP.err && !o) t='⚠ '+esc(KADP.err);
+    else if (!o) t='—';
+    else if (o.none) t='⚠ '+esc(o.error || 'Kick no contestó');
+    else if (o.blocked) t='⚠ Kick tiene bloqueados los anuncios en tu canal';
+    else if (!o.opted) t='Tu canal todavía no está inscrito en los anuncios de Kick';
+    else t=(o.auto ? 'Tienes prendidos los anuncios automáticos de Kick' : 'Sin anuncio corriendo')+(o.left!=null ? ' · te quedan <b>'+o.left+'</b>'+(o.max!=null ? ' de '+o.max : '')+(o.per ? ' cada '+perTxt(o.per) : '') : '');
+    var h='<div class="lb2" style="margin-top:14px">'+pfChip('kick')+' 📺 Anuncios de Kick</div><div class="grp"><div class="bcur">'+t+(KADP.err && o ? '<br><small>⚠ '+esc(KADP.err)+'</small>' : '')+'</div>';
+    if (ok && !o.opted) h+='<div class="bmsgs"><button data-kad="enroll"'+(KADP.busy ? ' disabled' : '')+'>Inscribir mi canal</button><button class="sec" data-kad="get">↻</button></div>'+
+                         '<div class="nt" style="margin:0 12px 11px">Kick solo deja inscribirte cuando no estás en vivo.</div>';
+    else h+='<div class="bmsgs"><button class="sec" data-kad="get"'+(KADP.busy ? ' disabled' : '')+'>↻ Revisar</button></div>'+
+            '<div class="sl" style="padding-top:2px">Lanzar uno ahorita</div><div class="bmsgs">'+[30,60,90].map(function(n){ return '<button data-kadl="'+n+'"'+(KADP.busy ? ' disabled' : '')+'>'+(n<60 ? n+' s' : (n/60===1 ? '1 min' : '1 min 30 s'))+'</button>'; }).join('')+'</div>'+
+            '<div class="nt" style="margin:0 12px 11px">Kick deja de 7 a 90 segundos. Kick no avisa cuando empieza uno automático: tu servidor le pregunta mientras estás en vivo (cada minuto, más o menos).</div>';
+    return h+'</div>';
+  }
   function twAdsLoad(op, extra){
     TWP.busy=true; twPagePaint();
     return apiPost('/api/tw?a=ads', Object.assign({op:op||'get'}, extra||{})).then(function(j){
@@ -8039,27 +8132,37 @@
     var adTxt = left>0 ? '📺 <b>Anuncio corriendo</b> · quedan '+mmss(left/1000)
               : !s ? (TWP.busy ? 'Revisando…' : TWP.err ? '⚠ '+esc(TWP.err) : '—')
               : s.next ? 'Próximo anuncio en <b>'+mmss(Math.max(0, s.next-now)/1000)+'</b>'+(s.dur ? ' · dura '+s.dur+' s' : '') : 'Sin anuncio programado';
-    var h=cpHeadHtml(pfChip('tw')+' Twitch')+'<div class="cpb">'+
-      '<div class="lb2" style="margin-top:14px">📺 Anuncios</div><div class="grp"><div class="bcur">'+adTxt+(s && s.preroll ? ' · sin prerolls por '+mmss(s.preroll)+'' : '')+'</div>'+
+    var twOn=twPageOn();
+    var h=cpHeadHtml('📊 Encuestas y anuncios')+'<div class="cpb">'+(CFG.key && CFG.api ? kadHtml() : '')+(!twOn ? '' :
+      '<div class="lb2" style="margin-top:14px">'+pfChip('tw')+' 📺 Anuncios de Twitch</div><div class="grp"><div class="bcur">'+adTxt+(s && s.preroll ? ' · sin prerolls por '+mmss(s.preroll)+'' : '')+'</div>'+
         '<div class="bmsgs"><button data-ad="snooze"'+(s && !s.snooze ? ' disabled' : '')+'>⏰ Posponer 5 min'+(s ? ' ('+s.snooze+' más)' : '')+'</button><button class="sec" data-ad="get">↻</button></div>'+
         '<div class="sl" style="padding-top:2px">Lanzar uno ahorita</div><div class="bmsgs">'+[30,60,90,120,180].map(function(n){ return '<button data-adl="'+n+'">'+(n<60?n+' s':(n/60)+' min')+'</button>'; }).join('')+'</div>'+
-        opRow('adStrip','Ventanita del anuncio','Abajo de la barra: mientras corre (con su cuenta regresiva) y 90 s antes de uno automático, para posponerlo', CC.adStrip!==false)+
-        '<div class="nt" style="margin:0 12px 11px">Además, si lo dejas en la barra, 📺 sale con la cuenta regresiva.</div></div>'+
-      '<div class="lb2">📊 Encuesta</div><div class="grp tf">'+
+        '</div>'+
+      '<div class="lb2">'+pfChip('tw')+' 📊 Encuesta</div><div class="grp tf">'+
         '<div class="fld"><label>Pregunta</label><input id="twPollQ" maxlength="60" placeholder="Ej. ¿A dónde vamos?"></div>'+
         [1,2,3,4,5].map(function(i){ return '<div class="fld"><label>Opción '+i+(i>2?' (opcional)':'')+'</label><input class="twPO" maxlength="25"></div>'; }).join('')+
         '<div class="sl">Dura</div><div class="seg" data-k="tpD">'+[[60,'1 min'],[120,'2 min'],[300,'5 min'],[600,'10 min']].map(function(o){ return '<button data-v="'+o[0]+'" class="'+(Number(CC.tpD||120)===o[0]?'on':'')+'">'+o[1]+'</button>'; }).join('')+'</div>'+
         '<button class="bigb" id="twPollGo">Empezar encuesta</button></div>'+
-      '<div class="lb2">🔮 Predicción</div><div class="grp tf">'+
+      '<div class="lb2">'+pfChip('tw')+' 🔮 Predicción</div><div class="grp tf">'+
         '<div class="fld"><label>Pregunta</label><input id="twPredQ" maxlength="45" placeholder="Ej. ¿Llego antes de las 8?"></div>'+
         [1,2].map(function(i){ return '<div class="fld"><label>Resultado '+i+'</label><input class="twDO" maxlength="25" placeholder="'+(i===1?'Sí':'No')+'"></div>'; }).join('')+
         '<div class="sl">Se puede apostar durante</div><div class="seg" data-k="tdW">'+[[60,'1 min'],[120,'2 min'],[300,'5 min'],[600,'10 min']].map(function(o){ return '<button data-v="'+o[0]+'" class="'+(Number(CC.tdW||120)===o[0]?'on':'')+'">'+o[1]+'</button>'; }).join('')+'</div>'+
         '<button class="bigb" id="twPredGo">Empezar predicción</button>'+
-        '<div class="nt" style="margin:0 12px 11px">Cuando se cierren las apuestas, eliges quién ganó desde su ventanita arriba del feed.</div></div>'+
-      '<div class="nt">Solo en Twitch (Kick no deja crearlas desde fuera).</div></div>';
+        '<div class="nt" style="margin:0 12px 11px">Cuando se cierren las apuestas, eliges quién ganó desde su ventanita arriba del feed.</div></div>')+
+      '<div class="lb2">Avisos</div><div class="grp">'+
+        opRow('adStrip','Ventanita del anuncio','Abajo de la barra: mientras corre (con su cuenta regresiva)'+(twOn ? ' y 90 s antes de uno automático de Twitch, para posponerlo' : ''), CC.adStrip!==false)+
+        '<div class="nt" style="margin:0 12px 11px">Además, si lo dejas en la barra (⚙ → Barra de arriba), 📺 sale con la cuenta regresiva.</div></div>'+
+      '<div class="nt">'+(twOn ? 'Encuestas y predicciones: solo en Twitch.' : 'Para encuestas y predicciones conecta Twitch en ⚙ → Plataformas.')+
+        ' Kick todavía no deja crearlas desde fuera (su API oficial no las tiene). También puedes hacer un atajo que lance una encuesta, una predicción o un anuncio.</div></div>';
     $cpanel.innerHTML=h;
     document.getElementById('cpHead').onclick=cpHeadTap;
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-kad]'), function(b){ b.onclick=function(){ var op=b.getAttribute('data-kad');
+      if (op==='enroll') confirmTap1(b, '¿Inscribirlo?', function(){ kadLoad('enroll').then(function(j){ if (j && j.ok) apToast('✓ Tu canal quedó inscrito en los anuncios de Kick'); else apToast('⚠ '+((j && j.error)||'No se pudo'), true); }); });
+      else kadLoad('get'); }; });
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-kadl]'), function(b){ b.onclick=function(){
+      confirmTap1(b, '¿Lanzar?', function(){ kadLoad('start', {sec:Number(b.getAttribute('data-kadl'))}).then(function(j){ if (j && j.ok) apToast('📺 Anuncio lanzado en Kick'); else apToast('⚠ '+((j && j.error)||'No se pudo'), true); }); }); }; });
     var aso=$cpanel.querySelector('.op[data-k="adStrip"]'); if (aso) aso.onclick=function(){ CC.adStrip=CC.adStrip===false; saveCC(); twPagePaint(); adStripPaint(); };
+    if (!twOn) return;
     Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-ad]'), function(b){ b.onclick=function(){ twAdsLoad(b.getAttribute('data-ad')).then(function(j){ if (j && j.ok && b.getAttribute('data-ad')==='snooze') apToast('⏰ Anuncio pospuesto'); }); }; });
     Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-adl]'), function(b){ b.onclick=function(){
       confirmTap1(b, '¿Lanzar?', function(){ twAdsLoad('start', {length:Number(b.getAttribute('data-adl'))}).then(function(j){ if (j && j.ok) apToast('📺 Anuncio lanzado'); else apToast('⚠ '+((j && j.error)||'No se pudo'), true); }); }); }; });
@@ -8114,8 +8217,7 @@
   };
   document.addEventListener('pointerdown', function(ev){ if ($topop.classList.contains('show') && !ev.target.closest('#topop') && !ev.target.closest('#chatTo')) $topop.classList.remove('show'); }, true);
 
-  document.getElementById('twBtn').onclick=function(ev){ ev.stopPropagation(); cpFrom=false; openTwPage(); };
-  function twBtnPaint(){ var b=document.getElementById('twBtn'), v=twConnected() && CC.tw!==false && !DUO ? '' : 'none'; if (b.style.display!==v){ b.style.display=v; barKey=''; fitBar(); } }
+  function twBtnPaint(){}                                  // v88: ya no hay 🟣 en la barra (la página está en ⚙ → Recompensas y encuestas)
   if (typeof barOrderApply==='function' && typeof BARC!=='undefined' && BARC){ barOrderApply(); barKey=''; morePaint(); }
   // al abrir: el chat de Twitch y cómo está tu cuenta
   if (CC.tw!==false && !DUO) setTimeout(twcStart, 600);
@@ -8261,6 +8363,25 @@
       h+='<div class="fld"><label>Nota (opcional)</label><input data-f="text" maxlength="140" autocomplete="off" placeholder="Ej. Chopo saludando" value="'+esc(s.text||'')+'"></div>';
       h+=note('Guarda el minuto del stream para encontrarlo después (★ → 📍 Momentos). Tus mods lo hacen con '+esc(biGet('mom').c)+'.');
     }
+    else if (s.t==='polls') h+=note('Abre la página de encuestas, predicciones y anuncios (también está en ⚙ → Recompensas y encuestas).');
+    else if (s.t==='poll'){                                    // v88
+      h+='<div class="fld"><label>Pregunta</label><input data-f="text" maxlength="60" autocomplete="off" placeholder="Ej. ¿A dónde vamos?" value="'+esc(s.text||'')+'"></div>';
+      h+='<div class="fld"><label>Opciones (sepáralas con coma, de 2 a 5)</label><input data-f="ops" maxlength="140" autocomplete="off" placeholder="Ej. Tacos, Pizza, Sushi" value="'+esc(s.ops||'')+'"></div>';
+      h+=fsel('Dura','dur', [[60,'1 minuto'],[120,'2 minutos'],[300,'5 minutos'],[600,'10 minutos']], s.dur||120);
+      h+=note('Sale en Twitch. Kick todavía no deja crear encuestas desde fuera.');
+    }
+    else if (s.t==='pred'){
+      h+='<div class="fld"><label>Pregunta</label><input data-f="text" maxlength="45" autocomplete="off" placeholder="Ej. ¿Llego antes de las 8?" value="'+esc(s.text||'')+'"></div>';
+      h+='<div class="fld"><label>Resultado 1</label><input data-f="r1" maxlength="25" autocomplete="off" placeholder="Sí" value="'+esc(s.r1||'')+'"></div>';
+      h+='<div class="fld"><label>Resultado 2</label><input data-f="r2" maxlength="25" autocomplete="off" placeholder="No" value="'+esc(s.r2||'')+'"></div>';
+      h+=fsel('Se puede apostar durante','win', [[60,'1 minuto'],[120,'2 minutos'],[300,'5 minutos'],[600,'10 minutos']], s.win||120);
+      h+=note('Sale en Twitch. Quién ganó lo eliges en su ventanita arriba del feed.');
+    }
+    else if (s.t==='ad'){
+      h+=fsel('Dónde','pf', PF_DEST, s.pf||'auto');
+      h+=fsel('Cuánto dura','sec', [[30,'30 segundos'],[60,'1 minuto'],[90,'1 minuto y medio'],[120,'2 minutos (solo Twitch)'],[180,'3 minutos (solo Twitch)']], s.sec||30);
+      h+=note('Kick deja de 7 a 90 segundos (si eliges más, en Kick dura 90). «Donde estoy en vivo» lo lanza donde estés transmitiendo.');
+    }
     else if (s.t==='brb'){
       var ba=s.act||'next';
       h+=fsel('Acción del BRB','act', BRB_ACT, ba);
@@ -8360,7 +8481,7 @@
           else if (f==='s') s.s=Number(v);
           else if (f==='n') s.n=Number(v);
           else if (f==='d') s.d=Number(v);
-          else if (f==='m' || f==='w' || f==='sec') s[f]=Number(v);      // v82
+          else if (f==='m' || f==='w' || f==='sec' || f==='dur' || f==='win') s[f]=Number(v);      // v82 · v88: dur y win
           else if (f==='who') s.who=v;
           else if (f==='pick' && s.t==='brb'){ s.text=v; s.custom=!v; }         // v72: de tus mensajes guardados
           else if (f==='cat'){ var c=recentCats().filter(function(x){ return String(x.id)===v; })[0]; if (c) s.cat={id:c.id, name:c.name}; else delete s.cat; }
@@ -8424,10 +8545,15 @@
       else if (s.t==='chat' && !String(s.text||'').trim()) bad=p+'escribe el mensaje';
       else if (s.t==='title' && !String(s.text||'').trim() && !s.cat) bad=p+'escribe el título o elige la categoría';
       else if (s.t==='brb' && s.act==='pl' && !s.pl) bad=p+'elige la playlist';
+      else if (s.t==='poll' && !String(s.text||'').trim()) bad=p+'escribe la pregunta de la encuesta';      // v88
+      else if (s.t==='poll' && pollOps(s).length<2) bad=p+'pon al menos 2 opciones, separadas con coma';
+      else if (s.t==='pred' && !String(s.text||'').trim()) bad=p+'escribe la pregunta de la predicción';
     });
     if (bad){ TE.err=bad; tePaint(); return; }
     t.name=String(t.name||'').trim();
-    t.steps.forEach(function(s){ if (s.t==='chat' || s.t==='title' || s.t==='moment') s.text=String(s.text||'').trim();
+    t.steps.forEach(function(s){ if (s.t==='chat' || s.t==='title' || s.t==='moment' || s.t==='poll' || s.t==='pred') s.text=String(s.text||'').trim();
+      if (s.t==='poll'){ s.ops=pollOps(s).join(', '); if (!s.dur) s.dur=120; } if (s.t==='pred'){ s.r1=String(s.r1||'').trim(); s.r2=String(s.r2||'').trim(); if (!s.win) s.win=120; }   // v88
+      if (s.t==='ad'){ if (!s.sec) s.sec=30; if (!s.pf) s.pf='auto'; }
       if ((s.t==='item'||s.t==='filter'||s.t==='mute'||s.t==='stream'||s.t==='record'||s.t==='mix') && !s.mode) s.mode='toggle'; if (s.t==='wait' && !s.s) s.s=1;
       if (s.t==='goal' && s.n==null) s.n=1; if (s.t==='tts' && !s.who) s.who='all';
       if (s.t==='brb'){ if (!s.act) s.act='next'; if (s.act==='msg') s.text=String(s.text||'').trim().slice(0,80); } });
@@ -8605,16 +8731,41 @@
       var g=document.getElementById('subG'); [$syRow, $syUp, $syDown].forEach(function(x){ g.appendChild(x); }); syPaint();
     } else {
       $cpanel.innerHTML=cpHeadHtml('Servidor y diagnóstico')+'<div class="cpb"><div class="lb2">Tu servidor</div><div class="sgrp" id="subA"></div>'+
+        (CFG.key ? '<div class="lb2">🔑 Tu clave</div><div class="grp" id="keyG"></div>' : '')+
         '<div class="lb2">🩺 Antes del stream</div><div class="grp" id="hcG"></div>'+
         '<div class="lb2">🛡 Guardia del chat (tu OBS)</div><div class="grp" id="cwG"></div>'+
         '<div class="lb2">Diagnóstico</div><div class="sgrp" id="subB"></div><div class="lb2">Historial</div><div class="sgrp" id="subC"></div>'+
         '<div class="nt">Versión '+esc(VERSION)+'</div></div>';
       paintApi(); document.getElementById('subA').appendChild(ab);
-      cwPaint(); cwLoad(); hcPaint();
+      cwPaint(); cwLoad(); hcPaint(); keyPaint();
       [hb, dg].forEach(function(x){ document.getElementById('subB').appendChild(x); });
       [cp, clr].forEach(function(x){ document.getElementById('subC').appendChild(x); });
     }
     document.getElementById('cpHead').onclick=cpHeadTap;
+  }
+  /* v88 · 🔑 cambiar tu clave desde la app: la anterior deja de servir al momento (si crees que se filtró tu link).
+     Este celular se queda con la nueva; a tu otro celular y a IRL Plus Chat les pasas el link nuevo. */
+  var KEYR={busy:false, link:''};
+  function keyPaint(){
+    var g=document.getElementById('keyG'); if (!g) return;
+    g.innerHTML='<div class="op lk" id="keyNew"><span><b>'+(KEYR.busy ? 'Cambiando…' : 'Cambiar mi clave')+'</b><small>Si crees que se filtró tu link. La anterior deja de servir al momento: este celular se queda con la nueva y en los demás abres el link nuevo</small></span></div>'+
+      (KEYR.link ? '<div class="op lk" id="keyCp"><span><b>📋 Copiar el link nuevo</b><small>Ábrelo en tu otro celular y ponlo en IRL Plus Chat. Trae tu clave: no lo enseñes en stream</small></span><span class="ch">📋</span></div>' : '');
+    document.getElementById('keyNew').onclick=function(){
+      if (KEYR.busy || !confirmTwice(this)) return;
+      KEYR.busy=true; keyPaint();
+      apiPost('/api/key', {a:'rotate'}).then(function(r){
+        KEYR.busy=false;
+        if (r && r.ok && r.key){
+          CFG.key=r.key; try{ localStorage.setItem('kickfeed.key', r.key); }catch(e){}
+          KEYR.link=r.link||'';
+          if (typeof RTC!=='undefined' && RTC){ try{ RTC.stop(); }catch(e){} RTC=null; RTOK=false; } if (typeof rtStart==='function') rtStart();   // el tiempo real, ya con la nueva
+          apToast('🔑 Clave nueva lista. Copia el link para tus otros lugares');
+        } else apToast('⚠ '+((r && r.error)||'No se pudo'), true);
+        keyPaint();
+      });
+    };
+    var cp=document.getElementById('keyCp'); if (cp) cp.onclick=function(){
+      (navigator.clipboard ? navigator.clipboard.writeText(KEYR.link) : Promise.reject()).then(function(){ apToast('📋 Link nuevo copiado'); }, function(){ apToast('No se pudo copiar', true); }); };
   }
   /* v79 · 🛡 GUARDIA DEL CHAT: una fuente escondida en tu OBS (IRLHosting, 24/7) que lee el chat de Kick y
      Twitch directo y se lo pasa a tu servidor en tandas. Mientras funciona, Kick y Twitch ya no le avisan
@@ -9548,7 +9699,8 @@
     alert:'<path d="M4 10v4h3l5 4V6L7 10z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.3 6a8.5 8.5 0 0 1 0 12"/><path d="M20.5 3.5l-1.5 1.5"/>',
     speaker:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
     gift:'<rect x="4" y="10.5" width="16" height="9.5" rx="1.5"/><rect x="3" y="7" width="18" height="3.5" rx="1"/><path d="M12 7v13"/><path d="M12 7C10.6 4.2 7.2 4 7.2 5.8 7.2 7 9.5 7 12 7zm0 0c1.4-2.8 4.8-3 4.8-1.2C16.8 7 14.5 7 12 7z"/>',   // v84: Recompensas
-    layers:'<path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12.5l8.5 4.5 8.5-4.5"/><path d="M3.5 16.5l8.5 4.5 8.5-4.5"/>'
+    layers:'<path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12.5l8.5 4.5 8.5-4.5"/><path d="M3.5 16.5l8.5 4.5 8.5-4.5"/>',
+    poll:'<path d="M5 20V12"/><path d="M12 20V5"/><path d="M19 20v-8"/><path d="M3 20h18"/>'   // v88: Encuestas y anuncios
   };
   function icoHtml(k, bg){ return '<i class="ico" style="--ib:'+bg+'"><svg viewBox="0 0 24 24" aria-hidden="true">'+(ICO[k]||'')+'</svg></i>'; }
   // un renglón de ajustes: icono, título (y aclaración), valor a la derecha, ›
@@ -9562,6 +9714,7 @@
   var $pfRow=document.createElement('button');      // v74: ⚙ → Plataformas (Kick y Twitch)
   var $alRow=document.createElement('button');      // v76: ⚙ → Alertas (las tuyas, con su Studio)
   var $rwRow=document.createElement('button');      // v84: ⚙ → Recompensas (Kick y Twitch, con sus canjes pendientes)
+  var $pollRow=document.createElement('button');    // v88: ⚙ → Encuestas, predicciones y anuncios (antes el 🟣 de la barra)
   var $coRow=document.createElement('button');      // v83: ⚙ → Chat para OBS (abre Chat Studio)
   var $mixRow=document.createElement('button'), $evRow=document.createElement('button'), $navRow=document.createElement('button'),
       $syNav=document.createElement('button'), $srvRow=document.createElement('button'), $chatRow=document.createElement('button'), $usRow=document.createElement('button'),
@@ -9600,7 +9753,9 @@
     srow(tb, {ic:'title', bg:'#ff9f0a', t:'Título y categoría', nav:1});
     srow($alRow, {ic:'alert', bg:'#ff375f', t:'Alertas', d:'Las tuyas: sonidos, imágenes y repetir', nav:1});
     var rwn=rwpCount(); srow($rwRow, {ic:'gift', bg:'#ff9500', t:'Recompensas', d:'Kick y Twitch · canjes pendientes', val:rwn ? rwn+' pendiente'+(rwn>1?'s':'') : '', vc:rwn ? 'bad' : '', nav:1});
-    srow($apRow, {ic:'grid', bg:'#34c759', t:'Atajos', val:String((CC.tiles||[]).length||''), nav:1});
+    var anw=typeof adNow==='function' ? adNow() : null;
+    srow($pollRow, {ic:'poll', bg:'#bf5af2', t:'Encuestas y anuncios', d:'Anuncios de Kick y Twitch'+(twConnected() && CC.tw!==false ? ' · encuestas y predicciones' : ''), val:anw ? '📺 '+mmss(anw.left/1000) : '', vc:anw ? 'bad' : '', nav:1});
+    srow($apRow, {ic:'grid', bg:'#34c759', t:'Atajos', d:'Tus botones de OBS y del chat', val:String((CC.tiles||[]).length||''), nav:1});
     srow($obsRow, {ic:'obs', bg:'#5e5ce6', t:'OBS', val:obsVal, vc:obsVal==='Conectado'?'ok':'', nav:1});
     var mcc=MC.cfg ? mcCfg() : null; srow($cmdRow, {ic:'cmd', bg:'#ff6b35', t:'Comandos para mods', val:mcc ? (!mcc.cmds.length ? 'Ninguno' : mcc.on!==false ? String(mcc.cmds.length) : 'Apagados') : '', vc:mcc && mcc.cmds.length && mcc.on!==false ? 'ok' : '', nav:1});
     var rlc=rlCfg(); srow($ruleRow, {ic:'auto', bg:'#ac8e68', t:'Reglas automáticas', d:'Cuando pase esto, haz esto', val:!rlc.list.length ? 'Ninguna' : rlc.on!==false ? String(rlc.list.filter(function(r){ return r.on!==false; }).length) : 'Apagadas', vc:rlc.list.length && rlc.on!==false ? 'ok' : '', nav:1});
@@ -9628,6 +9783,7 @@
     $pfRow.onclick=function(){ cpFrom=true; openPfPage(); };
     $alRow.onclick=function(){ cpFrom=true; openAlPage(); };
     $rwRow.onclick=function(){ cpFrom=true; openRwPage(); };
+    $pollRow.onclick=function(){ cpFrom=true; openTwPage(); };
     // v83: Chat Studio se abre aparte (con tu clave); si el celular no deja abrir pestañas, se copia el link
     $coRow.onclick=function(){ var u=alBase()+'chat-studio.html?key='+encodeURIComponent(CFG.key||''), w=null; try{ w=window.open(u, '_blank'); if (w) w.opener=null; }catch(e){}
       if (!w && navigator.clipboard) navigator.clipboard.writeText(u).then(function(){ apToast('📋 Link de Chat Studio copiado: pégalo en tu navegador (trae tu clave, no lo compartas)'); }, function(){}); };
@@ -9657,7 +9813,12 @@
     ver.className='chip wide ver'; ver.style.cssText='';
     var hd=document.createElement('div'); hd.className='shd'; hd.innerHTML='<b>Ajustes</b><span class="x">Listo</span>';
     hd.querySelector('.x').onclick=function(){ $filt.classList.remove('open'); };
-    var kids=[hd, $hero, sec('En vivo'), grp([$pfRow, tb, $alRow, $rwRow, $apRow, $obsRow, $cmdRow, $ruleRow]), sec('Chat'), grp([$chatRow, $coRow, cb, $qrRow, $ttsRow, $mixRow, $usRow, sb]),
+    // v88: reacomodo. Conexiones arriba; luego lo que usas en vivo, lo de tu público, lo automático, el chat y el resto
+    var kids=[hd, $hero, sec('Conexiones'), grp([$pfRow, $obsRow]),
+              sec('En vivo'), grp([tb, $apRow, $alRow]),
+              sec('Recompensas y encuestas'), grp([$rwRow, $pollRow]),
+              sec('Automático'), grp([$ruleRow, $cmdRow]),
+              sec('Chat'), grp([$chatRow, cb, $qrRow, $ttsRow, $usRow, sb, $mixRow, $coRow]),
               sec('Feed'), grp([$evRow]), sec('Pantalla'), grp([$fsRow, $barRow, $navRow, $landRow, $oledRow]), sec('Tus dos celulares'), grp([$syNav]),
               sec('Avanzado'), grp([$srvRow]), ver];
     // lo que no quedó en ninguna sección (por si algo se agrega después) va al final

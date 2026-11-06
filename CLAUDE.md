@@ -64,7 +64,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 
 **Raíz (GitHub Pages):**
 
-- `index.html`: la app, un solo archivo de unas 9,300 líneas con todo el CSS y el JS. Está hecha a mano, sin framework. Tiene diseños Tarjetas, Cristal, Clásico y Grafito (este lo agregó otra IA en la v81).
+- `index.html`: la app, un solo archivo de unas 9,700 líneas con todo el CSS y el JS. Está hecha a mano, sin framework. Tiene diseños Tarjetas, Cristal, Clásico y Grafito (este lo agregó otra IA en la v81).
 - `rt.js`: cliente de Ably compartido (`KFRT.start({api, on, state, log})`).
   - Carga el SDK 2.29.0 de jsdelivr, con unpkg de respaldo.
   - Antes de dejar de preguntar al servidor, confirma con un «ping» por Ably que de verdad le llegan los avisos.
@@ -88,12 +88,13 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - `mod` (moderar en Kick), `chat` (escribir)
   - `obs`, `rules`, `modcmd`, `moments`, `goal`, `viewers`, `chatters`, `prefs`, `spam`
   - `chatin` (guardia), `chatobs` (widget de chat, público), `health`, `rt` (Ably), `realtime`
-  - `rewards` (v84: recompensas y canjes), `kick` (v84: permisos de tu cuenta de Kick)
+  - `rewards` (v84: recompensas y canjes; v88: `vipgive` / `vipoff` desde la hoja del usuario), `kick` (v84: permisos de tu cuenta de Kick; v88: anuncios con `a=ads|adstart|adenroll`)
+  - `key` (v88: «Cambiar mi clave» desde la app, solo POST con la clave actual)
   - `tw` (todo lo de Twitch con `?a=`: status, now, send, mod, chan, cats, poll, pred, ads, badges, clips…)
   - `login` / `callback` (Kick OAuth con PKCE), `twlogin` / `twcallback`, `status`, `debug` (con clave)
 - `alertas.js`: alertas y voz (`?a=cfg|f|fdel|fire|poll|save|skip|test|tts|up|object`).
 - `brb.js`: el BRB.
-- `_rt.js`: publicar en Ably. El guion bajo es para que Vercel no lo convierta en ruta. Usa un solo canal, `kf`, con los mensajes `ev`, `goal`, `tw`, `sync`, `al`, `alcfg`, `brb`, `ping`, `obs` y `rw` (v84: canjes pendientes).
+- `_rt.js`: publicar en Ably. El guion bajo es para que Vercel no lo convierta en ruta. **v88: dos canales.** `kf` es el público (los letreros de OBS lo escuchan sin clave): `goal`, `al`, `alcfg`, `brb`, `ping` y solo los `ev` que necesitan los letreros (`EV_PUB`: sub, resub, gift, kicks, bits, raid, follow, reward, live). `kfp` es el privado (solo con tu clave, `/api/rt?key=`): todos los `ev` y `tw`, `sync`, `obs`, `rw` (v84: canjes pendientes) y `kad` (v88: anuncio de Kick). `rt.js` recibe `key` y escucha los dos; la app no repite eventos porque los filtra por id.
 
 **`pruebas/`:** las pruebas automáticas (ver su `LEEME.md`). No se publican en Vercel (`.vercelignore`).
 
@@ -135,6 +136,9 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - `vipq:<llave de vipx>`: ese VIP lo quitaste tú a mano («Quitar ya»): no se anuncia «se terminó tu VIP».
   - `toprot`: `{ users:[…], mods:true }`, a quién no le cae la recompensa de timeout (además de los protegidos de cada regla).
   - `ttsbl`: lista negra del TTS por recompensa (nombres en minúsculas).
+- **v88:**
+  - `k:ads`: cómo están tus anuncios de Kick (guardado 60 s; 15 s si hay uno corriendo; 5 min si falta el permiso).
+  - `feedkeyAt`: cuándo se hizo tu clave actual.
 
 ## Recompensas y canjes (v84, cómo están hechas)
 
@@ -144,6 +148,14 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - El aviso de canjes de Kick también corre tus reglas «Canjean una recompensa» (misma huella `rf:` que la guardia y la app: una sola vez).
 - Redis: `rwmine` (ids de las que creó la app), `rwp` (zset de pendientes, máx. 100, los de más de 3 días no salen), `rwpAt` (cuándo cambió; sale en `/api/events` como `rwa`). Ably: mensaje `rw`.
 - v84 también arregló `rwRefund` de Kick: Kick manda en `data` la lista de los que NO pudo (antes decía «Te devolví tus puntos» aunque no se hubieran devuelto).
+
+## Encuestas, predicciones y anuncios (v88)
+
+- Ya no hay 🟣 en la barra. La página «📊 Encuestas y anuncios» (panel `twm`, `openTwPage`) está en ⚙ → Recompensas y encuestas, en el 📺 de la barra y como paso de atajo.
+- **Anuncios de Kick (API oficial, permisos `ads:read ads:write`):** `GET /public/v1/ads/ad-break-status`, `POST /public/v1/ads/ad-break` (`break_duration_seconds` de 7 a 90 y un `id` uuid), `POST /public/v1/ads/enroll` (solo fuera de vivo). Funciones `kickAds`, `kickAdStart`, `kickAdEnroll`, errores en español en `KAD_ERR`. Kick no avisa por webhook: `/api/events` trae `kad` solo con tu clave y en vivo en Kick (de `k:ads`, o le pregunta a Kick si no hay nada guardado). Al lanzar uno se avisa por Ably (`kad`).
+- En la app: `KAD`, `kAdLeft`, `kadSet`, `adNow`. La ventanita del anuncio (`adStrip`) y el 📺 de la barra sirven para Kick y Twitch («Anuncio en Kick» / «Anuncio en Twitch»). El de Kick sale aunque no uses Twitch.
+- **Encuestas y predicciones:** solo Twitch. Kick no las tiene en su API oficial (ver «Decisiones»).
+- **Pasos de atajo (solo atajos, no reglas ni comandos):** `polls` (abrir la página), `poll` (`text`, `ops` «Tacos, Pizza», `dur`), `pred` (`text`, `r1`, `r2`, `win`), `ad` (`pf` auto/kick/tw/both, `sec`; en Kick máximo 90 s; pide otro toque por defecto).
 
 ## Reglas automáticas (cómo están hechas)
 
@@ -172,6 +184,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - Otras direcciones que sirven con la sesión (todavía sin usar): OG y moderadores (`…/community/ogs`, `…/community/moderators`), modos `subscribers_mode`, `slow_mode` + `message_interval`, `followers_mode` + `following_min_duration`. Kick.bot es AGPL-3.0: solo se tomaron las direcciones, no su código.
 - **Streamer.bot:** quiero dejar de usarlo. Cuando funcione la sesión de Kick, el VIP y solo emotes de Kick pasan a la app (en `vipGive` y `XSTEP.emo`, en lugar de `sbJob`). El puente de la v82 (guardia → Streamer.bot) se puede quitar después; mientras no esté conectado, no gasta.
 - **Devolver puntos / aceptar y rechazar canjes con la API oficial:** tanto Kick (`NOT_OWNED`) como Twitch solo dejan manejar los canjes de recompensas creadas por la misma app (el mismo client id). En Kick se resuelve con la sesión (arriba). En Twitch, las que creé en el panel o con Streamer.bot no se pueden; las nuevas hay que crearlas desde la app.
+- **Encuestas y predicciones de Kick (v88):** la API oficial de Kick no las tiene. Hacerlas con la sesión de kick.com y direcciones internas no se hizo (Claude Code no construye esa parte). Si Kick las abre en su API oficial, se agregan en la página «📊 Encuestas y anuncios».
 - **7TV:** la app busca mis emotes con mi id de usuario de Kick (`kick_user_id`; en 7TV mi conexión de Kick es `6786072`) y con el room-id de Twitch (`135201683`). Las imágenes son `https://cdn.7tv.app/emote/<id>/1x.webp`, y si fallan se prueba en `.png` y luego en `.gif` (`kfEmFb`). En la v82 reporté recuadros blancos, pero no se pudo reproducir: el CDN contestó bien.
 
 ## Pendiente (empieza por aquí)
@@ -208,6 +221,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - 117: hecha (widget de chat para OBS, `chat-obs.html`).
 - 118: hecha en v84 (la app crea sus recompensas y maneja sus canjes).
 - 115: hecha en v87 (lista de VIP temporales).
+- 136–138: ver la entrega de la v88 (siguen en el chat).
 
 ## Historial corto
 
@@ -226,10 +240,14 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - **v84:** botón para volver a conectar Kick (con permisos que faltan), sección 🎯 Recompensas (Kick y Twitch, APIs oficiales), canjes pendientes con ✓ / ✕ en el feed y 🎯 en la barra, aviso oficial de canjes de Kick, arreglo de «devolver puntos» en Kick.
 - **v85:** 🔐 sesión de Kick («modo Kick.bot»): VIP y solo emotes en Kick sin Streamer.bot, todas las recompensas y canjes de Kick, vigilancia de la sesión. Pruebas `harness33.js` y `v85.js`.
 - **v86:** 🔐 seguridad. Arreglado el hueco por el que un link con otro `?api=` se robaba la clave 🔑 (ver «Seguridad» abajo) en `index.html`, `chat-studio.html`, `brb.html` y la guardia. En `index.html` la clave ya no se queda en la barra de direcciones. Prueba `v86seg.js`. (Nota: al subir la v85 por la web de GitHub se borró sin querer casi toda la carpeta `pruebas/`; se recuperó del historial.)
+- **v88:** 👑 dar y quitar VIP tocando a alguien en el chat (Kick y Twitch); 📺 anuncios de Kick (ver cuántos te quedan, lanzar, inscribirte, la ventanita y el 📺 de la barra); el 🟣 de la barra se fue: página «📊 Encuestas y anuncios» en ⚙ y como atajo (encuesta, predicción, anuncio); Ajustes reacomodados (Conexiones, En vivo, Recompensas y encuestas, Automático, Chat…); 🔐 seguridad: canal privado de Ably, CORS solo para tus páginas, freno a quien prueba claves y «Cambiar mi clave» desde la app. Pruebas `harness35.js` y `v88.js`.
 - **v87:** regla de escena arreglada (elige a qué chat va el mensaje aunque Twitch esté apagado en el celular, cuenta como en vivo si OBS transmite, y el feed dice por qué no salió); 👑 lista de VIP temporales con «Quitar ya»; 🛡 protegidos del timeout (tu lista y tus mods) con devolución de puntos; 🔊 TTS por recompensa con lista negra; ⌨️ el teclado ya no tapa la barra para escribir (IRL Plus Chat). Pruebas `harness34.js` y `v87.js`.
 
 ## Seguridad (lo que no se debe romper)
 
 - **La clave 🔑 solo se le manda a TU servidor.** `index.html`, `chat-studio.html`, `brb.html` y `guardia.html` leen `?api=` de la URL. Si no es tu servidor, un link como `?api=https://malo` te robaría la clave (o el token `?w=` de la guardia) y con eso controlarían tu canal. Por eso cada una tiene `apiHostOk()`: solo confía en `kick-feed-mariotq.vercel.app`, en los previews `kick-feed-mariotq-…-tq19.vercel.app` y en el mismo dominio de la página. Si el `?api=` es otro, se ignora (usa el servidor de siempre) y NO se carga la clave. **No quites este candado ni le agregues hosts con comodín.** `alertas-comun.js` tiene el servidor fijo (no lee `?api=`), por eso Alertas Studio no lo necesita.
 - La clave no se enseña en stream: sale de la barra de direcciones (`history.replaceState`) en todas las páginas que la reciben.
-- Si crees que se te filtró la clave, hazte una nueva: abre `https://kick-feed-mariotq.vercel.app/api/login?nueva=1`, autoriza, y la anterior deja de servir (vuelve a abrir el link nuevo en tus celulares).
+- Si crees que se te filtró la clave, hazte una nueva: **v88:** ⚙ → Servidor y diagnóstico → 🔑 «Cambiar mi clave» (dos toques; el celular se queda con la nueva y te da el link para el otro celular y para IRL Plus Chat). También sirve abrir `https://kick-feed-mariotq.vercel.app/api/login?nueva=1` y autorizar. La anterior deja de servir (en otras instancias del servidor, a más tardar en 1 min).
+- **v88 · CORS:** las rutas solo le contestan al navegador si la página es tuya (`ORIG_OK`: `mariiotq.github.io`, `kick-feed-mariotq.vercel.app` y tus previews `kick-feed-mariotq-…-tq19.vercel.app`), con `Vary: Origin`. Lo mismo en `alertas.js` y `brb.js`. No le agregues hosts con comodín. (Que los POST vayan como `text/plain` está bien: la clave va en el cuerpo y CORS ya no deja leer la respuesta a otras páginas.)
+- **v88 · freno de claves:** `checkKey` cuenta, por conexión (IP), las claves equivocadas DISTINTAS: con 20 en 10 min esa conexión ya no entra ni con la buena un rato. Un celular con tu clave vieja repite siempre la misma y no frena a nadie. Lo público sin clave nunca se frena. Está en los tres archivos del servidor (`REQCTX`, `BADK`, `keyFail`, `keyBlocked`) y es en memoria por instancia.
+- **v88 · Ably privado:** sin clave, `/api/rt` solo da permiso de escuchar `kf` (lo que ven tus letreros en pantalla). El chat, la moderación, los canjes, Twitch, OBS y tus ajustes van por `kfp`, que pide tu clave. Si agregas un mensaje nuevo que no necesiten los letreros, ponlo en `PRIV` de `_rt.js`.

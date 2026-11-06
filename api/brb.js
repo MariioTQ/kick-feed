@@ -77,8 +77,13 @@ function send(res, code, body) {
   res.setHeader('Cache-Control', 'no-store');
   res.end(JSON.stringify(body));
 }
+// v88 · 🔐 CORS: desde un navegador, solo TUS páginas (GitHub Pages y tu Vercel) pueden leer lo que contesta tu servidor.
+// (Antes era «*»: cualquier página de internet podía usarlo desde el navegador de alguien.)
+const ORIG_OK = /^https:\/\/(mariiotq\.github\.io|kick-feed-mariotq\.vercel\.app|kick-feed-mariotq-[a-z0-9-]+-tq19\.vercel\.app)$/;
 function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const o = String((res.req && res.req.headers && res.req.headers.origin) || '');
+  if (ORIG_OK.test(o)) res.setHeader('Access-Control-Allow-Origin', o);
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
@@ -107,10 +112,25 @@ const pick = (v, list, def) => list.indexOf(v) >= 0 ? v : def;
 
 /* ---- la misma clave de tus celulares que usa el feed ---- */
 let KEYC = { k: null, at: 0 };
+// v88 · 🔐 freno a quien prueba claves: 20 claves equivocadas distintas en 10 min desde la misma
+// conexión y ya no se le acepta ninguna clave un rato. Solo cuenta cuando sí mandan una clave
+// (tus letreros de OBS no llevan clave: nunca se frenan). Es por instancia del servidor (en memoria).
+const { AsyncLocalStorage } = require('async_hooks');
+const REQCTX = new AsyncLocalStorage(), BADK = new Map();
+const reqIp = req => String((req && req.headers && (req.headers['x-real-ip'] || req.headers['x-forwarded-for'])) || (req && req.socket && req.socket.remoteAddress) || '').split(',')[0].trim();
+// Cuenta claves DISTINTAS: un celular que se quedó con tu clave vieja repite siempre la misma (cuenta 1) y no frena a nadie.
+function keyBlocked() { const c = REQCTX.getStore(), b = c && BADK.get(c.ip); if (!b) return false; if (Date.now() - b.t > 600000) { BADK.delete(c.ip); return false; } return b.ks.size >= 20; }
+function keyFail(q) { const c = REQCTX.getStore(); if (!c || !c.ip || !String(q || '')) return; const now = Date.now(), h = crypto.createHash('sha256').update(String(q)).digest('base64').slice(0, 12);
+  let b = BADK.get(c.ip); if (!b || now - b.t > 600000) { b = { t: now, ks: new Set() }; BADK.set(c.ip, b); }
+  if (b.ks.size < 50) b.ks.add(h); if (BADK.size > 5000) BADK.delete(BADK.keys().next().value); }
 async function checkKey(q) {
   if (!KEYC.k || Date.now() - KEYC.at > 60000) KEYC = { k: await redis('GET', 'feedkey'), at: Date.now() };
-  const a = Buffer.from(String(q || '')), b = Buffer.from(String(KEYC.k || ''));
-  return !!KEYC.k && a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (keyBlocked()) return false;                     // v88: frenado por probar claves
+  const same = k2 => { const a2 = Buffer.from(String(q || '')), b2 = Buffer.from(String(k2 || '')); return !!k2 && a2.length === b2.length && crypto.timingSafeEqual(a2, b2); };
+  let ok = same(KEYC.k);
+  if (!ok && String(q || '') && Date.now() - KEYC.at > 5000) { KEYC = { k: await redis('GET', 'feedkey'), at: Date.now() }; ok = same(KEYC.k); }   // v88: la clave pudo cambiar en otro servidor
+  if (!ok) keyFail(q);
+  return ok;
 }
 
 /* ---------------- clips: solo se guarda lo que sirve ---------------- */
@@ -619,7 +639,8 @@ async function obs(req, res, b) {
 }
 
 /* ---------------- entrada ---------------- */
-module.exports = async function handler(req, res) {
+module.exports = function handler(req, res) { return REQCTX.run({ ip: reqIp(req) }, () => handlerIn(req, res)); };   // v88
+async function handlerIn(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
   const q = req.query || {};
@@ -646,4 +667,4 @@ module.exports = async function handler(req, res) {
   } catch (e) {
     return send(res, 500, { ok: false, error: e.message });
   }
-};
+}
