@@ -60,6 +60,7 @@ function next(){
   if (BUSY || !QUEUE.length || !CFG) return;
   var a=QUEUE.shift();
   if (CFG.on===false && !a.test) return next();
+  if (a.k==='tts') return ttsPlay(a);                 // v87: 🔊 el TTS de una recompensa
   var sp=A.spec(CFG, a, a.test ? a.vi : null);
   if (!sp || (!sp.on && !a.test && !a.rp)) return next();
   if (!a.test && !a.rp && typeof a.n==='number' && sp.min && a.n<sp.min) return next();
@@ -75,6 +76,23 @@ function next(){
                            try{ console.warn('[alertas] la voz no salió:', VOZERR.msg); }catch(_){} return 0; });
   p.then(function(){ var left=minEnd-Date.now(); setTimeout(finish, Math.max(0, left)); });
   setTimeout(finish, Math.max(sp.dur, 8)*1000+25000);   // por si algo se atora
+}
+// v87 · 🔊 TTS por recompensa: una tarjeta con quién y su mensaje, y la voz de tus alertas (con tu filtro de groserías)
+function ttsPlay(a){
+  var msg=A.ttsFiltrar(String(a.m||''), CFG).replace(/\s+/g,' ').trim().slice(0, (CFG.ttsMax||140));
+  if (!msg) return next();
+  BUSY=true;
+  var el=document.createElement('div'), done=false;
+  el.className='alc anim-sube look-'+(CFG.look||'tarjeta')+' pf-'+(a.pf==='tw'?'tw':'kick');
+  el.innerHTML='<div class="alc-tx"><div class="alc-t">🔊 <span class="nm">'+A.esc(a.u||'Alguien')+'</span></div><div class="alc-s">'+A.esc(msg)+'</div></div>';
+  $st.innerHTML=''; $st.appendChild(el);
+  var finish=function(){ if (done) return; done=true; el.classList.add('out'); setTimeout(function(){ if (el.parentNode) el.remove(); BUSY=false; CUR=null; setTimeout(next, (CFG.gap||1)*1000); }, 520); };
+  CUR={end:finish};
+  var t0=Date.now(), dicho=(a.who && a.u ? a.u+' dice: ' : '')+msg;
+  var p = MUDO ? Promise.resolve(0) : A.say(dicho, CFG, MULT);
+  p.catch(function(e){ VOZERR={at:Date.now(), msg:(e && e.message) || 'la voz falló'}; return 0; })
+   .then(function(){ setTimeout(finish, Math.max(0, t0+4000-Date.now())); });   // mínimo 4 s en pantalla
+  setTimeout(finish, 60000);                                                       // por si algo se atora
 }
 // v79 ⚡ las alertas llegan al momento por Ably (tu servidor avisa una vez). Preguntar queda solo de respaldo.
 var RT=null, RTOK=false;

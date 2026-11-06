@@ -39,7 +39,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 
 ## Cómo se trabaja ahora (Claude Code)
 
-1. Trabaja en una rama. Antes de subir a `main`, corre las pruebas de lo que cambiaste (ver `pruebas/LEEME.md`) y explícame en prosa qué hiciste. Sube a `main` solo cuando te diga que sí, porque al subir, Vercel y GitHub Pages publican al momento.
+1. Trabaja en una rama. Antes de subir a `main`, corre las pruebas de lo que cambiaste (ver `pruebas/LEEME.md`). **Cuando todo pase, súbelo a `main` tú solo, sin preguntarme** (decidido por mí el 6 nov 2026): al subir, Vercel y GitHub Pages publican al momento. Después explícame en prosa qué hiciste.
 2. Con cada versión nueva, sube `VERSION` en `index.html` (por ejemplo `'83 · 10 nov 2026'`). Si cambias `guardia.html`, sube también `VER` en `guardia.html` y `GUARD_VER` en `api/[route].js` al mismo número: con eso el servidor actualiza sola la guardia en OBS.
 3. **Cuidado con el nombre:** el archivo del servidor se llama `api/[route].js`, con corchetes. Si se renombra o pierde los corchetes, todo el servidor se cae (ya pasó dos veces cuando yo subía a mano por la web de GitHub).
 4. Los comentarios del código van en español, con la versión: `// v82: …`. Así se ve cuándo cambió cada cosa.
@@ -131,6 +131,10 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - `ca:<pf>:<víctima>`: contra ataque pendiente.
   - `emo:<pf>`: hasta cuándo dura el modo solo emotes.
   - `plan` y `plancd:*`: el plan del día.
+- **v87:**
+  - `vipq:<llave de vipx>`: ese VIP lo quitaste tú a mano («Quitar ya»): no se anuncia «se terminó tu VIP».
+  - `toprot`: `{ users:[…], mods:true }`, a quién no le cae la recompensa de timeout (además de los protegidos de cada regla).
+  - `ttsbl`: lista negra del TTS por recompensa (nombres en minúsculas).
 
 ## Recompensas y canjes (v84, cómo están hechas)
 
@@ -150,7 +154,10 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
   - `bits`, `hype`, `adstart` (solo Twitch)
   - `scene` (v82: «OBS cambia a una escena», lo detecta la guardia)
 - **Plataforma:** cada regla tiene `pf`: `'kick'`, `'tw'` o vacío (las dos). Las de escena mandan el mensaje a donde esté en vivo (`'both'`, `'kick'`, `'tw'` o `'none'`).
-- **Pasos:** los de los atajos (`CMD_STEPS`), más los extras de `RULE_XSTEPS`. Solo con recompensa: `vip`, `to` (timeout a quien escriban, con protegidos y contra ataque), `ca` y `hl` (destacar). En cualquier regla: `emo` (solo emotes) y `sb` (acción de Streamer.bot). Los ejecuta el objeto `XSTEP`.
+- **Pasos:** los de los atajos (`CMD_STEPS`), más los extras de `RULE_XSTEPS`. Solo con recompensa: `vip`, `to` (timeout a quien escriban, con protegidos y contra ataque), `ca`, `hl` (destacar) y `rtts` (v87: 🔊 TTS, lee su mensaje en tu OBS por el player de alertas; `who:1` = «Fulano dice:»). En cualquier regla: `emo` (solo emotes) y `sb` (acción de Streamer.bot). Los ejecuta el objeto `XSTEP`. **Ojo:** `tts` (sin r) es otro paso, el del lector de voz del celular en los Atajos.
+- **Escena (v87):** la regla tiene `to` (a qué chat va el mensaje): vacío = donde estés en vivo, `kick`, `tw` o `both`. Cuenta como en vivo si Kick o Twitch lo dicen o si OBS está transmitiendo (`on` de la guardia). El nombre se compara sin mayúsculas, espacios ni emojis («Offline» = «OFFLINE 📵»). Si no se manda el mensaje, el evento del feed trae `note` con el porqué. En la app, la opción sale aunque Twitch esté apagado en ese celular.
+- **Timeout (v87):** además de los protegidos de cada regla, `toprot` (⚙ → Recompensas): tu lista y, si `mods` está prendido, cualquiera con insignia de mod en el chat reciente o en la lista de Comandos para mods (`isModName`). Si canjean contra un protegido, se le devuelven los puntos.
+- **TTS por recompensa (v87):** el paso `rtts` manda a la fila de alertas (`alq` + Ably `al`) un aviso `k:'tts'` que el player lee con la voz y el filtro de Alertas (`ttsPlay`). Si quien canjea está en `ttsbl`: no suena, se le devuelven los puntos y en el chat: «@nombre por ahora no puedes usar el TTS por mal uso». Se agrega a la lista negra en ⚙ → Recompensas o tocando su nombre en el chat.
 - **Variables:** `{nombre} {cantidad} {meses} {recompensa} {mensaje} {categoria} {titulo} {plataforma} {escena}`. `{mensaje}` (lo que escribe la gente) nunca se repite en el chat, salvo con `hl`, que quita links y comandos.
 - **▶ Probar** (`action:'test'`) hace lo de OBS de verdad, pero no manda nada al chat ni silencia a nadie.
 
@@ -200,6 +207,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - 116: aviso en Telegram cuando se acaba un VIP Rey.
 - 117: hecha (widget de chat para OBS, `chat-obs.html`).
 - 118: hecha en v84 (la app crea sus recompensas y maneja sus canjes).
+- 115: hecha en v87 (lista de VIP temporales).
 
 ## Historial corto
 
@@ -218,6 +226,7 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - **v84:** botón para volver a conectar Kick (con permisos que faltan), sección 🎯 Recompensas (Kick y Twitch, APIs oficiales), canjes pendientes con ✓ / ✕ en el feed y 🎯 en la barra, aviso oficial de canjes de Kick, arreglo de «devolver puntos» en Kick.
 - **v85:** 🔐 sesión de Kick («modo Kick.bot»): VIP y solo emotes en Kick sin Streamer.bot, todas las recompensas y canjes de Kick, vigilancia de la sesión. Pruebas `harness33.js` y `v85.js`.
 - **v86:** 🔐 seguridad. Arreglado el hueco por el que un link con otro `?api=` se robaba la clave 🔑 (ver «Seguridad» abajo) en `index.html`, `chat-studio.html`, `brb.html` y la guardia. En `index.html` la clave ya no se queda en la barra de direcciones. Prueba `v86seg.js`. (Nota: al subir la v85 por la web de GitHub se borró sin querer casi toda la carpeta `pruebas/`; se recuperó del historial.)
+- **v87:** regla de escena arreglada (elige a qué chat va el mensaje aunque Twitch esté apagado en el celular, cuenta como en vivo si OBS transmite, y el feed dice por qué no salió); 👑 lista de VIP temporales con «Quitar ya»; 🛡 protegidos del timeout (tu lista y tus mods) con devolución de puntos; 🔊 TTS por recompensa con lista negra; ⌨️ el teclado ya no tapa la barra para escribir (IRL Plus Chat). Pruebas `harness34.js` y `v87.js`.
 
 ## Seguridad (lo que no se debe romper)
 

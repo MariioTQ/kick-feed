@@ -651,6 +651,11 @@
   #chatbox{display:none;flex-direction:column;min-height:0;overflow:hidden}
   body.chaton #feed{flex:0 1 var(--feedH,40%);min-height:0}
   body.chaton #chatbox{display:flex;flex:1 1 0;padding-bottom:var(--navB,0px)}
+  /* v87 · ⌨️ con el teclado abierto: la barra para escribir va justo arriba del teclado y el feed se encoge */
+  body.kbopen.chaton #chatbox{padding-bottom:var(--kbB,0px)}
+  body.kbopen.chaton:not(.land) #feed{flex-basis:calc((100% - var(--kbB,0px)) * .28)}
+  body.kbopen #chatIn{padding-bottom:6px}
+  body.kbopen #apFab{display:none}
   /* divisor delgado: una rayita con su agarradera; se arrastra para repartir la pantalla */
   #chatHd{flex:0 0 26px;height:26px;position:relative;display:flex;align-items:center;justify-content:center;
           touch-action:none;user-select:none;cursor:row-resize;margin-top:-13px;margin-bottom:-13px;z-index:5}
@@ -1349,6 +1354,9 @@
   .rwb button.no.conf{background:#ff453a;color:#fff;font-size:12px}
   .rwb button:disabled{opacity:.55}
   #cpanel .rwpi .rwb{margin:0 0 0 8px;flex:none}
+  #cpanel .rwadd{display:flex;gap:8px;align-items:center}
+  #cpanel .rwadd input{flex:1 1 auto;min-width:0}
+  #cpanel .rwadd button{flex:0 0 auto;border:0;border-radius:9px;padding:10px 14px;background:#34c759;color:#0e0f13;font:inherit;font-size:15px;font-weight:800;cursor:pointer}
   #cpanel i.rwc{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:middle;box-shadow:0 0 0 1px rgba(255,255,255,.25)}
   #pRwp{color:#ffb020;border-color:rgba(255,176,32,.6);background:rgba(255,176,32,.12);cursor:pointer}
   body.hb-rwp #pRwp,body.hm-rwp #pRwp,html.duo #pRwp{display:none!important}
@@ -1517,7 +1525,7 @@
 (function(){
   "use strict";
 
-  var VERSION = '86 · 6 nov 2026';   // se muestra abajo en el engrane ⚙
+  var VERSION = '87 · 6 nov 2026';   // se muestra abajo en el engrane ⚙
   // v74 · 🟣 Twitch (multistream): chat junto con Kick, a dónde escribir (K, T o los dos), subs/bits/raids, encuestas y predicciones, Hype Train, anuncios, metas aparte y aviso si se cae una
   // v73 · 🎞 BRB a la mano (botón y página), respuestas rápidas que salen sobre los clips unos segundos, y el lector no lee «Alexa», «Siri»…
   // v71 · 🎞 BRB en los Atajos: siguiente clip, pausa, sonido, mensaje y playlist de tu BRB Studio (brb.html)
@@ -4143,7 +4151,7 @@
         var rr=rlCfg().list.filter(function(x){ return x.id===d.rid; })[0];
         var what=ruleTitle(rr || {ev:d.ev||''}).replace(/<\/?em>/g,'');
         return addEvent({type:'mod', ic:'⚙️', html:(d.pf==='tw' && typeof twPf==='function' ? twPf() : '')+'Regla: <b>'+what+'</b>'+(d.user ? ' · '+nm(d.user) : ''),
-                         sub: d.ok ? '✓ Listo'+(d.scene ? ' · 🎬 '+esc(d.scene) : '') : '⚠ '+esc(d.error||'No se pudo'), ck:'rule:'+e.id, src:'api', ts:ts});
+                         sub: d.ok ? '✓ Listo'+(d.note ? ' · '+esc(d.note) : '')+(d.scene ? ' · 🎬 '+esc(d.scene) : '') : '⚠ '+esc(d.error||'No se pudo'), ck:'rule:'+e.id, src:'api', ts:ts});   // v87: + por qué no salió el mensaje
       }
       case 'spam': {
         var okd=d.ok!==false, tom=Number(d.to)||0;
@@ -5134,6 +5142,28 @@
   }
   function nearBottom(){ return $chatList.scrollHeight-$chatList.scrollTop-$chatList.clientHeight < 70; }
   function toBottom(){ $chatList.scrollTop=$chatList.scrollHeight; chatUnseen=0; $chatNew.style.display='none'; }
+  /* v87 · ⌨️ el teclado ya no tapa la barra para escribir.
+     Dentro de IRL Plus Chat (y en Chrome de Android) el teclado se pone ENCIMA de la página
+     en vez de achicarla. Se mide cuánto tapa (visualViewport) y la barra sube justo arriba
+     del teclado; mientras escribes el feed se encoge para que veas el chat. */
+  (function(){
+    var vv=window.visualViewport; if (!vv || DUO) return;
+    var kbT=0, B=document.body;
+    function kbFix(){
+      var typing=document.activeElement===$chatTxt;
+      var kb=Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      if (typing && kb>80){
+        B.style.setProperty('--kbB', kb+'px');
+        if (!B.classList.contains('kbopen')){ var stick=$chatList.scrollHeight-$chatList.scrollTop-$chatList.clientHeight < 60; B.classList.add('kbopen'); if (stick) setTimeout(toBottom, 30); }
+        if (window.scrollY) window.scrollTo(0, 0);
+      } else if (B.classList.contains('kbopen')){ B.classList.remove('kbopen'); B.style.removeProperty('--kbB'); }
+    }
+    function soon(){ clearTimeout(kbT); kbT=setTimeout(kbFix, 40); }
+    vv.addEventListener('resize', soon); vv.addEventListener('scroll', soon);
+    $chatTxt.addEventListener('focus', function(){ soon(); setTimeout(kbFix, 350); setTimeout(kbFix, 800); });   // el teclado tarda en salir
+    $chatTxt.addEventListener('blur', function(){ setTimeout(kbFix, 80); });
+    window.kbFix=kbFix;                                     // para las pruebas
+  })();
   function trimChat(){ while ($chatList.children.length>MAXCHAT) $chatList.removeChild($chatList.firstChild); }
 
   // d: el mensaje como lo manda Kick (en vivo o del historial)
@@ -5299,7 +5329,8 @@
              '<div class="row" style="margin-top:6px"><button id="mConf" class="conf" style="display:none;flex-basis:100%"></button></div>'+
              '<div class="big"><button class="ban" data-a="ban">Banear</button><button class="unb" data-a="unban">Desbanear / quitar silencio</button></div>'+
              (m.id?'<div class="big"><button data-a="delete">🗑 Borrar</button>'+(m.pf==='tw' ? '' : '<button data-a="spam">🛡 Es spam</button>')+'</div>':'')+
-             '<div class="big"><button data-a="hl">'+(isHl?'✨ Quitar resaltado':'✨ Resaltar')+'</button><button data-a="hide">🙈 Ocultar</button></div>';
+             '<div class="big"><button data-a="hl">'+(isHl?'✨ Quitar resaltado':'✨ Resaltar')+'</button><button data-a="hide">🙈 Ocultar</button></div>'+
+             '<div class="big"><button data-a="ttsbl">'+((RW.ttsbl||[]).indexOf(lc(m.u))>=0 ? '🔊 Dejar que use el TTS' : '🔇 Ya no puede usar el TTS')+'</button></div>';   // v87
     } else if (can && m.id) h+='<div class="big"><button data-a="delete">🗑 Borrar este mensaje</button></div>';
     h+='<div class="st" id="mSt"></div>';
     $msheet.innerHTML=h; document.body.classList.add('sheet');
@@ -5331,6 +5362,7 @@
         var txt=String(m.t||'').replace(/\[emote:\d+:([^\]]*)\]/g,'$1');
         copyText(txt, function(){ b.textContent='✅ Copiado'; setTimeout(closeSheet, 600); }); }; return; }
       if (a==='hide'){ b.onclick=function(){ hideUser(m.u, true); closeSheet(); }; return; }
+      if (a==='ttsbl'){ b.onclick=function(){ var u=lc(m.u), on=(RW.ttsbl||[]).indexOf(u)<0; ttsBlSet(u, on); closeSheet(); }; return; }   // v87: 🔊 lista negra del TTS
       if (a==='hl'){ b.onclick=function(){ var v=lc(m.u); CC.hlu=(CC.hlu||[]).filter(function(x){ return x!==v; }); if (!isHl) CC.hlu.push(v);
           saveCC(); chatRepaint(); closeSheet(); }; return; }
       if (a==='spam'){ confirmTap(b, 'Toca otra vez: se borra y se agrega al antispam', function(){
@@ -6540,7 +6572,7 @@
       case 'wait': return 'Esperar';
       case 'mix': return 'Chat con '+mixName();
       case 'vip': return '👑 VIP '+(s.d||7)+(Number(s.d)===1?' día':' días');
-      case 'to': return '⏱ Timeout'; case 'ca': return '🛡 Contra ataque'; case 'emo': return '🙊 Solo emotes'; case 'hl': return '🔴 Destacar'; case 'sb': return '🤖 '+String(s.a||'Streamer.bot').slice(0,20);
+      case 'to': return '⏱ Timeout'; case 'ca': return '🛡 Contra ataque'; case 'emo': return '🙊 Solo emotes'; case 'hl': return '🔴 Destacar'; case 'rtts': return '🔊 TTS'; case 'sb': return '🤖 '+String(s.a||'Streamer.bot').slice(0,20);
       case 'goal': return (s.pf==='tw' ? 'Twitch: ' : '')+(s.n===0 ? 'Meta: conteo real' : 'Meta '+((s.n==null?1:s.n)>0?'+':'−')+Math.abs(s.n==null?1:s.n));
       case 'tts': return (s.who||'all')==='off' || s.who==='mods' ? 'Callar lector' : 'Lector: '+ttsWhoName(s.who||'all');
       case 'moment': return s.text ? '📍 '+String(s.text).slice(0,18) : '📍 Momento';
@@ -7782,7 +7814,7 @@
      pueden «pasar a la app». Los canjes pendientes salen en el feed con ✓ / ✕ y
      en la barra (🎯 y cuántos). Se quitan solos aunque los resuelvas en Kick o Twitch.
      ============================================================ */
-  var RW={list:[], err:{}, pend:[], ok:false, busy:false, edit:null, rwa:0, loadT:0, reqAt:0};
+  var RW={list:[], err:{}, pend:[], ok:false, busy:false, edit:null, rwa:0, loadT:0, reqAt:0, vips:[], prot:{users:[], mods:true}, ttsbl:[]};   // v87: + VIP, protegidos y lista negra del TTS
   function rwpCount(){ return RW.pend.filter(function(x){ return x.can; }).length; }
   function rwPendLoad(){
     if (!CFG.api || !CFG.key || DUO) return Promise.resolve();
@@ -7795,7 +7827,7 @@
     var at=Date.now(); RW.busy=true; rwPaint();
     return apiPost('/api/rewards', {a:'list'}).then(function(j){
       RW.busy=false;
-      if (j && j.ok){ RW.list=j.list||[]; RW.err=j.err||{}; RW.pend=j.pend||[]; RW.ok=true; RW.reqAt=at; rwSync(); }
+      if (j && j.ok){ RW.list=j.list||[]; RW.err=j.err||{}; RW.pend=j.pend||[]; RW.ok=true; RW.reqAt=at; rwExtraSet(j); rwSync(); }
       else RW.err={all:(j && j.error) || 'Tu servidor no contestó'};
       rwPaint();
     });
@@ -7845,9 +7877,18 @@
   }
   function openRwPage(){ RW.edit=null; cpOpen('rwm'); rwPaint(); rwListLoad(); }
   function rwState(x){ return !x.on ? 'Apagada' : x.paused ? 'Pausada' : 'Prendida'; }
+  // v87: 👑 VIP, 🛡 protegidos y 🔊 lista negra (vienen junto con la lista y después de cada cambio)
+  function rwExtraSet(j){ if (!j) return; if (Array.isArray(j.vips)) RW.vips=j.vips.slice().sort(function(a, b){ return a.until-b.until; }); if (j.prot) RW.prot=j.prot; if (Array.isArray(j.ttsbl)) RW.ttsbl=j.ttsbl; }
+  function vipLeft(until){
+    var ms=until-Date.now(); if (ms<=0) return 'Quitándoselo…';
+    var d=Math.floor(ms/864e5), h=Math.floor(ms%864e5/3600e3), m=Math.max(1, Math.floor(ms%3600e3/60000)), dt=new Date(until);
+    var cuando=dt.toLocaleDateString('es-MX',{day:'numeric',month:'short'})+' '+hhmm(until);
+    return 'Le queda'+(d>1||(d===1&&h)?'n':'')+' '+(d ? d+(d===1?' día':' días')+(h ? ' '+h+' h' : '') : h ? h+' h '+m+' min' : m+' min')+' · se le quita el '+cuando;
+  }
   function rwPaint(){
     if (!$cpanel.classList.contains('rwm')) return;
     if (RW.edit) return rwFormPaint();
+    var foc=document.activeElement; if (foc && (foc.id==='protIn' || foc.id==='ttsIn')) return;   // v87: no te borra lo que estás escribiendo en «Agregar»
     var pend=RW.pend.slice().sort(function(a, b){ return a.at-b.at; });
     var h=cpHeadHtml('🎯 Recompensas')+'<div class="cpb">';
     if (RW.err.all) h+='<div class="nt" style="margin-top:14px">⚠ '+esc(RW.err.all)+'</div>';
@@ -7857,6 +7898,26 @@
           (x.can ? '<span class="rwb"><button class="ok" data-rp="'+k+'" data-rw="1">✓</button><button class="no" data-rp="'+k+'" data-rw="0">✕</button></span>' : '<span class="val">🔒 en '+(x.pf==='tw' ? 'Twitch' : 'Kick')+'</span>')+'</div>'; }).join('') +
         '<div class="nt" style="margin:0 12px 11px">✓ acepta el canje. ✕ lo rechaza y le devuelve sus puntos. Los que tienen 🔒 son de recompensas que no creó la app: esos se resuelven en Kick o en Twitch.</div>'
       : '<div class="nt" style="margin:10px 12px">'+(RW.busy && !RW.ok ? 'Cargando…' : 'No hay canjes pendientes. Salen aquí, en el feed y en la barra (🎯) cuando una recompensa no «se acepta sola».')+'</div>')+'</div>';
+    // v87 · 👑 VIP temporales: cuánto le queda a cada quien y quitárselo antes
+    var vips=RW.vips||[];
+    h+='<div class="lb2">👑 VIP temporales'+(vips.length ? ' ('+vips.length+')' : '')+'</div><div class="grp">'+
+      (vips.length ? vips.map(function(x){ return '<div class="op fixed rwpi" style="opacity:1"><span>'+pfChip(x.pf)+' <b>'+esc(x.u||'—')+'</b><small>'+esc(vipLeft(x.until))+'</small></span>'+
+          '<span class="rwb"><button class="no" data-vd="'+esc(x.k)+'">Quitar ya</button></span></div>'; }).join('')+
+        '<div class="nt" style="margin:0 12px 11px">Se les quita solo cuando se cumple el tiempo. «Quitar ya» se lo quita al momento (sin el aviso de «se terminó tu VIP» en el chat).</div>'
+      : '<div class="nt" style="margin:10px 12px">'+(RW.busy && !RW.ok ? 'Cargando…' : 'Nadie tiene VIP por días ahorita. Salen aquí cuando alguien canjea una recompensa con el paso 👑 (Reglas automáticas).')+'</div>')+'</div>';
+    // v87 · 🛡 a quién no le cae la recompensa de timeout
+    var pr=RW.prot||{users:[], mods:true};
+    h+='<div class="lb2">🛡 Protegidos del timeout</div><div class="grp">'+
+      opRow('protMods', 'Mis mods siempre protegidos', 'A quien tenga insignia de mod en tu chat (o esté en tu lista de Comandos para mods) no le cae', pr.mods!==false)+
+      ((pr.users||[]).length ? '<div class="rsug" style="padding:4px 12px 0">'+pr.users.map(function(u){ return '<button data-pu="'+esc(u)+'" title="Quitar">'+esc(u)+' ✕</button>'; }).join('')+'</div>' : '')+
+      '<div class="fld rwadd"><input id="protIn" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Nombre (como sale en el chat)"><button id="protAdd">Agregar</button></div>'+
+      '<div class="nt" style="margin:4px 12px 11px">Si alguien canjea el timeout contra un protegido, no le pasa nada: se le explica en el chat y se le devuelven sus puntos. Tú y los bots siempre están protegidos. Cada regla de timeout puede tener además sus propios protegidos.</div></div>';
+    // v87 · 🔊 quién ya no puede usar la recompensa de TTS
+    var bl=RW.ttsbl||[];
+    h+='<div class="lb2">🔊 Lista negra del TTS'+(bl.length ? ' ('+bl.length+')' : '')+'</div><div class="grp">'+
+      (bl.length ? '<div class="rsug" style="padding:8px 12px 0">'+bl.map(function(u){ return '<button data-bu="'+esc(u)+'" title="Quitar de la lista">'+esc(u)+' ✕</button>'; }).join('')+'</div>' : '')+
+      '<div class="fld rwadd"><input id="ttsIn" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Nombre (como sale en el chat)"><button id="ttsAdd">Agregar</button></div>'+
+      '<div class="nt" style="margin:4px 12px 11px">Si alguien de esta lista canjea tu recompensa de TTS, no suena, se le devuelven sus puntos y en el chat le sale «@nombre por ahora no puedes usar el TTS por mal uso». También lo agregas tocando su nombre en el chat.</div></div>';
     ['kick', 'tw'].forEach(function(pf){
       if (pf==='tw' && !twConnected() && !RW.list.some(function(x){ return x.pf==='tw'; })) return;
       var L=RW.list.filter(function(x){ return x.pf===pf; }), P=pf==='tw' ? 'Twitch' : 'Kick';
@@ -7876,6 +7937,35 @@
       b.onclick=function(e){ e.stopPropagation(); rwBtnTap(b, x ? {pf:x.pf, id:x.id} : null); }; });
     Array.prototype.forEach.call($cpanel.querySelectorAll('.op[data-rwe]'), function(o){ o.onclick=function(){ var k=o.getAttribute('data-rwe').split('|'); RW.edit={pf:k[0], id:k.slice(1).join('|')}; rwPaint(); }; });
     Array.prototype.forEach.call($cpanel.querySelectorAll('.op[data-rwn]'), function(o){ o.onclick=function(){ RW.edit={pf:o.getAttribute('data-rwn'), id:''}; rwPaint(); }; });
+    // v87 · 👑 quitar un VIP antes
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-vd]'), function(b){ b.onclick=function(e){ e.stopPropagation(); if (b.disabled) return;
+      var k=b.getAttribute('data-vd'), x=(RW.vips||[]).filter(function(v){ return v.k===k; })[0];
+      confirmTap1(b, '¿Quitar?', function(){ b.disabled=true; b.textContent='…';
+        apiPost('/api/rewards', {a:'vipdel', k:k}).then(function(j){ rwExtraSet(j);
+          if (j && j.ok) apToast('👑 Le quité el VIP a '+((x && x.u) || 'esa persona')); else apToast('⚠ '+((j && j.error) || 'No se pudo'), true);
+          rwPaint(); }); }); }; });
+    // v87 · 🛡 protegidos
+    var protSave=function(users, mods){ return apiPost('/api/rewards', {a:'prot', c:{users:users, mods:mods}}).then(function(j){ if (j && j.ok){ rwExtraSet(j); } else apToast('⚠ '+((j && j.error) || 'No se pudo guardar'), true); rwPaint(); return j; }); };
+    var pm=$cpanel.querySelector('.op[data-k="protMods"]'); if (pm) pm.onclick=function(){ var c=RW.prot||{users:[]}; RW.prot={users:c.users||[], mods:c.mods===false}; rwPaint(); protSave(RW.prot.users, RW.prot.mods); };
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-pu]'), function(b){ b.onclick=function(){ var u=b.getAttribute('data-pu'), c=RW.prot||{users:[]};
+      protSave((c.users||[]).filter(function(x){ return x!==u; }), c.mods!==false).then(function(j){ if (j && j.ok) apToast('🛡 '+u+' ya no está protegido'); }); }; });
+    var nameOf=function(id){ var el=document.getElementById(id); return el ? el.value.trim().replace(/^@/, '').toLowerCase() : ''; };
+    var pa=document.getElementById('protAdd'); if (pa) pa.onclick=function(){ var u=nameOf('protIn'); if (!/^[\w.-]{2,40}$/.test(u)){ apToast('Escribe el nombre como sale en el chat', true); return; }
+      var c=RW.prot||{users:[]}; document.getElementById('protIn').value=''; document.getElementById('protIn').blur();
+      protSave([u].concat((c.users||[]).filter(function(x){ return x!==u; })), c.mods!==false).then(function(j){ if (j && j.ok) apToast('🛡 '+u+' quedó protegido del timeout'); }); };
+    // v87 · 🔊 lista negra del TTS
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-bu]'), function(b){ b.onclick=function(){ var u=b.getAttribute('data-bu'); ttsBlSet(u, false); }; });
+    var ta=document.getElementById('ttsAdd'); if (ta) ta.onclick=function(){ var u=nameOf('ttsIn'); if (!/^[\w.-]{2,40}$/.test(u)){ apToast('Escribe el nombre como sale en el chat', true); return; }
+      document.getElementById('ttsIn').value=''; document.getElementById('ttsIn').blur(); ttsBlSet(u, true); };
+  }
+  // v87 · 🔊 poner o quitar a alguien de la lista negra del TTS (desde Recompensas o tocando su nombre en el chat)
+  function ttsBlSet(u, on){
+    return apiPost('/api/rewards', {a:'ttsbl', op:on ? 'add' : 'del', u:u}).then(function(j){
+      if (j && j.ok){ rwExtraSet(j); apToast(on ? '🔇 '+u+' ya no puede usar el TTS' : '🔊 '+u+' ya puede usar el TTS otra vez'); }
+      else apToast('⚠ '+((j && j.error) || 'No se pudo'), true);
+      if ($cpanel.classList.contains('rwm') && !RW.edit) rwPaint();
+      return j;
+    });
   }
   function rwFormPaint(){
     var e=RW.edit, nw=!e.id, x=nw ? null : RW.list.filter(function(r){ return r.pf===e.pf && r.id===e.id; })[0];
@@ -8209,6 +8299,10 @@
       h+='<div class="fld"><label>Cómo sale</label><input data-f="text" maxlength="300" autocomplete="off" placeholder="'+esc(HL_DEF)+'" value="'+esc(s.text||'')+'"></div>'+vars(false);
       h+=note('Tu cuenta repite en el chat lo que escribió quien la canjea, sin links ni comandos (si parece spam, no se manda).');
     }
+    else if (s.t==='rtts'){                               // v87: 🔊 TTS por recompensa («tts» ya es el lector de voz de los Atajos)
+      h+=fsel('Qué se escucha','who', [[0,'Solo su mensaje'],[1,'«Fulano dice:» y su mensaje']], Number(s.who)||0);
+      h+=note('Lo que escribió quien canjea se lee en tu OBS con la voz de tus alertas (la misma voz, volumen y filtro de groserías de Alertas) y sale en pantalla. Tu recompensa tiene que pedir texto. Si esa persona está en tu lista negra del TTS (⚙ → Recompensas), no suena, se le devuelven los puntos y se le avisa en el chat.');
+    }
     else if (s.t==='sb'){
       h+='<div class="fld"><label>Nombre de tu acción en Streamer.bot</label><input data-f="a" maxlength="100" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tal cual se llama en Streamer.bot" value="'+esc(s.a||'')+'"></div>';
       h+=note('La guardia del chat se la pasa a Streamer.bot en tu PC de OBS. Le llegan %user%, %mensaje%, %recompensa%, %escena% y %plataforma%. Sirve para lo que la API de Kick no deja (VIP, mods, modos del chat…).');
@@ -8224,7 +8318,7 @@
   }
   function tePaint(){
     if (!TE || !$cpanel.classList.contains('tilem')) return;
-    var t=TE.t, needObs=t.steps.some(function(s){ return ['chat','wait','title','sceneback','mix','brb','vip','to','ca','emo','hl','sb','goal'].indexOf(s.t)<0; });
+    var t=TE.t, needObs=t.steps.some(function(s){ return ['chat','wait','title','sceneback','mix','brb','vip','to','ca','emo','hl','rtts','sb','goal'].indexOf(s.t)<0; });
     var note = !needObs ? '' : OB.catBusy ? '<div class="nt">Leyendo lo que hay en tu OBS…</div>'
              : OB.catErr ? '<div class="nt" style="color:#ff8a80">⚠ '+esc(OB.catErr)+' <b class="q" id="teCat" style="color:var(--txt)">↻ Otra vez</b></div>'
              : OB.cat ? '<div class="nt">¿Agregaste algo en OBS y no sale? <b class="q" id="teCat" style="color:var(--txt)">↻ Leer mi OBS otra vez</b></div>' : '';
@@ -8306,7 +8400,8 @@
         if (s.t==='goal' && s.n==null) s.n=1; if (s.t==='tts' && !s.who) s.who='all'; if (s.t==='vip' && !s.d) s.d=7;
         if (s.t==='to'){ if (s.m==null) s.m=15; if (s.w==null) s.w=25; } if (s.t==='emo' && !s.sec) s.sec=120; if (s.t==='hl' && !String(s.text||'').trim()) s.text=HL_DEF; if (s.t==='sb') s.a=String(s.a||'').trim(); });
       var rc=JSON.parse(JSON.stringify(rlCfg())), it={id:t.id||rlNewId(), on:t.on!==false, ev:t.ev, min:Number(t.min)||0, name:String(t.name||'').trim(), cd:Number(t.cd)||0, steps:t.steps};
-      if (!RULE_ONLY[t.ev] && (t.pf==='kick' || t.pf==='tw')) it.pf=t.pf;     // v82: «Dónde» no se guardaba
+      if (!RULE_ONLY[t.ev] && t.ev!=='scene' && (t.pf==='kick' || t.pf==='tw')) it.pf=t.pf;     // v82: «Dónde» no se guardaba
+      if (t.ev==='scene' && /^(kick|tw|both)$/.test(t.to||'')) it.to=t.to;   // v87: a qué chat va el mensaje de la escena
       if (TE.i==null) rc.list=rc.list.concat([it]); else rc.list[TE.i]=it;
       closeCpanel(); TE=null; cpFrom=true; openRulePage(true); rlSave(rc); return;
     }
@@ -8668,10 +8763,10 @@
   }
   var CMD_OK={scene:1, item:1, filter:1, refresh:1, text:1, mute:1, stream:1, record:1, replay:1, chat:1, wait:1, goal:1};
   function cmdTypes(){ var L=STEP_TYPES.map(function(g){ return [g[0], g[1].filter(function(x){ return CMD_OK[x[0]]; })]; }).filter(function(g){ return g[1].length; });
-    if (TE && TE.kind==='rule' && TE.t && TE.t.ev==='reward') L.push(['Recompensas',[['vip','👑 Dar VIP por unos días'],['to','⏱ Timeout a quien escriban'],['ca','🛡 Contra ataque (regresa el timeout)'],['hl','🔴 Destacar su mensaje en el chat']]]);   // v81 · v82
+    if (TE && TE.kind==='rule' && TE.t && TE.t.ev==='reward') L.push(['Recompensas',[['vip','👑 Dar VIP por unos días'],['to','⏱ Timeout a quien escriban'],['ca','🛡 Contra ataque (regresa el timeout)'],['hl','🔴 Destacar su mensaje en el chat'],['rtts','🔊 TTS: leer su mensaje en voz (en tu OBS)']]]);   // v81 · v82 · v87
     if (TE && TE.kind==='rule') L.push(['Chat y Streamer.bot',[['emo','🙊 Chat solo con emotes un rato'],['sb','🤖 Correr una acción de Streamer.bot']]]);   // v82
     return L; }
-  var RULE_RW={vip:1, to:1, ca:1, hl:1}, HL_DEF='🔴 DESTACADO {nombre}: {mensaje}';
+  var RULE_RW={vip:1, to:1, ca:1, hl:1, rtts:1}, HL_DEF='🔴 DESTACADO {nombre}: {mensaje}';
   function fmtSec(n){ n=Number(n)||0; return n>=60 && n%60===0 ? (n/60)+' min' : n+' s'; }
   // v82 · 🎯 tus recompensas de Kick y de Twitch (se leen cada vez que abres una regla: si creas o borras una, aquí se ve)
   var RWL={list:null, err:{}, busy:false, at:0};
@@ -8715,6 +8810,7 @@
       case 'ca': return '🛡 Contra ataque';
       case 'emo': return '🙊 Solo emotes '+fmtSec(s.sec||120);
       case 'hl': return '🔴 Destacar mensaje';
+      case 'rtts': return '🔊 TTS';
       case 'sb': return '🤖 '+String(s.a||'Streamer.bot').slice(0,24);
     }
     return s.t;
@@ -8826,6 +8922,7 @@
   // v75: cada regla es de Kick, de Twitch o de las dos. Lo que solo existe en una plataforma va fijo.
   var RULE_ONLY={kicks:'kick', bits:'tw', hype:'tw', adstart:'tw'};
   var RULE_PFS=[['','Kick o Twitch (las dos)'],['kick','Solo Kick'],['tw','Solo Twitch']];
+  var SCENE_TO=[['','Donde estés en vivo'],['kick','Kick'],['tw','Twitch'],['both','Kick y Twitch']];   // v87: a qué chat va el mensaje de una regla de escena
   function rulePf(r){ return RULE_ONLY[r.ev] || (r.pf==='kick' || r.pf==='tw' ? r.pf : ''); }
   var RULE_APP={reward:1, host:1};          // Kick no se las avisa a tu servidor: las avisa la app abierta
   var RULE_VARS={kicks:['nombre','cantidad','mensaje'], sub:['nombre','meses'], resub:['nombre','meses'], gift:['nombre','cantidad'], follow:['nombre'],
@@ -8948,7 +9045,9 @@
   function rwRemember(t){ t=String(t||'').trim(); if (!t) return; var a=rwSeen().filter(function(x){ return x.toLowerCase()!==t.toLowerCase(); }); a.unshift(t); LSset('kickfeed.rwseen', JSON.stringify(a.slice(0,10))); }
   function ruleTopHtml(t){
     var h='<div class="grp" style="margin-top:12px"><div class="fld"><label for="rlEv">Cuando…</label><select id="rlEv">'+opt(RULE_EVS, t.ev)+'</select></div>';
-    if (!RULE_ONLY[t.ev] && (CC.tw!==false || t.pf)) h+='<div class="fld"><label for="rlPf">Dónde</label><select id="rlPf">'+opt(RULE_PFS, t.pf||'')+'</select></div>';   // v75
+    if (t.ev==='scene'){ if (t.pf && !t.to){ t.to=t.pf; } delete t.pf;   // v87: las de escena eligen a qué chat va el mensaje (siempre se ve, aunque Twitch esté apagado aquí)
+      h+='<div class="fld"><label for="rlTo">A qué chat va el mensaje</label><select id="rlTo">'+opt(SCENE_TO, t.to||'')+'</select></div>'; }
+    else if (!RULE_ONLY[t.ev] && (CC.tw!==false || t.pf)) h+='<div class="fld"><label for="rlPf">Dónde</label><select id="rlPf">'+opt(RULE_PFS, t.pf||'')+'</select></div>';   // v75
     if (RULE_MIN[t.ev]) h+='<div class="fld"><label for="rlMin">'+(t.ev==='host' ? 'De qué tamaño' : 'Cuántos')+'</label><select id="rlMin">'+opt(RULE_MIN[t.ev], t.min==null ? RULE_MIN[t.ev][0][0] : t.min)+'</select></div>';
     if (t.ev==='reward' || t.ev==='cat' || t.ev==='catoff' || t.ev==='scene'){
       var low=function(x){ return String(x==null?'':x).trim().toLowerCase(); };
@@ -8963,7 +9062,7 @@
     var why = RULE_ONLY[t.ev]==='tw' ? '🟣 Solo existe en Twitch. Funciona con la app cerrada: tu servidor se entera por Twitch.'
             : pf==='tw' ? '🟣 Solo cuando pase en Twitch. Funciona con la app cerrada: tu servidor se entera por Twitch.'+(t.ev==='cat' || t.ev==='catoff' ? ' Escríbela tal cual sale en Twitch.' : '')
             : RULE_APP[t.ev] ? '🛡 En Kick lo ve la guardia del chat en tu OBS (o la app abierta en algún celular).'+(pf ? '' : ' En Twitch funciona con la app cerrada.')
-            : t.ev==='scene' ? '🎬 La ve la guardia del chat en tu OBS (cambies tú la escena o NOALBS): funciona con la app cerrada. Los mensajes salen en el chat donde estés en vivo'+(CC.tw!==false ? ' (Kick, Twitch o los dos)' : '')+'; sin estar en vivo no se manda nada.'
+            : t.ev==='scene' ? '🎬 La ve la guardia del chat en tu OBS (cambies tú la escena o NOALBS): funciona con la app cerrada. El mensaje sale en el chat que elijas arriba («Donde estés en vivo»: Kick, Twitch o los dos, según dónde transmitas). Cuenta como en vivo si Kick o Twitch lo dicen o si OBS está transmitiendo. Si no, no se manda nada y el feed te dice por qué.'
             : t.ev==='live' ? '🖥 Funciona con la app cerrada. Si el stream se corta y regresa en menos de 30 min, no cuenta como otro.'
             : t.ev==='cat' || t.ev==='catoff' ? '🖥 Funciona con la app cerrada, cambies la categoría desde aquí o desde Kick. Escríbela tal cual sale en Kick.'
             : '🖥 Funciona aunque tengas la app cerrada: tu servidor se entera por '+(pf==='kick' ? 'Kick' : 'Kick y por Twitch')+'.';
@@ -8976,8 +9075,9 @@
     e.onchange=function(){ t.ev=e.value; t.min=RULE_MIN[t.ev] ? (t.ev==='kicks' || t.ev==='bits' ? 100 : RULE_MIN[t.ev][0][0]) : 0; if (!/^(reward|cat|catoff|scene)$/.test(t.ev)) t.name='';
       if (t.ev==='reward') rwLoad(false);
       t.steps=t.steps.filter(function(x){ return !RULE_RW[x.t] || t.ev==='reward'; }); if (!t.steps.length) t.steps=[{t:'chat'}];
-      if (RULE_ONLY[t.ev]) delete t.pf; TE.err=''; TE.test=null; tePaint(); };
+      if (RULE_ONLY[t.ev] || t.ev==='scene') delete t.pf; if (t.ev!=='scene') delete t.to; TE.err=''; TE.test=null; tePaint(); };
     var pfs=document.getElementById('rlPf'); if (pfs) pfs.onchange=function(){ if (pfs.value) t.pf=pfs.value; else delete t.pf; TE.test=null; tePaint(); };
+    var tos=document.getElementById('rlTo'); if (tos) tos.onchange=function(){ if (tos.value) t.to=tos.value; else delete t.to; TE.test=null; };   // v87
     var m=document.getElementById('rlMin'); if (m) m.onchange=function(){ t.min=Number(m.value)||0; };
     var c=document.getElementById('rlCd'); if (c) c.onchange=function(){ t.cd=Number(c.value)||0; };
     var n=document.getElementById('rlName'); if (n) n.oninput=function(){ t.name=n.value; };

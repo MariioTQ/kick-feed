@@ -1633,7 +1633,7 @@ async function chatInApi(req, res) {
       if (obs.scene && obs.scene !== was) {
         try {
           const old = await redis('SET', 'obs:sc', obs.scene, 'GET', 'EX', 7 * 86400);
-          if (old != null && old !== obs.scene) { const p = rulesOn('scene', { scene: obs.scene, old }, 'kick').catch(() => {}); if (!later(p)) await p; }
+          if (old != null && old !== obs.scene) { const p = rulesOn('scene', { scene: obs.scene, old, on: obs.on }, 'kick').catch(() => {}); if (!later(p)) await p; }   // v87: + si OBS transmite
         } catch (e) {}
       }
     }
@@ -1716,8 +1716,8 @@ async function vipGive(pf, v, days) {
   return { ok: true, until };
 }
 let VIPSW = 0;
-async function vipSweep() {
-  if (Date.now() - VIPSW < (Number(process.env.VIP_SWEEP_MS) || 600000)) return; VIPSW = Date.now();   // cada 10 min
+async function vipSweep(force) {
+  if (!force && Date.now() - VIPSW < (Number(process.env.VIP_SWEEP_MS) || 600000)) return; VIPSW = Date.now();   // cada 10 min (v87: o ya, si lo quitas a mano)
   try {
     const due = (await redis('ZRANGEBYSCORE', 'vipx', 0, Date.now(), 'LIMIT', 0, 5)) || [];
     if (!due.length) return;
@@ -1730,7 +1730,7 @@ async function vipSweep() {
           if (!r.ok && r.status !== 404) continue;              // sesión vencida u otra falla: se reintenta en la siguiente vuelta
         } else await sbJob(SB_ACT.vipDel, { user }, 6 * 3600e3);
         await redis('ZREM', 'vipx', key);
-        try { await chatSay('kick', '⏳ Se terminó el VIP de ' + user + '. ¡Gracias por el apoyo!'); } catch (e) {}
+        if (!(await vipQuiet(key))) { try { await chatSay('kick', '⏳ Se terminó el VIP de ' + user + '. ¡Gracias por el apoyo!'); } catch (e) {} }
         continue;
       }
       if (!B) continue;
@@ -1738,7 +1738,7 @@ async function vipSweep() {
       const r = await helix('DELETE', '/channels/vips?broadcaster_id=' + B + '&user_id=' + uid, null, 'b');
       if (r.ok || r.status === 404 || r.status === 422) {
         await redis('ZREM', 'vipx', key);
-        try { await twSend('⏳ Se terminó el VIP de ' + (login || 'alguien') + '. ¡Gracias por el apoyo!'); } catch (e) {}
+        if (!(await vipQuiet(key))) { try { await twSend('⏳ Se terminó el VIP de ' + (login || 'alguien') + '. ¡Gracias por el apoyo!'); } catch (e) {} }
       }
     }
   } catch (e) {}
@@ -1858,8 +1858,10 @@ const XSTEP = {
   to: async (pf, v, s, test, res) => {
     const att = String(v.nombre || ''), al = att.toLowerCase(), target = toTarget(v.mensaje);
     if (!target) { const back = !test && await rwRefund(pf, v); await xSay(pf, '@' + att + ' no escribiste a quién mandarle el timeout 🤷' + (back ? ' Te devolví tus puntos.' : ''), test, res); return { ok: true }; }
-    const prot = TO_SAFE.concat(String(s.p || '').split(/[\s,]+/), [CHANNEL, TW_CHANNEL]).map(x => String(x || '').replace(/^@/, '').toLowerCase()).filter(Boolean);
-    if (prot.indexOf(target) >= 0) { const back = !test && await rwRefund(pf, v); await xSay(pf, '🛡️ ' + target + ' está protegido, a él no se le puede mandar timeout 😎' + (back ? ' Te devolví tus puntos, @' + att + '.' : ''), test, res); return { ok: true }; }
+    const pc = await toProt();                                   // v87: + tu lista general de protegidos (⚙ → Recompensas)
+    const prot = TO_SAFE.concat(String(s.p || '').split(/[\s,]+/), pc.users, [CHANNEL, TW_CHANNEL]).map(x => String(x || '').replace(/^@/, '').toLowerCase()).filter(Boolean);
+    // v87: y tus mods, si así lo elegiste
+    if (prot.indexOf(target) >= 0 || (pc.mods && await isModName(pf, target))) { const back = !test && await rwRefund(pf, v); await xSay(pf, '🛡️ ' + target + ' está protegido, a él no se le puede mandar timeout 😎' + (back ? ' Te devolví tus puntos, @' + att + '.' : ''), test, res); return { ok: true }; }
     if (test) { res.chats.push(s.w ? '⚔️ ' + att + ' le mandó ' + s.m + ' min de timeout a ' + target + '. @' + target + ' tienes ' + s.w + ' s para canjear «Contra Ataque» 🛡️' : '💥 ' + target + ' se come ' + s.m + ' min de timeout (cortesía de ' + att + ') 😈'); return { ok: true }; }
     const uid = await userIdOf(pf, target);
     if (!uid) { const back = await rwRefund(pf, v); await xSay(pf, '@' + att + ' no encontré a «' + target + '» en el chat 🤷' + (back ? ' Te devolví tus puntos.' : ''), false, res); return { ok: true }; }
@@ -1932,6 +1934,28 @@ const XSTEP = {
     try { if (spamHit(msg)) return { ok: false, error: 'No se destacó: parecía spam' }; } catch (e) {}
     const text = fillVars(s.text || HL_DEF, Object.assign({}, v, { mensaje: msg }), false).replace(/\s{2,}/g, ' ').trim().slice(0, 480);
     return xSay(pf, text, test, res);
+  },
+  // v87 · 🔊 «TTS»: lo que escribió quien canjea se lee con la voz de tus alertas (en tu OBS, por el player de alertas).
+  // Si está en tu lista negra del TTS: no suena, se le devuelven los puntos y se le avisa en el chat.
+  rtts: async (pf, v, s, test, res) => {
+    const who = String(v.nombre || '').slice(0, 40);
+    const msg = String(v.mensaje || '').replace(/\[emote:\d+:([^\]]*)\]/g, '$1').replace(/https?:\/\/\S+|www\.\S+/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if ((await ttsBlList()).indexOf(who.toLowerCase()) >= 0) {
+      const back = !test && await rwRefund(pf, v);
+      await xSay(pf, '🚫 @' + who + ' por ahora no puedes usar el TTS por mal uso.' + (back ? ' Te devolví tus puntos.' : ''), test, res);
+      res.note = 'en tu lista negra del TTS: no sonó';
+      return { ok: true };
+    }
+    if (!msg) {
+      const back = !test && await rwRefund(pf, v);
+      await xSay(pf, '@' + who + ' escribe tu mensaje al canjear para que lo lea el TTS 🔊' + (back ? ' Te devolví tus puntos.' : ''), test, res);
+      return { ok: true };
+    }
+    if (test) { res.chats.push('(prueba) 🔊 TTS en tu OBS: «' + msg + '»'); return { ok: true }; }
+    const now = Date.now(), item = { id: 'q' + now.toString(36) + crypto.randomBytes(3).toString('hex'), ts: now, k: 'tts', pf: pf === 'tw' ? 'tw' : 'kick', u: who, m: msg, who: s.who ? 1 : 0 };
+    await redis('ZADD', 'alq', now, JSON.stringify(item));
+    await rtSend('al', item);                                     // al player de alertas, al momento
+    return { ok: true };
   },
   // 🤖 cualquier acción tuya de Streamer.bot (le llegan %user%, %mensaje%, %recompensa% y %plataforma%)
   sb: async (pf, v, s, test, res) => {
@@ -2160,6 +2184,51 @@ async function rwCopy(pf, id) {
   if (r.ok) r.old = { id: x.id, t: x.t };
   return r;
 }
+/* ==================================================================
+   v87 · 👑 VIP temporales · 🛡 protegidos del timeout · 🔊 lista negra del TTS
+   Todo vive en ⚙ → Recompensas (ruta /api/rewards, con clave).
+     vipx      (ya existía) quién tiene VIP por días y cuándo se le acaba
+     vipq:<k>  ese VIP lo quitaste tú a mano: no se anuncia «se terminó tu VIP»
+     toprot    { users:[…], mods:true }: a quién no le cae la recompensa de timeout
+     ttsbl     [nombres]: no pueden usar la recompensa de TTS
+   ================================================================== */
+const VIPKEY = /^(tw:\d{1,20}:[\w.-]{1,40}|kick:[\w.-]{1,40})$/;
+async function vipQuiet(key) { try { return !!(await redis('GET', 'vipq:' + key)); } catch (e) { return false; } }
+async function vipList() {
+  const a = (await redis('ZRANGE', 'vipx', 0, -1, 'WITHSCORES')) || [];
+  const out = [];
+  for (let i = 0; i + 1 < a.length; i += 2) {
+    const k = String(a[i]), until = Number(a[i + 1]) || 0;
+    if (/^kick:/.test(k)) out.push({ k, pf: 'kick', u: k.slice(5), until });
+    else { const p = k.split(':'); out.push({ k, pf: 'tw', u: p[2] || p[1] || '', until }); }
+  }
+  return out.sort((x, y) => x.until - y.until);
+}
+// «Quitar ya»: vence al momento y se quita por el mismo camino de siempre (Twitch o Kick)
+async function vipRemoveNow(key) {
+  if (!VIPKEY.test(key)) return { ok: false, error: 'Ese VIP no es válido' };
+  if ((await redis('ZSCORE', 'vipx', key)) == null) return { ok: true, gone: true };
+  await redis('SET', 'vipq:' + key, '1', 'EX', 86400);
+  await redis('ZADD', 'vipx', 1, key);                                  // primero en la fila
+  await vipSweep(true);
+  if ((await redis('ZSCORE', 'vipx', key)) == null) return { ok: true };
+  return { ok: false, error: 'No se pudo quitar ahorita' + (/^kick:/.test(key) ? ' (en Kick hace falta tu sesión de Kick funcionando)' : ' (revisa tu permiso de VIP en Twitch)') + '. Se vuelve a intentar solo cada 10 min.' };
+}
+const nameList = (a, max) => (Array.isArray(a) ? a : []).map(x => String(x || '').trim().replace(/^@/, '').toLowerCase()).filter((x, i, l) => /^[\w.-]{2,40}$/.test(x) && l.indexOf(x) === i).slice(0, max);
+async function toProt() { try { const c = await getJSON('toprot'); return { users: nameList(c && c.users, 100), mods: !c || c.mods !== false }; } catch (e) { return { users: [], mods: true }; } }
+async function ttsBlList() { try { return nameList(await getJSON('ttsbl'), 300); } catch (e) { return []; } }
+// ¿es mod (o tú)? por sus insignias en el chat reciente o porque está en tu lista de mods de los comandos
+async function isModName(pf, name) {
+  name = String(name || '').toLowerCase();
+  const tw = pf === 'tw', mine = m => m && String(m.u || '').toLowerCase() === name && (tw ? m.pf === 'tw' : m.pf !== 'tw');
+  for (let i = CBUF.length - 1; i >= 0; i--) if (mine(CBUF[i])) return isModOrMe(CBUF[i].badges);
+  try {
+    const rec = (await redis('ZREVRANGE', 'chat', 0, 499)) || [];
+    for (const x of rec) { let m = null; try { m = JSON.parse(x); } catch (e) {} if (mine(m)) return isModOrMe(m.badges); }
+  } catch (e) {}
+  try { return ((await modCfg()).users || []).indexOf(name) >= 0; } catch (e) { return false; }
+}
+async function rwExtra() { const [vips, prot, ttsbl] = await Promise.all([vipList(), toProt(), ttsBlList()]); return { vips, prot, ttsbl }; }
 async function rewardsApi(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -2167,9 +2236,18 @@ async function rewardsApi(req, res) {
   if (!(await checkKey(q.key || b.key))) return send(res, 403, { ok: false, error: 'clave' });
   const a = String(q.a || b.a || 'list'), pf = b.pf === 'tw' ? 'tw' : 'kick', id = str(b.id).slice(0, 80);
   if (a === 'pend') return send(res, 200, { ok: true, pend: (await rwpAll()).map(rwpOut) });
-  if (a === 'list') { const out = await rwListAll(); out.pend = (await rwpAll()).map(rwpOut); return send(res, 200, out); }
+  if (a === 'list') { const out = await rwListAll(); out.pend = (await rwpAll()).map(rwpOut); Object.assign(out, await rwExtra()); return send(res, 200, out); }   // v87: + VIP, protegidos y lista negra
+  if (a === 'extra') return send(res, 200, Object.assign({ ok: true }, await rwExtra()));
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
   if (a === 'save') return send(res, 200, await rwSave(pf, id, b.f));
+  // v87 · 👑 quitar un VIP antes · 🛡 protegidos · 🔊 lista negra del TTS
+  if (a === 'vipdel') { const r = await vipRemoveNow(str(b.k).slice(0, 80)); return send(res, 200, Object.assign(r, await rwExtra())); }
+  if (a === 'prot') { const c = b.c && typeof b.c === 'object' ? b.c : {}; await setJSON('toprot', { users: nameList(c.users, 100), mods: c.mods !== false }); return send(res, 200, Object.assign({ ok: true }, await rwExtra())); }
+  if (a === 'ttsbl') {
+    const u = nameList([b.u], 1)[0]; if (!u) return send(res, 200, { ok: false, error: 'Escribe el nombre (como sale en el chat)' });
+    let L = await ttsBlList(); L = b.op === 'del' ? L.filter(x => x !== u) : [u].concat(L.filter(x => x !== u)).slice(0, 300);
+    await setJSON('ttsbl', L); return send(res, 200, Object.assign({ ok: true }, await rwExtra()));
+  }
   if (!id) return send(res, 400, { ok: false, error: 'falta cuál' });
   if (a === 'del') return send(res, 200, await rwDel(pf, id));
   if (a === 'res') return send(res, 200, await rwRes(pf, id, !!b.ok));
@@ -2689,8 +2767,8 @@ async function modCmdApi(req, res) {
    pregunta a la base cuando llega un evento (no con cada mensaje del chat). */
 const RULE_EV = { sub: 1, resub: 1, gift: 1, kicks: 1, follow: 1, live: 1, off: 1, cat: 1, catoff: 1, reward: 1, host: 1, bits: 1, hype: 1, adstart: 1, scene: 1 };
 // v82: pasos que solo existen en las reglas ('rw' = solo con «Canjean una recompensa»)
-const RULE_XSTEPS = { vip: 'rw', to: 'rw', ca: 'rw', hl: 'rw', emo: 'any', sb: 'any' };
-const NO_OBS = { chat: 1, wait: 1, goal: 1, vip: 1, to: 1, ca: 1, hl: 1, emo: 1, sb: 1 };
+const RULE_XSTEPS = { vip: 'rw', to: 'rw', ca: 'rw', hl: 'rw', rtts: 'rw', emo: 'any', sb: 'any' };   // v87: + rtts (🔊 TTS por recompensa)
+const NO_OBS = { chat: 1, wait: 1, goal: 1, vip: 1, to: 1, ca: 1, hl: 1, rtts: 1, emo: 1, sb: 1 };
 // v75: cada regla puede ser de Kick, de Twitch o de las dos ('' = cualquiera). Lo que solo existe en una, va fijo.
 const RULE_ONLY = { kicks: 'kick', bits: 'tw', hype: 'tw', adstart: 'tw' };
 function rulePf(r) { return RULE_ONLY[r.ev] || (r.pf === 'kick' || r.pf === 'tw' ? r.pf : ''); }
@@ -2712,6 +2790,7 @@ function cleanRule(x, i) {
     if (o.t === 'emo') o.sec = num(s.sec, 15, 900, 120);
     if (o.t === 'hl') o.text = String(s.text == null || s.text === '' ? HL_DEF : s.text).slice(0, 300);
     if (o.t === 'sb') o.a = String(s.a || '').replace(/[\r\n]/g, ' ').trim().slice(0, 100);
+    if (o.t === 'rtts') o.who = Number(s.who) ? 1 : 0;                                         // v87: decir el nombre antes del mensaje
     if (o.t === 'wait') o.s = Math.max(0.5, Math.min(30, Number(s.s) || 1));      // en las reglas se puede esperar hasta 30 s
     return o;
   }).filter(o => o.t !== 'sb' || o.a);
@@ -2722,6 +2801,7 @@ function cleanRule(x, i) {
   const o = { id, on: x.on !== false, ev: x.ev, min: Math.max(0, Math.min(1e6, Math.round(Number(x.min) || 0))),
            name: String(x.name || '').trim().slice(0, 80), cd: Math.max(0, Math.min(3600, Math.round(Number(x.cd) || 0))), steps };
   const pf = rulePf(x); if (pf) o.pf = pf;
+  if (x.ev === 'scene' && ['kick', 'tw', 'both'].indexOf(x.to) >= 0) o.to = x.to;   // v87: a qué chat va el mensaje ('' = donde estés en vivo)
   return o;
 }
 function cleanRuleCfg(c) {
@@ -2748,6 +2828,7 @@ function ruleVars(kind, d, pf) {
   else if (kind === 'adstart') v.cantidad = String(d.dur || 0);
   return v;
 }
+const scNorm = t => String(t == null ? '' : t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
 function ruleHit(r, kind, d) {
   if (!r || r.on === false || r.ev !== kind) return false;
   d = d || {};
@@ -2756,7 +2837,7 @@ function ruleHit(r, kind, d) {
   if (kind === 'host') return (Number(d.viewers) || 0) >= (r.min || 0);
   if (kind === 'reward') return !r.name || rlow(r.name) === rlow(d.reward);
   if (kind === 'cat') return !r.name || rlow(r.name) === rlow(d.cat);
-  if (kind === 'scene') return !r.name || rlow(r.name) === rlow(d.scene);
+  if (kind === 'scene') return !r.name || rlow(r.name) === rlow(d.scene) || (scNorm(r.name) && scNorm(r.name) === scNorm(d.scene));   // v87: «Offline» = «OFFLINE 📵»
   if (kind === 'catoff') return !!r.name && rlow(r.name) === rlow(d.oldCat) && rlow(d.cat) !== rlow(r.name);
   return true;
 }
@@ -2839,22 +2920,34 @@ async function rulesOn(kind, d, pf, anyOk) {
   const hits = (cfg.list || []).filter(r => ruleHit(r, kind, d) && (sc || (rulePf(r) ? rulePf(r) === pf : anyOk !== false)));
   if (!hits.length) return;
   // v82 · 🎬 escena: los mensajes van a donde estés en vivo ahorita (o solo a la que elegiste en la regla)
-  let lp = '';
-  if (sc) { const [lk, lt] = await Promise.all([kickLive(), twLiveNow()]); lp = lk && lt ? 'both' : lk ? 'kick' : lt ? 'tw' : 'none'; }
+  let lp = '', lk = false, lt = false, obsOn = false;
+  if (sc) { const L = await Promise.all([kickLive(), twLiveNow()]); lk = L[0]; lt = L[1]; obsOn = !!(d && d.on === true);
+            lp = lk && lt ? 'both' : lk ? 'kick' : lt ? 'tw' : obsOn ? 'kick' : 'none'; }   // v87: si OBS transmite cuenta como en vivo (Kick, tu principal)
   const v = ruleVars(kind, d, pf);
   await Promise.all(hits.map(async r => {
     if (r.cd && !(await redis('SET', 'rcd:' + r.id, '1', 'NX', 'EX', r.cd))) return;   // todavía está en su espera
-    const rp = !sc ? pf : !rulePf(r) ? lp : (lp === 'both' || lp === rulePf(r)) ? rulePf(r) : 'none';
+    const rp = !sc ? pf : sceneDest(r, lp, lk, lt, obsOn);
     let out;
     try { out = await ruleExec(r.steps, sc ? Object.assign({}, v, { plataforma: rp === 'tw' ? 'Twitch' : rp === 'both' ? 'Kick y Twitch' : 'Kick' }) : v, false, rp); } catch (e) { out = { ok: false, error: e.message }; }
+    // v87: si no se mandó el mensaje, que se vea por qué (antes decía «✓ Listo» y no salía nada)
+    if (sc && rp === 'none' && out.ok && r.steps.some(s => s.t === 'chat')) out.note = 'sin mensaje: no estabas en vivo (ni OBS transmitiendo)';
     const rt = Date.now();
     if (cfg.feed !== false || !out.ok) {
       const ev = { id: 'rule:' + r.id + ':' + rt, type: 'rule', ts: rt, rt,
-        d: { kind: 'rule', ev: kind, rid: r.id, user: v.nombre, n: v.cantidad, rw: v.recompensa, cat: v.categoria || v.escena, ok: out.ok, error: out.error || '', scene: out.scene || '', pf: sc ? '' : (pf || '') } };
+        d: { kind: 'rule', ev: kind, rid: r.id, user: v.nombre, n: v.cantidad, rw: v.recompensa, cat: v.categoria || v.escena, ok: out.ok, error: out.error || '', note: out.note || '', scene: out.scene || '', pf: sc ? (rp === 'none' ? '' : rp) : (pf || '') } };
       await evAdd(rt, (ev));
     }
     await logPush('rulelog', { at: rt, ev: kind, rid: r.id, u: v.nombre, ok: out.ok, e: out.error || '' }, 20);
   }));
+}
+// v87 · 🎬 a qué chat va el mensaje de una regla de escena. «to»: '' = donde estés en vivo, 'kick', 'tw' o 'both'.
+// Cuenta como en vivo si Kick o Twitch lo dicen, o si OBS está transmitiendo (lo ve la guardia al momento).
+function sceneDest(r, lp, lk, lt, obsOn) {
+  const on = lk || lt || obsOn;
+  if (r.to) return on ? r.to : 'none';
+  const rp = rulePf(r);                                   // las de antes (v82): «Solo Kick» / «Solo Twitch»
+  if (rp) return (lp === 'both' || lp === rp || (obsOn && !lk && !lt)) ? rp : 'none';
+  return lp;
 }
 // qué reglas despierta cada aviso de Kick
 function ruleTriggers(d, newSess) {

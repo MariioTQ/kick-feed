@@ -318,8 +318,8 @@ const app=http.createServer((req,res)=>{
   await CI('',{w:WK,st:ST,obs:{scene:'LIVE',on:true},msgs:[]}); await CI('',{w:WK,st:ST,obs:{scene:'Offline',on:true},msgs:[]}); await W2(400);
   ok2(sentK().length===k1+1 && sentT().length===t1, 'si solo estás en vivo en Kick, solo sale en Kick');
   global.__kvref['session']=JSON.stringify({live:false}); k1=sentK().length;
-  await CI('',{w:WK,st:ST,obs:{scene:'LIVE',on:true},msgs:[]}); await CI('',{w:WK,st:ST,obs:{scene:'Offline',on:true},msgs:[]}); await W2(400);
-  ok2(sentK().length===k1, 'sin estar en vivo no manda nada');
+  await CI('',{w:WK,st:ST,obs:{scene:'LIVE',on:false},msgs:[]}); await CI('',{w:WK,st:ST,obs:{scene:'Offline',on:false},msgs:[]}); await W2(400);
+  ok2(sentK().length===k1, 'sin estar en vivo (y OBS sin transmitir) no manda nada');   // v87: si OBS transmite, sí cuenta como en vivo (ver harness34)
 
   // F) 📋 plan del día
   k1=sentK().length;
