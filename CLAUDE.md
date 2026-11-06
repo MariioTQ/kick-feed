@@ -217,3 +217,10 @@ Es mi propio sistema para streams en Kick y Twitch (a veces multistream), al est
 - **v83:** widget de chat para OBS (`chat-obs.html`) y su editor Chat Studio (`chat-studio.html`, ⚙ → Chat → «Chat para OBS»).
 - **v84:** botón para volver a conectar Kick (con permisos que faltan), sección 🎯 Recompensas (Kick y Twitch, APIs oficiales), canjes pendientes con ✓ / ✕ en el feed y 🎯 en la barra, aviso oficial de canjes de Kick, arreglo de «devolver puntos» en Kick.
 - **v85:** 🔐 sesión de Kick («modo Kick.bot»): VIP y solo emotes en Kick sin Streamer.bot, todas las recompensas y canjes de Kick, vigilancia de la sesión. Pruebas `harness33.js` y `v85.js`.
+- **v86:** 🔐 seguridad. Arreglado el hueco por el que un link con otro `?api=` se robaba la clave 🔑 (ver «Seguridad» abajo) en `index.html`, `chat-studio.html`, `brb.html` y la guardia. En `index.html` la clave ya no se queda en la barra de direcciones. Prueba `v86seg.js`. (Nota: al subir la v85 por la web de GitHub se borró sin querer casi toda la carpeta `pruebas/`; se recuperó del historial.)
+
+## Seguridad (lo que no se debe romper)
+
+- **La clave 🔑 solo se le manda a TU servidor.** `index.html`, `chat-studio.html`, `brb.html` y `guardia.html` leen `?api=` de la URL. Si no es tu servidor, un link como `?api=https://malo` te robaría la clave (o el token `?w=` de la guardia) y con eso controlarían tu canal. Por eso cada una tiene `apiHostOk()`: solo confía en `kick-feed-mariotq.vercel.app`, en los previews `kick-feed-mariotq-…-tq19.vercel.app` y en el mismo dominio de la página. Si el `?api=` es otro, se ignora (usa el servidor de siempre) y NO se carga la clave. **No quites este candado ni le agregues hosts con comodín.** `alertas-comun.js` tiene el servidor fijo (no lee `?api=`), por eso Alertas Studio no lo necesita.
+- La clave no se enseña en stream: sale de la barra de direcciones (`history.replaceState`) en todas las páginas que la reciben.
+- Si crees que se te filtró la clave, hazte una nueva: abre `https://kick-feed-mariotq.vercel.app/api/login?nueva=1`, autoriza, y la anterior deja de servir (vuelve a abrir el link nuevo en tus celulares).

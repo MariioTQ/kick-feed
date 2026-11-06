@@ -1517,7 +1517,7 @@
 (function(){
   "use strict";
 
-  var VERSION = '85 · 5 nov 2026';   // se muestra abajo en el engrane ⚙
+  var VERSION = '86 · 6 nov 2026';   // se muestra abajo en el engrane ⚙
   // v74 · 🟣 Twitch (multistream): chat junto con Kick, a dónde escribir (K, T o los dos), subs/bits/raids, encuestas y predicciones, Hype Train, anuncios, metas aparte y aviso si se cae una
   // v73 · 🎞 BRB a la mano (botón y página), respuestas rápidas que salen sobre los clips unos segundos, y el lector no lee «Alexa», «Siri»…
   // v71 · 🎞 BRB en los Atajos: siguiente clip, pausa, sonido, mensaje y playlist de tu BRB Studio (brb.html)
@@ -1542,6 +1542,12 @@
        ?test=1          botón para inyectar eventos falsos
      ============================================================ */
   var Q = new URLSearchParams(location.search);
+  // v85: 🔐 seguridad. Tu clave solo se le manda a TU servidor. Si alguien te pasa un
+  // link con otro ?api= (para robarte la clave 🔑 y controlar tu canal), la app lo
+  // ignora: usa tu servidor de siempre y NO manda la clave hasta que la abras bien.
+  function apiHostOk(u){ try{ var h=new URL(u, location.href).hostname.toLowerCase();
+    return h==='kick-feed-mariotq.vercel.app' || /^kick-feed-mariotq-[a-z0-9-]+-tq19\.vercel\.app$/.test(h) || h===location.hostname; }catch(e){ return false; } }
+  var API_BAD = !!(Q.get('api') && Q.get('api')!=='0' && !apiHostOk(Q.get('api')));
   // 🔀 ?duo=elbudget,mariotq → página SOLO de chat para tu amigo: su chat (el primero) y el
   // tuyo mezclados, sin feed, sin escribir y sin moderar. No usa tu clave ni tus ajustes.
   function slugClean(v){ return String(v||'').trim().replace(/^.*kick\.com\//i,'').replace(/^@/,'').replace(/[^a-z0-9_.\-]/gi,'').toLowerCase(); }
@@ -1605,12 +1611,12 @@
     botrixH: parseInt(Q.get('botrixh') || '45', 10),
     // Tu servidor en Vercel: recibe de Kick (vía oficial) cada sub, resub,
     // regalo y Kicks, aunque tu celular no tenga señal. ?api=0 lo apaga.
-    api: (Q.get('api')==='0') ? '' : (Q.get('api') || 'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,''),
+    api: (Q.get('api')==='0') ? '' : ((API_BAD ? '' : Q.get('api')) || 'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,''),
     // Clave para cambiar título y categoría. Sale en la página de
     // autorización ("Enlace para tus celulares"); la primera vez que
     // abres ese enlace queda guardada en el celular.
     key: (function(){
-      if (DUO) return '';                               // la página de tu amigo nunca lleva tu clave
+      if (DUO || API_BAD) return '';                    // la página de tu amigo (o un ?api= de otro) nunca lleva tu clave
       var v=(Q.get('key')||'').trim();
       try{ if (v) localStorage.setItem('kickfeed.key', v); else v=localStorage.getItem('kickfeed.key')||''; }catch(e){}
       return v;
@@ -1621,6 +1627,10 @@
   };
   if (CFG.slug !== 'mariotq' && !Q.get('chatroom')) { CFG.chatroomId=''; CFG.channelId=''; }
   if (DUO) document.documentElement.classList.add('duo');
+  // v85: 🔐 la clave 🔑 no se queda en la barra de direcciones (por si muestras la pantalla en el stream)
+  if (Q.get('key')) try{ var _sp=new URLSearchParams(location.search); _sp.delete('key'); var _qs=_sp.toString();
+    history.replaceState(null, '', location.pathname+(_qs?'?'+_qs:'')+location.hash); }catch(e){}
+  if (API_BAD) try{ console.warn('[seguridad] Ese link traía otro ?api= y se ignoró: tu clave no se mandó a ningún lado.'); }catch(e){}
 
   if (CFG.bg === 'transparent' || CFG.bg === 'none') document.body.classList.add('transparent');
   if (!CFG.bar)  document.body.classList.add('nobar');

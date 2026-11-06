@@ -1369,7 +1369,7 @@ async function cwOk(w) {
 }
 const GUARD_PAGE = 'https://mariiotq.github.io/kick-feed/guardia.html';
 function prodUrl(req) { const p = String(process.env.VERCEL_PROJECT_PRODUCTION_URL || '').replace(/^https?:\/\//, '').replace(/\/+$/, ''); return p ? 'https://' + p : (req ? baseUrl(req) : 'https://kick-feed-mariotq.vercel.app'); }
-const GUARD_VER = '82';     // cambia con cada versión: al tocar «Agregarla a mi OBS», OBS carga la nueva sí o sí
+const GUARD_VER = '86';     // cambia con cada versión: al tocar «Agregarla a mi OBS», OBS carga la nueva sí o sí
 function cwLink(t, req) { return GUARD_PAGE + '?w=' + encodeURIComponent(t) + '&api=' + encodeURIComponent(prodUrl(req)) + '&v=' + GUARD_VER; }
 async function cwHooks(fresh) {
   if (!fresh && CWH.v && Date.now() - CWH.at < 60000) return CWH.v;

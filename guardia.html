@@ -44,8 +44,12 @@ body.oculto #box{display:none}
 (function(){
 'use strict';
 var Q=new URLSearchParams(location.search);
-var W=Q.get('w')||'', API=(Q.get('api')||'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,'');
-var VER='82';
+// v85: 🔐 seguridad. El token de la guardia (?w=) solo se le manda a TU servidor. Si el link trae otro ?api=, se ignora.
+function apiHostOk(u){ try{ var h=new URL(u, location.href).hostname.toLowerCase();
+  return h==='kick-feed-mariotq.vercel.app' || /^kick-feed-mariotq-[a-z0-9-]+-tq19\.vercel\.app$/.test(h) || h===location.hostname; }catch(e){ return false; } }
+var API_BAD=!!(Q.get('api') && !apiHostOk(Q.get('api')));
+var W=API_BAD ? '' : (Q.get('w')||''), API=((API_BAD ? '' : Q.get('api'))||'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,'');
+var VER='86';
 if (Q.get('oculto')==='1') document.body.classList.add('oculto');
 var $=function(id){ return document.getElementById(id); };
 function err(t){ $('err').textContent=t||''; }
