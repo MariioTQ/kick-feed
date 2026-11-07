@@ -2499,6 +2499,67 @@ async function keyApi(req, res) {
   try { await logPush('raw', { at: now, type: 'clave', body: 'clave nueva desde la app (la anterior ya no sirve)' }, 40); } catch (e) {}
   return send(res, 200, { ok: true, key: nk, at: now, link: 'https://mariiotq.github.io/kick-feed/?key=' + encodeURIComponent(nk) });
 }
+/* ---- v89 · 📊🔮 ENCUESTAS Y PREDICCIONES DE KICK (con tu sesión de Kick) ----
+   La API oficial de Kick no las tiene; la página de kick.com sí (las mismas direcciones que usa Kick.bot):
+     GET/POST/DELETE /api/v2/channels/{slug}/polls          (la encuesta de ahorita · crear · terminar)
+     GET  /api/v2/channels/{slug}/predictions/latest         (la última predicción)
+     POST /api/v2/channels/{slug}/predictions                (crear)
+     PATCH /api/v2/channels/{slug}/predictions/{id}          (state: LOCKED · RESOLVED + winning_outcome_id · CANCELLED)
+   Probado desde Vercel: sin sesión contestan 401 (no hay bloqueo de Cloudflare). */
+const KP_POLL_D = [30, 120, 180, 240, 300];                  // lo que deja Kick para una encuesta (segundos)
+const kpBase = () => '/api/v2/channels/' + encodeURIComponent(CHANNEL);
+const kpNear = (n, L) => L.reduce((a, b) => Math.abs(b - n) < Math.abs(a - n) ? b : a, L[0]);
+function kpPoll(j) {
+  const p = j && j.data && j.data.poll; if (!p || !p.title) return null;
+  return { t: String(p.title).slice(0, 120), dur: Number(p.duration) || 0, left: Number(p.remaining) || 0,
+    opts: (Array.isArray(p.options) ? p.options : []).map(o => ({ id: o.id, t: String(o.label || '').slice(0, 60), n: Number(o.votes) || 0 })) };
+}
+function kpPred(j) {
+  const p = j && j.data && j.data.prediction; if (!p || !p.id) return null;
+  return { id: str(p.id), t: String(p.title || '').slice(0, 120), st: String(p.state || '').toUpperCase(), dur: Number(p.duration) || 0,
+    at: Date.parse(p.created_at) || 0, lockAt: Date.parse(p.locked_at) || 0, win: str(p.winning_outcome_id),
+    outs: (Array.isArray(p.outcomes) ? p.outcomes : []).map(o => ({ id: str(o.id), t: String(o.title || '').slice(0, 60), pts: Number(o.total_vote_amount) || 0, n: Number(o.vote_count) || 0 })) };
+}
+async function kpNow() {
+  const [a, b] = await Promise.all([kwCall('GET', kpBase() + '/polls'), kwCall('GET', kpBase() + '/predictions/latest')]);
+  if (a.off) return { ok: false, off: true, error: kwErr(a) };
+  if (a.dead || b.dead) return { ok: false, error: kwErr(a.dead ? a : b) };
+  return { ok: true, poll: a.ok ? kpPoll(a.j) : null, pred: b.ok ? kpPred(b.j) : null };
+}
+async function kpApi(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  const q = req.query || {}, b = req.method === 'POST' ? await readJSONBody(req) : {};
+  if (!(await checkKey(q.key || b.key))) return send(res, 403, { ok: false, error: 'clave' });
+  const a = String(q.a || b.a || 'now');
+  if (a === 'now') return send(res, 200, await kpNow());
+  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'usa POST' });
+  const done = async (r, what) => { if (!r.ok) return send(res, 200, { ok: false, error: kwErr(r, what) }); const n = await kpNow(); return send(res, 200, Object.assign(n, { ok: true })); };
+  if (a === 'poll') {
+    const title = String(b.title || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    const options = (Array.isArray(b.options) ? b.options : []).map(o => String(o || '').replace(/\s+/g, ' ').trim().slice(0, 50)).filter(Boolean).slice(0, 6);
+    if (!title || options.length < 2) return send(res, 400, { ok: false, error: 'Pon la pregunta y al menos 2 opciones' });
+    const duration = kpNear(Math.round(Number(b.duration) || 120), KP_POLL_D);
+    return done(await kwCall('POST', kpBase() + '/polls', { title, options, duration, result_display_duration: 15 }), 'crear la encuesta');
+  }
+  if (a === 'pollEnd') return done(await kwCall('DELETE', kpBase() + '/polls'), 'terminar la encuesta');
+  if (a === 'pred') {
+    const title = String(b.title || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    const outcomes = (Array.isArray(b.outcomes) ? b.outcomes : []).map(o => String(o || '').replace(/\s+/g, ' ').trim().slice(0, 50)).filter(Boolean).slice(0, 2);
+    if (!title || outcomes.length < 2) return send(res, 400, { ok: false, error: 'Pon la pregunta y los 2 resultados' });
+    const duration = Math.max(30, Math.min(1800, Math.round(Number(b.window) || 120)));
+    return done(await kwCall('POST', kpBase() + '/predictions', { title, outcomes, duration }), 'crear la predicción');
+  }
+  const id = str(b.id).slice(0, 60);
+  if (!/^[\w-]{6,60}$/.test(id)) return send(res, 400, { ok: false, error: 'falta cuál predicción' });
+  if (a === 'lock') return done(await kwCall('PATCH', kpBase() + '/predictions/' + encodeURIComponent(id), { state: 'LOCKED' }), 'cerrar las apuestas');
+  if (a === 'cancel') return done(await kwCall('PATCH', kpBase() + '/predictions/' + encodeURIComponent(id), { state: 'CANCELLED' }), 'cancelar la predicción');
+  if (a === 'win') {
+    const w = str(b.win).slice(0, 60); if (!w) return send(res, 400, { ok: false, error: 'falta quién ganó' });
+    return done(await kwCall('PATCH', kpBase() + '/predictions/' + encodeURIComponent(id), { state: 'RESOLVED', winning_outcome_id: w }), 'elegir quién ganó');
+  }
+  return send(res, 400, { ok: false, error: 'acción rara' });
+}
 async function healthApi(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return send(res, 204, '');
@@ -3790,6 +3851,7 @@ async function handlerIn(req, res) {
     if (route === 'rewards') return await rewardsApi(req, res);         // v84: 🎯 recompensas y canjes pendientes
     if (route === 'kick') return await kickInfoApi(req, res);
     if (route === 'kweb') return await kwApi(req, res);
+    if (route === 'kpoll') return await kpApi(req, res);              // v89: 📊🔮 encuestas y predicciones de Kick
     if (route === 'key') return await keyApi(req, res);                 // v88: 🔑 cambiar la clave desde la app                 // v85: 🔐 tu sesión de Kick («modo Kick.bot»)           // v84: permisos de tu cuenta de Kick
     if (route === 'spam') return await spamApi(req, res);
     if (route === 'modcmd') return await modCmdApi(req, res);
