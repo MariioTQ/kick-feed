@@ -1524,7 +1524,7 @@
 (function(){
   "use strict";
 
-  var VERSION = '88 · 6 nov 2026';   // se muestra abajo en el engrane ⚙
+  var VERSION = '89 · 6 nov 2026';   // se muestra abajo en el engrane ⚙
   // v74 · 🟣 Twitch (multistream): chat junto con Kick, a dónde escribir (K, T o los dos), subs/bits/raids, encuestas y predicciones, Hype Train, anuncios, metas aparte y aviso si se cae una
   // v73 · 🎞 BRB a la mano (botón y página), respuestas rápidas que salen sobre los clips unos segundos, y el lector no lee «Alexa», «Siri»…
   // v71 · 🎞 BRB en los Atajos: siguiente clip, pausa, sonido, mensaje y playlist de tu BRB Studio (brb.html)
@@ -8084,7 +8084,82 @@
          v88: antes era el 🟣 de la barra y solo Twitch; ahora también los anuncios de Kick. --- */
   var TWP={sched:null, busy:false, err:''}, KADP={busy:false, err:''};
   function twPageOn(){ return twConnected() && CC.tw!==false; }
-  function openTwPage(){ cpOpen('twm'); twPagePaint(); if (twPageOn()) twAdsLoad(); if (CFG.key && CFG.api) kadLoad(); }
+  /* ============================================================
+     v89 · 📊🔮 ENCUESTAS Y PREDICCIONES DE KICK (con tu sesión de Kick)
+     En ⚙ → Encuestas y anuncios: crear una encuesta o una predicción en Kick,
+     ver cómo va, terminar la encuesta, cerrar apuestas, elegir quién ganó o
+     cancelar (se devuelven los puntos). Ruta /api/kpoll.
+     ============================================================ */
+  var KP={now:null, busy:false, err:''};
+  function kpOn(){ return !!(KW.st && KW.st.on && KW.st.alive!==false); }
+  function kpLoad(op, extra){
+    if (!CFG.key || !CFG.api || DUO) return Promise.resolve(null);
+    if (op && op!=='now'){ var fe=document.activeElement; if (fe && fe.blur) fe.blur(); }   // si no, la página no se vuelve a pintar (estás escribiendo)
+    KP.busy=true; twPagePaint();
+    return apiPost('/api/kpoll', Object.assign({a:op||'now'}, extra||{})).then(function(j){
+      KP.busy=false;
+      if (j && j.ok){ KP.now=j; KP.err=''; } else KP.err=(j && j.error) || 'Tu servidor no contestó';
+      twPagePaint(); return j;
+    });
+  }
+  function kpHtml(){
+    if (!kpOn()) return '<div class="lb2" style="margin-top:14px">'+pfChip('kick')+' 📊 Encuestas y 🔮 predicciones de Kick</div><div class="grp"><div class="nt" style="margin:11px 12px">'+
+      (KW.st && KW.st.on ? '⚠ Tu sesión de Kick se venció: pégala otra vez en ⚙ → Plataformas → 🔐 para usarlas.' : 'Para hacerlas desde aquí, pon tu sesión de Kick en ⚙ → Plataformas → 🔐 Sesión de Kick.')+'</div></div>';
+    var n=KP.now||{}, po=n.poll, pr=n.pred, h='';
+    h+='<div class="lb2" style="margin-top:14px">'+pfChip('kick')+' 📊 Encuesta en Kick</div><div class="grp tf">';
+    if (po){
+      var tot=po.opts.reduce(function(a,o){ return a+o.n; },0)||0;
+      h+='<div class="bcur">📊 <b>'+esc(po.t)+'</b>'+(po.left ? ' · quedan '+mmss(po.left) : ' · terminando')+'</div>'+
+         po.opts.map(function(o){ var pc=tot ? Math.round(o.n*100/tot) : 0; return '<div class="nt" style="margin:0 12px 4px">'+esc(o.t)+': <b>'+o.n+'</b> ('+pc+' %)</div>'; }).join('')+
+         '<div class="bmsgs"><button data-kp="pollEnd">⏹ Terminar encuesta</button><button class="sec" data-kp="now">↻</button></div>';
+    } else {
+      h+='<div class="fld"><label>Pregunta</label><input id="kpPollQ" maxlength="100" placeholder="Ej. ¿A dónde vamos?"></div>'+
+        [1,2,3,4,5,6].map(function(i){ return '<div class="fld"><label>Opción '+i+(i>2?' (opcional)':'')+'</label><input class="kpPO" maxlength="50"></div>'; }).join('')+
+        '<div class="sl">Dura</div><div class="seg" data-k="kpD">'+[[30,'30 s'],[120,'2 min'],[180,'3 min'],[300,'5 min']].map(function(o){ return '<button data-v="'+o[0]+'" class="'+(Number(CC.kpD||120)===o[0]?'on':'')+'">'+o[1]+'</button>'; }).join('')+'</div>'+
+        '<button class="bigb" id="kpPollGo"'+(KP.busy?' disabled':'')+'>Empezar encuesta en Kick</button>';
+    }
+    h+='</div><div class="lb2">'+pfChip('kick')+' 🔮 Predicción en Kick</div><div class="grp tf">';
+    var act=pr && (pr.st==='ACTIVE' || pr.st==='LOCKED');
+    if (act){
+      var pts=pr.outs.reduce(function(a,o){ return a+o.pts; },0)||0;
+      h+='<div class="bcur">🔮 <b>'+esc(pr.t)+'</b> · '+(pr.st==='ACTIVE' ? 'apostando' : 'apuestas cerradas: elige quién ganó')+'</div>'+
+        pr.outs.map(function(o){ return '<div class="nt" style="margin:0 12px 4px">'+esc(o.t)+': <b>'+Number(o.pts).toLocaleString('es-MX')+'</b> pts · '+o.n+' personas'+(pts ? ' ('+Math.round(o.pts*100/pts)+' %)' : '')+'</div>'; }).join('')+
+        '<div class="bmsgs">'+(pr.st==='ACTIVE' ? '<button data-kp="lock">🔒 Cerrar apuestas</button>' : '')+
+          pr.outs.map(function(o){ return '<button data-kpw="'+esc(o.id)+'">🏆 Ganó «'+esc(o.t)+'»</button>'; }).join('')+
+          '<button class="sec" data-kp="cancel">✕ Cancelar (devuelve los puntos)</button><button class="sec" data-kp="now">↻</button></div>';
+    } else {
+      if (pr && pr.st==='RESOLVED'){ var w=pr.outs.filter(function(o){ return o.id===pr.win; })[0]; h+='<div class="nt" style="margin:8px 12px 4px">La última: «'+esc(pr.t)+'»'+(w ? ' · ganó <b>'+esc(w.t)+'</b>' : '')+'</div>'; }
+      h+='<div class="fld"><label>Pregunta</label><input id="kpPredQ" maxlength="100" placeholder="Ej. ¿Llego antes de las 8?"></div>'+
+        [1,2].map(function(i){ return '<div class="fld"><label>Resultado '+i+'</label><input class="kpDO" maxlength="50" placeholder="'+(i===1?'Sí':'No')+'"></div>'; }).join('')+
+        '<div class="sl">Se puede apostar durante</div><div class="seg" data-k="kpW">'+[[60,'1 min'],[120,'2 min'],[300,'5 min'],[600,'10 min']].map(function(o){ return '<button data-v="'+o[0]+'" class="'+(Number(CC.kpW||120)===o[0]?'on':'')+'">'+o[1]+'</button>'; }).join('')+'</div>'+
+        '<button class="bigb" id="kpPredGo"'+(KP.busy?' disabled':'')+'>Empezar predicción en Kick</button>';
+    }
+    if (KP.err) h+='<div class="nt" style="margin:0 12px 10px;color:#ff8a80">⚠ '+esc(KP.err)+'</div>';
+    return h+'</div>';
+  }
+  function kpBind(){
+    if (!kpOn()) return;
+    Array.prototype.forEach.call($cpanel.querySelectorAll('.seg[data-k="kpD"] button, .seg[data-k="kpW"] button'), function(b){ b.onclick=function(){
+      CC[b.parentNode.getAttribute('data-k')]=Number(b.getAttribute('data-v')); saveCC();
+      Array.prototype.forEach.call(b.parentNode.children, function(x){ x.classList.toggle('on', x===b); }); }; });
+    var pid=KP.now && KP.now.pred && KP.now.pred.id;
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-kp]'), function(b){ b.onclick=function(){
+      var op=b.getAttribute('data-kp');
+      if (op==='now') return kpLoad('now');
+      var go=function(){ kpLoad(op, {id:pid}).then(function(j){ if (j && j.ok) apToast(op==='pollEnd' ? '⏹ Encuesta terminada' : op==='lock' ? '🔒 Apuestas cerradas' : '✕ Predicción cancelada'); else if (j) apToast('⚠ '+(j.error||'No se pudo'), true); }); };
+      if (op==='cancel' || op==='pollEnd') confirmTap1(b, '¿Seguro?', go); else go(); }; });
+    Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-kpw]'), function(b){ b.onclick=function(){
+      confirmTap1(b, '¿Ganó este?', function(){ kpLoad('win', {id:pid, win:b.getAttribute('data-kpw')}).then(function(j){ if (j && j.ok) apToast('🏆 Listo: se repartieron los puntos'); else if (j) apToast('⚠ '+(j.error||'No se pudo'), true); }); }); }; });
+    var pg=document.getElementById('kpPollGo'); if (pg) pg.onclick=function(){
+      var q=document.getElementById('kpPollQ').value.trim(), ch=Array.prototype.map.call($cpanel.querySelectorAll('.kpPO'), function(i){ return i.value.trim(); }).filter(Boolean);
+      if (!q || ch.length<2){ apToast('Pon la pregunta y al menos 2 opciones', true); return; }
+      kpLoad('poll', {title:q, options:ch, duration:Number(CC.kpD||120)}).then(function(j){ if (j && j.ok) apToast('📊 Encuesta en Kick'); else if (j) apToast('⚠ '+(j.error||'No se pudo'), true); }); };
+    var dg=document.getElementById('kpPredGo'); if (dg) dg.onclick=function(){
+      var q=document.getElementById('kpPredQ').value.trim(), oc=Array.prototype.map.call($cpanel.querySelectorAll('.kpDO'), function(i){ return i.value.trim(); });
+      if (!q || !oc[0] || !oc[1]){ apToast('Pon la pregunta y los 2 resultados', true); return; }
+      kpLoad('pred', {title:q, outcomes:oc, window:Number(CC.kpW||120)}).then(function(j){ if (j && j.ok) apToast('🔮 Predicción en Kick'); else if (j) apToast('⚠ '+(j.error||'No se pudo'), true); }); };
+  }
+  function openTwPage(){ cpOpen('twm'); twPagePaint(); if (twPageOn()) twAdsLoad(); if (CFG.key && CFG.api){ kadLoad(); kwStatus().then(function(){ if (kpOn()) kpLoad(); else twPagePaint(); }); } }
   // 📺 Kick: ver cómo están tus anuncios, lanzar uno (7 a 90 s) o inscribir tu canal
   function kadLoad(op, extra){
     KADP.busy=true; twPagePaint();
@@ -8133,7 +8208,7 @@
               : !s ? (TWP.busy ? 'Revisando…' : TWP.err ? '⚠ '+esc(TWP.err) : '—')
               : s.next ? 'Próximo anuncio en <b>'+mmss(Math.max(0, s.next-now)/1000)+'</b>'+(s.dur ? ' · dura '+s.dur+' s' : '') : 'Sin anuncio programado';
     var twOn=twPageOn();
-    var h=cpHeadHtml('📊 Encuestas y anuncios')+'<div class="cpb">'+(CFG.key && CFG.api ? kadHtml() : '')+(!twOn ? '' :
+    var h=cpHeadHtml('📊 Encuestas y anuncios')+'<div class="cpb">'+(CFG.key && CFG.api ? kadHtml()+kpHtml() : '')+(!twOn ? '' :
       '<div class="lb2" style="margin-top:14px">'+pfChip('tw')+' 📺 Anuncios de Twitch</div><div class="grp"><div class="bcur">'+adTxt+(s && s.preroll ? ' · sin prerolls por '+mmss(s.preroll)+'' : '')+'</div>'+
         '<div class="bmsgs"><button data-ad="snooze"'+(s && !s.snooze ? ' disabled' : '')+'>⏰ Posponer 5 min'+(s ? ' ('+s.snooze+' más)' : '')+'</button><button class="sec" data-ad="get">↻</button></div>'+
         '<div class="sl" style="padding-top:2px">Lanzar uno ahorita</div><div class="bmsgs">'+[30,60,90,120,180].map(function(n){ return '<button data-adl="'+n+'">'+(n<60?n+' s':(n/60)+' min')+'</button>'; }).join('')+'</div>'+
@@ -8153,7 +8228,7 @@
         opRow('adStrip','Ventanita del anuncio','Abajo de la barra: mientras corre (con su cuenta regresiva)'+(twOn ? ' y 90 s antes de uno automático de Twitch, para posponerlo' : ''), CC.adStrip!==false)+
         '<div class="nt" style="margin:0 12px 11px">Además, si lo dejas en la barra (⚙ → Barra de arriba), 📺 sale con la cuenta regresiva.</div></div>'+
       '<div class="nt">'+(twOn ? 'Encuestas y predicciones: solo en Twitch.' : 'Para encuestas y predicciones conecta Twitch en ⚙ → Plataformas.')+
-        ' Kick todavía no deja crearlas desde fuera (su API oficial no las tiene). También puedes hacer un atajo que lance una encuesta, una predicción o un anuncio.</div></div>';
+        ' En Kick se hacen con tu sesión de Kick (⚙ → Plataformas → 🔐), arriba (su API oficial no las tiene). También puedes hacer un atajo que lance una encuesta, una predicción o un anuncio.</div></div>';
     $cpanel.innerHTML=h;
     document.getElementById('cpHead').onclick=cpHeadTap;
     Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-kad]'), function(b){ b.onclick=function(){ var op=b.getAttribute('data-kad');
@@ -8162,6 +8237,7 @@
     Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-kadl]'), function(b){ b.onclick=function(){
       confirmTap1(b, '¿Lanzar?', function(){ kadLoad('start', {sec:Number(b.getAttribute('data-kadl'))}).then(function(j){ if (j && j.ok) apToast('📺 Anuncio lanzado en Kick'); else apToast('⚠ '+((j && j.error)||'No se pudo'), true); }); }); }; });
     var aso=$cpanel.querySelector('.op[data-k="adStrip"]'); if (aso) aso.onclick=function(){ CC.adStrip=CC.adStrip===false; saveCC(); twPagePaint(); adStripPaint(); };
+    kpBind();   // v89
     if (!twOn) return;
     Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-ad]'), function(b){ b.onclick=function(){ twAdsLoad(b.getAttribute('data-ad')).then(function(j){ if (j && j.ok && b.getAttribute('data-ad')==='snooze') apToast('⏰ Anuncio pospuesto'); }); }; });
     Array.prototype.forEach.call($cpanel.querySelectorAll('button[data-adl]'), function(b){ b.onclick=function(){

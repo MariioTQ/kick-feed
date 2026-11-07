@@ -139,7 +139,7 @@ await openSet(ev,'Encuestas y anuncios'); await W(500);
 g=await ev(()=>({lb:[...document.querySelectorAll('#cpanel .lb2')].map(x=>x.textContent), cur:[...document.querySelectorAll('#cpanel .bcur')].map(x=>x.textContent), nt:[...document.querySelectorAll('#cpanel .nt')].map(x=>x.textContent).join(' '), head:document.getElementById('cpHead').textContent}));
 ok(/Encuestas y anuncios/.test(g.head) && g.lb.some(x=>/Anuncios de Kick/.test(x)) && g.lb.some(x=>/Anuncios de Twitch/.test(x)) && g.lb.some(x=>/Encuesta/.test(x)) && g.lb.some(x=>/Predicción/.test(x)), 'la página tiene anuncios de Kick y de Twitch, encuesta y predicción: '+g.lb.join(' | '));
 ok(/te quedan 3 de 4 cada 1 h/.test(g.cur[0]), 'Kick: cuántos anuncios te quedan: '+g.cur[0]);
-ok(/Kick todavía no deja crearlas/.test(g.nt), 'y explica que Kick no deja crear encuestas desde fuera');
+ok(/En Kick se hacen con tu sesión de Kick/.test(g.nt), 'y explica que en Kick se hacen con tu sesión (v89)');
 ok((S.kickA||[]).some(x=>x.a==='ads'), 'al abrirla le pregunta a tu servidor cómo están tus anuncios de Kick');
 await ev(()=>document.querySelector('#cpanel button[data-kadl="60"]').click()); await W(300);
 ok(!(S.kickA||[]).some(x=>x.a==='adstart'), 'lanzar un anuncio de Kick pide otro toque');
