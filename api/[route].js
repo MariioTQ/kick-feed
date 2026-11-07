@@ -1391,7 +1391,7 @@ async function cwOk(w) {
 }
 const GUARD_PAGE = 'https://mariiotq.github.io/kick-feed/guardia.html';
 function prodUrl(req) { const p = String(process.env.VERCEL_PROJECT_PRODUCTION_URL || '').replace(/^https?:\/\//, '').replace(/\/+$/, ''); return p ? 'https://' + p : (req ? baseUrl(req) : 'https://kick-feed-mariotq.vercel.app'); }
-const GUARD_VER = '86';     // cambia con cada versión: al tocar «Agregarla a mi OBS», OBS carga la nueva sí o sí
+const GUARD_VER = '90';     // cambia con cada versión: al tocar «Agregarla a mi OBS», OBS carga la nueva sí o sí
 function cwLink(t, req) { return GUARD_PAGE + '?w=' + encodeURIComponent(t) + '&api=' + encodeURIComponent(prodUrl(req)) + '&v=' + GUARD_VER; }
 async function cwHooks(fresh) {
   if (!fresh && CWH.v && Date.now() - CWH.at < 60000) return CWH.v;
@@ -1518,12 +1518,22 @@ async function kickHostIn(x) {
 async function kickResubIn(x) {
   const user = str(x.user).slice(0, 40), months = Math.max(1, Math.round(Number(x.months) || 1));
   if (!user) return;
+  // v90: si la compartió en el chat (celebración), trae su mensaje: esa es SU alerta (como hacen Twitch/StreamElements)
+  const msg = String(x.msg || '').replace(/\[emote:\d+:([^\]]*)\]/g, '$1').replace(/\s+/g, ' ').trim().slice(0, 300);
   const rec = (await redis('ZRANGEBYSCORE', 'ev', Date.now() - 15 * 60000, '+inf')) || [];
   const u = user.toLowerCase();
-  if (rec.some(s => { try { const d = (JSON.parse(s) || {}).d || {}; return (d.kind === 'resub' || d.kind === 'sub') && d.pf !== 'tw' && String(d.user || '').toLowerCase() === u; } catch (e) { return false; } })) return;
-  const al = { k: 'resub', pf: 'kick', u: user, n: months, m: '' };
+  if (rec.some(s => { try { const d = (JSON.parse(s) || {}).d || {}; return (d.kind === 'resub' || d.kind === 'sub') && d.pf !== 'tw' && String(d.user || '').toLowerCase() === u; } catch (e) { return false; } })) {
+    // ya sonó su alerta hace poco (Kick avisó la renovación): solo se lee su mensaje, sin repetir la alerta
+    if (msg && x.cel && (await redis('SET', 'alfm:' + u, '1', 'NX', 'EX', 900))) {
+      const now = Date.now(), item = { id: 'q' + now.toString(36) + crypto.randomBytes(3).toString('hex'), ts: now, k: 'tts', pf: 'kick', u: user, m: msg, who: 1 };
+      await redis('ZADD', 'alq', now, JSON.stringify(item)); await rtSend('al', item);
+    }
+    return;
+  }
+  const al = { k: 'resub', pf: 'kick', u: user, n: months, m: msg };
   const af = crypto.createHash('sha1').update(JSON.stringify([al.k, al.pf, al.u.toLowerCase(), String(al.n)])).digest('hex').slice(0, 16);   // la misma huella que «fire» de tu app
   if (!(await redis('SET', 'alf:' + af, '1', 'NX', 'EX', 60))) return;
+  if (!(await redis('SET', 'alfu:' + u, '1', 'NX', 'EX', 120))) return;     // v90: una sola alerta de resub por persona (la compartida y el aviso de Kick traen meses distintos)
   const now = Date.now(), item = Object.assign({ id: 'q' + now.toString(36) + crypto.randomBytes(3).toString('hex'), ts: now }, al);
   await redis('ZADD', 'alq', now, JSON.stringify(item));
   await rtSend('al', item);

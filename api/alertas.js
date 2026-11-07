@@ -401,6 +401,7 @@ async function handlerIn(req, res) {
       // si tus dos celulares la vieron, sale una sola vez
       const fp = crypto.createHash('sha1').update(JSON.stringify([al.k, al.pf, al.u.toLowerCase(), String(al.n)])).digest('hex').slice(0, 16);
       if (!(await redis('SET', 'alf:' + fp, '1', 'NX', 'EX', 60))) return send(res, 200, { ok: true, dup: true });
+      if (al.k === 'resub' && !(await redis('SET', 'alfu:' + al.u.toLowerCase(), '1', 'NX', 'EX', 120))) return send(res, 200, { ok: true, dup: true });   // v90: la guardia ya la tocó
       return send(res, 200, { ok: true, item: await qPush(al) });
     }
     if (a === 'skip') return send(res, 200, { ok: true, item: await qPush({ ctl: 'skip' }) });
