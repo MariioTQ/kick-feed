@@ -246,9 +246,12 @@ function ttsDecirCel(text, vol, cfg) {
     u.voice = v; u.lang = v.lang || 'es-MX';
     u.volume = Math.max(0, Math.min(1, vol));
     u.rate = Math.max(0.6, Math.min(2, Number(cfg && cfg.ttsRate) || 1));
-    var t0 = Date.now(), listo = false;
+    var t0 = Date.now(), listo = false, empezo = false;
     var fin = function () { if (listo) return; listo = true; ok((Date.now() - t0) / 1000); };
+    u.onstart = function () { empezo = true; };
     u.onend = fin;
+    // v90: en algunos Android (como dentro de IRL Plus Chat) speak() no suena ni avisa nada: si en 2.5 s no empezó, usa la voz del servidor
+    setTimeout(function () { if (listo || empezo || (window.speechSynthesis && speechSynthesis.speaking)) return; listo = true; try { speechSynthesis.cancel(); } catch (e) {} bad(new Error('la voz del celular no arrancó')); }, 2500);
     u.onerror = function () { if (listo) return; listo = true; bad(new Error('la voz del celular falló')); };
     setTimeout(fin, 20000 + text.length * 150);              // por si el aparato nunca avisa que terminó
     try { speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) { listo = true; bad(e); }

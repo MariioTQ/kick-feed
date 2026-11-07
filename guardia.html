@@ -49,7 +49,7 @@ function apiHostOk(u){ try{ var h=new URL(u, location.href).hostname.toLowerCase
   return h==='kick-feed-mariotq.vercel.app' || /^kick-feed-mariotq-[a-z0-9-]+-tq19\.vercel\.app$/.test(h) || h===location.hostname; }catch(e){ return false; } }
 var API_BAD=!!(Q.get('api') && !apiHostOk(Q.get('api')));
 var W=API_BAD ? '' : (Q.get('w')||''), API=((API_BAD ? '' : Q.get('api'))||'https://kick-feed-mariotq.vercel.app').replace(/\/+$/,'');
-var VER='86';
+var VER='90';
 if (Q.get('oculto')==='1') document.body.classList.add('oculto');
 var $=function(id){ return document.getElementById(id); };
 function err(t){ $('err').textContent=t||''; }
@@ -177,6 +177,13 @@ function kickConnect(){
     var x=m.data; if (typeof x==='string'){ try{ x=JSON.parse(x); }catch(e){ return; } }
     if (!x || !x.id || !x.sender || seenK(String(x.id))) return;
     var s=x.sender||{}, idt=s.identity||{}, md=x.metadata||{};
+    if (typeof md==='string'){ try{ md=JSON.parse(md); }catch(e){ md={}; } }
+    // v90 · 🔁 resub COMPARTIDA (Kick la manda como «celebración» en el chat, con su mensaje): esa es la alerta, como en Twitch
+    var cel=md && md.celebration, ct=String((cel && (cel.type||cel.celebration_type))||'').toLowerCase();
+    if (cel && /sub|renew|anniversar|month|milestone/.test(ct)){
+      var cu=String(s.username||'').slice(0,40), cm=Number(cel.total_months||cel.months||cel.duration||cel.total||md.months)||0;
+      if (cu && !seenK('cel:'+cu.toLowerCase()+':'+cm)) push({pf:'kick', resub:{user:cu, months:cm||2, msg:String(x.content||'').slice(0,300), cel:1}}, true);
+    }
     var p={ message_id:String(x.id), created_at:x.created_at||new Date().toISOString(), content:String(x.content||'').slice(0,600),
             sender:{ username:String(s.username||'').slice(0,40), user_id:Number(s.id)||0, identity:{ username_color:idt.color||'', badges:(idt.badges||[]).slice(0,10) } } };
     if (x.type==='reply' && md.original_message) p.replies_to={ message_id:String(md.original_message.id||''), sender:{username:String((md.original_sender||{}).username||'')}, content:String(md.original_message.content||'').slice(0,200) };
